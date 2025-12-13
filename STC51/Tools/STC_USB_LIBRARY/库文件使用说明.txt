@@ -1,0 +1,12 @@
+新USB库函数使用说明：
+1、使用此压缩包中的新USB库函数，用户程序中不需要再对
+   USER_DEVICEDESC，USER_PRODUCTDESC，USER_STCISPCMD进行定义
+   如已定义，请删除。
+2、USB库默认的不停电下载命令为“@STCISP#”
+3、新USB库函数不再区分查询库和中断库，已统一为同一个库
+   使用set_usb_OUT_callback函数设置回调函数时可实现中断模式
+   若不设置回调函数则为查询模式（详情请参考范例程序）
+4、使用新的USB的库函数，不需要等待USB配置完成，
+   在printf_usb和USB_SendData函数中一对配置状态和忙标志进行了检测
+5、所有的调试接口函数都在USB_SendData函数是基础上进行封装
+6、printf_usb函数支持keil标准printf函数所支持的全部格式化字符

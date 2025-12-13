@@ -1,0 +1,8 @@
+".\Output\main.obj",
+".\Output\usblib.obj",
+".\Sources\lib\stc_usb_cdc_32g.lib" 
+TO ".\Output\ws2812_driver" 
+PRINT(".\Listings\ws2812_driver.map") CASE DISABLEWARNING (16) 
+REMOVEUNUSED 
+CLASSES (EDATA (0x0-0x7FF), 
+HDATA (0x0-0x7FF)) 
