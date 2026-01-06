@@ -1,3 +1,5 @@
+".\Output\ws2812_io_app.obj",
+".\Output\ws2812_io_hal.obj",
 ".\Output\main.obj",
 ".\Output\usblib.obj",
 ".\Sources\lib\stc_usb_cdc_32g.lib" 

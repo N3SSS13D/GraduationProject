@@ -45,7 +45,7 @@
             <NotGenerated>0</NotGenerated>
             <InvalidFlash>1</InvalidFlash>
           </TargetStatus>
-          <OutputDirectory>.\Output\</OutputDirectory>
+          <OutputDirectory>.\Objects\</OutputDirectory>
           <OutputName>ws2812_driver</OutputName>
           <CreateExecutable>1</CreateExecutable>
           <CreateLib>0</CreateLib>
@@ -272,7 +272,7 @@
               <MiscControls></MiscControls>
               <Define></Define>
               <Undefine></Undefine>
-              <IncludePath>.\Sources\inc;.\Sources\app;.\Sources\driver;.\Sources\utils</IncludePath>
+              <IncludePath>.\Sources\inc;.\Sources\app;.\Sources\driver;.\Sources\utils;.\Sources\hal</IncludePath>
             </VariousControls>
           </C251>
           <Ax51>
@@ -326,12 +326,26 @@
         </Group>
         <Group>
           <GroupName>app</GroupName>
+          <Files>
+            <File>
+              <FileName>ws2812_io_app.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Sources\app\ws2812_io_app.c</FilePath>
+            </File>
+          </Files>
         </Group>
         <Group>
           <GroupName>driver</GroupName>
         </Group>
         <Group>
           <GroupName>hal</GroupName>
+          <Files>
+            <File>
+              <FileName>ws2812_io_hal.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Sources\hal\ws2812_io_hal.c</FilePath>
+            </File>
+          </Files>
         </Group>
         <Group>
           <GroupName>utils</GroupName>
@@ -343,6 +357,21 @@
               <FileName>main.c</FileName>
               <FileType>1</FileType>
               <FilePath>.\Sources\main.c</FilePath>
+            </File>
+            <File>
+              <FileName>timer.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Sources\timer.c</FilePath>
+            </File>
+            <File>
+              <FileName>exti.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Sources\exti.c</FilePath>
+            </File>
+            <File>
+              <FileName>spi.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Sources\spi.c</FilePath>
             </File>
             <File>
               <FileName>usblib.c</FileName>

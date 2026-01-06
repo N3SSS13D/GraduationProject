@@ -42,6 +42,9 @@
 //<<AICUBE_USER_INCLUDE_END>>
 
 
+#include "timer.h"
+#include "exti.h"
+#include "spi.h"
 #include "usblib.h"
 
 void SYS_Init(void);

@@ -584,19 +584,19 @@
 		<PortLevel_7>1</PortLevel_7>
 	</PORT5>
 	<TIMER0>
-		<PeriEnable>0</PeriEnable>
+		<PeriEnable>1</PeriEnable>
 		<EnableCLKO>0</EnableCLKO>
 		<EnableGATE>0</EnableGATE>
 		<BaudrateX2>0</BaudrateX2>
 		<ClockSource>0</ClockSource>
-		<TimerClock>0</TimerClock>
+		<TimerClock>40000000</TimerClock>
 		<Clock12T>0</Clock12T>
 		<TimerCT>0</TimerCT>
 		<TimerMode>0</TimerMode>
 		<TimerAction>0</TimerAction>
 		<TimerInterval>100</TimerInterval>
 		<TimerUnit>0</TimerUnit>
-		<TimerReload>1</TimerReload>
+		<TimerReload>333</TimerReload>
 		<ClockPrescale>0</ClockPrescale>
 		<UartBaudrate>9600</UartBaudrate>
 		<CLKOPort>-1</CLKOPort>
@@ -844,14 +844,14 @@
 		<P2PDestination>0</P2PDestination>
 	</UART4>
 	<EXTI0>
-		<PeriEnable>0</PeriEnable>
-		<EnableInt>0</EnableInt>
+		<PeriEnable>1</PeriEnable>
+		<EnableInt>1</EnableInt>
 		<IntType>0</IntType>
 		<IntPriority>0</IntPriority>
 	</EXTI0>
 	<EXTI1>
-		<PeriEnable>0</PeriEnable>
-		<EnableInt>0</EnableInt>
+		<PeriEnable>1</PeriEnable>
+		<EnableInt>1</EnableInt>
 		<IntType>0</IntType>
 		<IntPriority>0</IntPriority>
 	</EXTI1>
@@ -916,12 +916,12 @@
 		<EnableAnalogFilter>0</EnableAnalogFilter>
 	</CMP>
 	<SPI>
-		<PeriEnable>0</PeriEnable>
+		<PeriEnable>1</PeriEnable>
 		<EnableHSSPI>0</EnableHSSPI>
 		<EnableTMO>0</EnableTMO>
 		<EnableTMOInt>0</EnableTMOInt>
-		<EnableInt>0</EnableInt>
-		<SPIPort>-1</SPIPort>
+		<EnableInt>1</EnableInt>
+		<SPIPort>2</SPIPort>
 		<SPISwap>0</SPISwap>
 		<SPIMode>0</SPIMode>
 		<BitOrder>0</BitOrder>
@@ -934,12 +934,12 @@
 		<TMOInterval>10</TMOInterval>
 		<TMOUnit>0</TMOUnit>
 		<IntPriority>0</IntPriority>
-		<EnableDMA>0</EnableDMA>
-		<EnableDMAInt>0</EnableDMAInt>
+		<EnableDMA>1</EnableDMA>
+		<EnableDMAInt>1</EnableDMAInt>
 		<EnableDMAAutoSS>0</EnableDMAAutoSS>
-		<DMAAmount>16</DMAAmount>
+		<DMAAmount>192</DMAAmount>
 		<DMAInterval>0</DMAInterval>
-		<DMAMode>2</DMAMode>
+		<DMAMode>0</DMAMode>
 		<DMAAutoSSPort>0</DMAAutoSSPort>
 		<DMAIntPriority>0</DMAIntPriority>
 		<DMABusPriority>0</DMABusPriority>
@@ -1145,7 +1145,7 @@
 		<WorkMode>0</WorkMode>
 		<Prescaler>0</Prescaler>
 		<Counter>0</Counter>
-		<AutoReload>999</AutoReload>
+		<AutoReload>3999</AutoReload>
 		<RepeatCounter>0</RepeatCounter>
 		<PreloadARR>0</PreloadARR>
 		<CounterAlign>0</CounterAlign>
@@ -1433,10 +1433,14 @@
 	<PINMAP>
 		<PinCount>256</PinCount>
 		<Pin06Map>4</Pin06Map>
+		<Pin07Map>4</Pin07Map>
 		<Pin08Map>2</Pin08Map>
 		<Pin17Map>-1</Pin17Map>
+		<Pin18Map>1</Pin18Map>
 		<Pin29Map>-1</Pin29Map>
+		<Pin31Map>4</Pin31Map>
 		<Pin41Map>-1</Pin41Map>
+		<Pin42Map>8</Pin42Map>
 	</PINMAP>
 	<PINALIAS></PINALIAS>
 </Project>
