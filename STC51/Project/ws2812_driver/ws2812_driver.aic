@@ -1100,8 +1100,8 @@
 		<P2PDestination>0</P2PDestination>
 	</I2S>
 	<QSPI>
-		<PeriEnable>0</PeriEnable>
-		<QSPIPort>-1</QSPIPort>
+		<PeriEnable>1</PeriEnable>
+		<QSPIPort>0</QSPIPort>
 		<FIFOThreshold>31</FIFOThreshold>
 		<EnableMatchInt>0</EnableMatchInt>
 		<EnableFIFOInt>0</EnableFIFOInt>
@@ -1114,11 +1114,11 @@
 		<AlternateMode>0</AlternateMode>
 		<AddressSize>0</AddressSize>
 		<AddressMode>0</AddressMode>
-		<InstructionMode>0</InstructionMode>
+		<InstructionMode>2</InstructionMode>
 		<InstructionSendMode>0</InstructionSendMode>
 		<AlternateSize>0</AlternateSize>
 		<DummyCycles>0</DummyCycles>
-		<DataMode>0</DataMode>
+		<DataMode>2</DataMode>
 		<FunctionMode>0</FunctionMode>
 		<PollingMatchMode>0</PollingMatchMode>
 		<PollingStopMode>1</PollingStopMode>
@@ -1432,6 +1432,9 @@
 	</MATHLIB>
 	<PINMAP>
 		<PinCount>256</PinCount>
+		<Pin02Map>32</Pin02Map>
+		<Pin03Map>16</Pin03Map>
+		<Pin04Map>32</Pin04Map>
 		<Pin06Map>4</Pin06Map>
 		<Pin07Map>4</Pin07Map>
 		<Pin08Map>2</Pin08Map>
@@ -1441,6 +1444,9 @@
 		<Pin31Map>4</Pin31Map>
 		<Pin41Map>-1</Pin41Map>
 		<Pin42Map>8</Pin42Map>
+		<Pin45Map>64</Pin45Map>
+		<Pin46Map>32</Pin46Map>
+		<Pin47Map>32</Pin47Map>
 	</PINMAP>
 	<PINALIAS></PINALIAS>
 </Project>
