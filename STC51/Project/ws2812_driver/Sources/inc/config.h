@@ -44,7 +44,7 @@
 
 #include "timer.h"
 #include "exti.h"
-#include "spi.h"
+#include "pwm.h"
 #include "usblib.h"
 
 void SYS_Init(void);

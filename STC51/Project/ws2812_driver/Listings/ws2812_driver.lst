@@ -1,0 +1,142 @@
+C251 COMPILER V5.60.0,  ws2812_driver                                                      25/01/26  03:00:11  PAGE 1   
+
+
+C251 COMPILER V5.60.0, COMPILATION OF MODULE ws2812_driver
+OBJECT MODULE PLACED IN .\Objects\ws2812_driver.obj
+COMPILER INVOKED BY: S:\Embedded\Keil\C251\BIN\C251.EXE Sources\fml\ws2812_driver.c XSMALL BROWSE INCDIR(.\Sources\inc;.
+                    -\Sources\app;.\Sources\hal;.\Sources\fml;.\Sources\utils) DEBUG PRINT(.\Listings\ws2812_driver.lst) OBJECT(.\Objects\ws2
+                    -812_driver.obj) 
+
+stmt  level    source
+
+    1          #include "ws2812_driver.h"
+    2          
+    3          // WS2812 data input on P1.0
+    4          static sbit WS2812_DI = P1^0;
+    5          
+    6          // WS2812 timing constant
+    7          #define WS_RESET_US   100  // latch time >= 80 us
+    8          
+    9          ////////////////////////////////////////
+   10          // 精确延时函数 @ 40MHz
+   11          ////////////////////////////////////////
+   12          
+   13          // 延时约300纳秒
+   14          static void Delay300ns(void)
+   15          {
+   16   1          unsigned long edata i;
+   17   1          
+   18   1          _nop_();
+   19   1          _nop_();
+   20   1          _nop_();
+   21   1          i = 1UL;
+   22   1          while (i) i--;
+   23   1      }
+   24          
+   25          // 延时约600纳秒
+   26          static void Delay600ns(void)
+   27          {
+   28   1          unsigned long edata i;
+   29   1          
+   30   1          _nop_();
+   31   1          _nop_();
+   32   1          _nop_();
+   33   1          i = 4UL;
+   34   1          while (i) i--;
+   35   1      }
+   36          
+   37          void ws2812_init(void)
+   38          {
+   39   1          // Set P1.0 as push-pull output for clean edges
+   40   1          P1M1 &= ~BIT0;
+   41   1          P1M0 |= BIT0;
+   42   1      
+   43   1          WS2812_DI = 0;
+   44   1          ws2812_reset_latch();
+   45   1      }
+   46          
+   47          void ws2812_reset_latch(void)
+   48          {
+   49   1          WS2812_DI = 0;
+   50   1          delay_us(WS_RESET_US);
+   51   1      }
+   52          
+   53          void ws2812_send_bit(uint8_t bit_val)
+   54          {
+   55   1          if (bit_val)
+   56   1          {
+   57   2              // T1H: high time for "1" code (~0.6us), T1L: low time (~0.3us)
+C251 COMPILER V5.60.0,  ws2812_driver                                                      25/01/26  03:00:11  PAGE 2   
+
+   58   2              WS2812_DI = 1;
+   59   2              Delay600ns();
+   60   2              WS2812_DI = 0;
+   61   2              Delay300ns();
+   62   2          }
+   63   1          else
+   64   1          {
+   65   2              // T0H: high time for "0" code (~0.3us), T0L: low time (~0.6us)
+   66   2              WS2812_DI = 1;
+   67   2              Delay300ns();
+   68   2              WS2812_DI = 0;
+   69   2              Delay600ns();
+   70   2          }
+   71   1      }
+   72          
+   73          void ws2812_send_byte(uint8_t value)
+   74          {
+   75   1          uint8_t mask;
+   76   1          for (mask = 0x80; mask != 0; mask >>= 1)
+   77   1          {
+   78   2              ws2812_send_bit(value & mask);
+   79   2          }
+   80   1      }
+   81          
+   82          void ws2812_send_grb(uint8_t g, uint8_t r, uint8_t b)
+   83          {
+   84   1          ws2812_send_byte(g);
+   85   1          ws2812_send_byte(r);
+   86   1          ws2812_send_byte(b);
+   87   1      }
+   88          
+   89          void ws2812_send_buffer(const uint8_t *grb, uint16_t led_count)
+   90          {
+   91   1          uint16_t i;
+   92   1          uint16_t idx = 0;
+   93   1      
+   94   1          for (i = 0; i < led_count; i++)
+   95   1          {
+   96   2              uint8_t g = grb[idx++];
+   97   2              uint8_t r = grb[idx++];
+   98   2              uint8_t b = grb[idx++];
+   99   2              ws2812_send_grb(g, r, b);
+  100   2          }
+  101   1      
+  102   1          ws2812_reset_latch();
+  103   1      }
+
+
+Module Information          Static   Overlayable
+------------------------------------------------
+  code size            =       235     ------
+  ecode size           =    ------     ------
+  data size            =    ------     ------
+  idata size           =    ------     ------
+  pdata size           =    ------     ------
+  xdata size           =    ------     ------
+  xdata-const size     =    ------     ------
+  edata size           =    ------          9
+  bit size             =    ------     ------
+  ebit size            =    ------     ------
+  bitaddressable size  =    ------     ------
+  ebitaddressable size =    ------     ------
+  far data size        =    ------     ------
+  huge data size       =    ------     ------
+  const size           =    ------     ------
+  hconst size          =    ------     ------
+End of Module Information.
+
+C251 COMPILER V5.60.0,  ws2812_driver                                                      25/01/26  03:00:11  PAGE 3   
+
+
+C251 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

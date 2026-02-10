@@ -272,7 +272,7 @@
               <MiscControls></MiscControls>
               <Define></Define>
               <Undefine></Undefine>
-              <IncludePath>.\Sources\inc;.\Sources\app;.\Sources\driver;.\Sources\utils;.\Sources\hal</IncludePath>
+              <IncludePath>.\Sources\inc;.\Sources\app;.\Sources\hal;.\Sources\fml;.\Sources\utils</IncludePath>
             </VariousControls>
           </C251>
           <Ax51>
@@ -322,30 +322,17 @@
       </TargetOption>
       <Groups>
         <Group>
-          <GroupName>User Sources</GroupName>
-        </Group>
-        <Group>
           <GroupName>app</GroupName>
           <Files>
             <File>
-              <FileName>ws2812_io_app.c</FileName>
+              <FileName>ws2812_display.c</FileName>
               <FileType>1</FileType>
-              <FilePath>.\Sources\app\ws2812_io_app.c</FilePath>
+              <FilePath>.\Sources\app\ws2812_display.c</FilePath>
             </File>
           </Files>
-        </Group>
-        <Group>
-          <GroupName>driver</GroupName>
         </Group>
         <Group>
           <GroupName>hal</GroupName>
-          <Files>
-            <File>
-              <FileName>ws2812_io_hal.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\Sources\hal\ws2812_io_hal.c</FilePath>
-            </File>
-          </Files>
         </Group>
         <Group>
           <GroupName>utils</GroupName>
@@ -369,9 +356,9 @@
               <FilePath>.\Sources\exti.c</FilePath>
             </File>
             <File>
-              <FileName>spi.c</FileName>
+              <FileName>pwm.c</FileName>
               <FileType>1</FileType>
-              <FilePath>.\Sources\spi.c</FilePath>
+              <FilePath>.\Sources\pwm.c</FilePath>
             </File>
             <File>
               <FileName>usblib.c</FileName>
@@ -382,6 +369,16 @@
               <FileName>stc_usb_cdc_32g.lib</FileName>
               <FileType>4</FileType>
               <FilePath>.\Sources\lib\stc_usb_cdc_32g.lib</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>fml</GroupName>
+          <Files>
+            <File>
+              <FileName>ws2812_driver.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Sources\fml\ws2812_driver.c</FilePath>
             </File>
           </Files>
         </Group>

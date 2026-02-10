@@ -1,0 +1,192 @@
+C251 COMPILER V5.60.0,  ws2812_display                                                     25/01/26  03:00:11  PAGE 1   
+
+
+C251 COMPILER V5.60.0, COMPILATION OF MODULE ws2812_display
+OBJECT MODULE PLACED IN .\Objects\ws2812_display.obj
+COMPILER INVOKED BY: S:\Embedded\Keil\C251\BIN\C251.EXE Sources\app\ws2812_display.c XSMALL BROWSE INCDIR(.\Sources\inc;
+                    -.\Sources\app;.\Sources\hal;.\Sources\fml;.\Sources\utils) DEBUG PRINT(.\Listings\ws2812_display.lst) OBJECT(.\Objects\w
+                    -s2812_display.obj) 
+
+stmt  level    source
+
+    1          #include "ws2812_display.h"
+    2          
+    3          #define WS_COLOR_OFF  0x00
+    4          #define WS_INTENSITY  0x40
+    5          
+    6          static uint8_t xdata g_frame[WS2812_MATRIX_LEDS * 3];
+    7          static uint8_t display_color_state = COLOR_RED;  // 当前显示颜色状态（内部 static）
+    8          
+    9          // Each byte is one row, bit7 = column 0 (left)
+   10          static const uint8_t digit_rows[10][8] = {
+   11              // 0
+   12              {0x7E, 0x81, 0x81, 0x81, 0x81, 0x81, 0x81, 0x7E},
+   13              // 1
+   14              {0x18, 0x38, 0x18, 0x18, 0x18, 0x18, 0x18, 0x3C},
+   15              // 2
+   16              {0x7E, 0x81, 0x01, 0x06, 0x18, 0x60, 0x80, 0xFF},
+   17              // 3
+   18              {0x7E, 0x81, 0x01, 0x0E, 0x0E, 0x01, 0x81, 0x7E},
+   19              // 4
+   20              {0x06, 0x0E, 0x16, 0x26, 0x46, 0xFF, 0x06, 0x06},
+   21              // 5
+   22              {0xFF, 0x80, 0x80, 0xFE, 0x01, 0x01, 0x81, 0x7E},
+   23              // 6
+   24              {0x3E, 0x40, 0x80, 0xFE, 0x81, 0x81, 0x81, 0x7E},
+   25              // 7
+   26              {0xFF, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x20},
+   27              // 8
+   28              {0x7E, 0x81, 0x81, 0x7E, 0x81, 0x81, 0x81, 0x7E},
+   29              // 9
+   30              {0x7E, 0x81, 0x81, 0x81, 0x7F, 0x01, 0x02, 0x7C}
+   31          };
+   32          
+   33          static void fill_frame_with_digit(uint8_t digit, uint8_t g, uint8_t r, uint8_t b)
+   34          {
+   35   1          uint8_t row;
+   36   1          uint8_t col;
+   37   1          uint16_t led = 0;
+   38   1      
+   39   1          if (digit > 9)
+   40   1          {
+   41   2              digit = 0;
+   42   2          }
+   43   1      
+   44   1          for (row = 0; row < WS2812_MATRIX_HEIGHT; row++)
+   45   1          {
+   46   2              uint8_t row_bits = digit_rows[digit][row];
+   47   2              for (col = 0; col < WS2812_MATRIX_WIDTH; col++)
+   48   2              {
+   49   3                  uint8_t on = row_bits & (0x80 >> col);
+   50   3                  uint16_t base = led * 3;
+   51   3                  g_frame[base]     = on ? g : WS_COLOR_OFF; // G
+   52   3                  g_frame[base + 1] = on ? r : WS_COLOR_OFF; // R
+   53   3                  g_frame[base + 2] = on ? b : WS_COLOR_OFF; // B
+   54   3                  led++;
+   55   3              }
+   56   2          }
+   57   1      }
+C251 COMPILER V5.60.0,  ws2812_display                                                     25/01/26  03:00:11  PAGE 2   
+
+   58          
+   59          static void fill_frame_solid(uint8_t g, uint8_t r, uint8_t b)
+   60          {
+   61   1          uint16_t i;
+   62   1          for (i = 0; i < WS2812_MATRIX_LEDS; i++)
+   63   1          {
+   64   2              uint16_t base = i * 3;
+   65   2              g_frame[base]     = g;
+   66   2              g_frame[base + 1] = r;
+   67   2              g_frame[base + 2] = b;
+   68   2          }
+   69   1      }
+   70          
+   71          void ws2812_display_clear(void)
+   72          {
+   73   1          uint16_t i;
+   74   1          for (i = 0; i < WS2812_MATRIX_LEDS * 3; i++)
+   75   1          {
+   76   2              g_frame[i] = WS_COLOR_OFF;
+   77   2          }
+   78   1          ws2812_send_buffer(g_frame, WS2812_MATRIX_LEDS);
+   79   1      }
+   80          
+   81          void ws2812_display_digit(uint8_t digit)
+   82          {
+   83   1          fill_frame_with_digit(digit, WS_INTENSITY, WS_INTENSITY, WS_INTENSITY);
+   84   1          ws2812_send_buffer(g_frame, WS2812_MATRIX_LEDS);
+   85   1      }
+   86          
+   87          void ws2812_display_color(uint8_t color_mode)
+   88          {
+   89   1          uint8_t g = WS_COLOR_OFF;
+   90   1          uint8_t r = WS_COLOR_OFF;
+   91   1          uint8_t b = WS_COLOR_OFF;
+   92   1      
+   93   1          switch (color_mode)
+   94   1          {
+   95   2              case COLOR_RED:
+   96   2                  r = WS_INTENSITY;
+   97   2                  break;
+   98   2              case COLOR_GREEN:
+   99   2                  g = WS_INTENSITY;
+  100   2                  break;
+  101   2              case COLOR_BLUE:
+  102   2                  b = WS_INTENSITY;
+  103   2                  break;
+  104   2              default:
+  105   2                  break;
+  106   2          }
+  107   1      
+  108   1          fill_frame_solid(g, r, b);
+  109   1          ws2812_send_buffer(g_frame, WS2812_MATRIX_LEDS);
+  110   1      }
+  111          
+  112          void ws2812_display_loop_digits(uint16_t hold_ms)
+  113          {
+  114   1          uint8_t d;
+  115   1          for (d = 0; d < 10; d++)
+  116   1          {
+  117   2              ws2812_display_digit(d);
+  118   2              delay_ms(hold_ms);
+  119   2          }
+  120   1      }
+  121          
+  122          ////////////////////////////////////////
+  123          // 定时器中断回调函数
+C251 COMPILER V5.60.0,  ws2812_display                                                     25/01/26  03:00:11  PAGE 3   
+
+  124          // 功能: 由timer.c的中断处理程序调用，用于切换颜色
+  125          // 入口参数: 无
+  126          // 函数返回: 无
+  127          ////////////////////////////////////////
+  128          void timer0_tick_callback(void)
+  129          {
+  130   1          display_color_state = (display_color_state >= COLOR_BLUE) ? COLOR_RED : (display_color_state + 1);
+  131   1      }
+  132          
+  133          ////////////////////////////////////////
+  134          // 显示更新函数
+  135          // 功能: 根据当前color_state显示对应的颜色
+  136          // 入口参数: 无
+  137          // 函数返回: 无
+  138          ////////////////////////////////////////
+  139          void ws2812_display_update(void)
+  140          {
+  141   1          ws2812_display_color(display_color_state);
+  142   1      }
+  143          
+  144          ////////////////////////////////////////
+  145          // 获取当前颜色状态
+  146          // 功能: 返回当前显示的颜色模式
+  147          // 入口参数: 无
+  148          // 函数返回: 颜色状态（COLOR_RED/GREEN/BLUE）
+  149          ////////////////////////////////////////
+  150          uint8_t ws2812_get_current_color(void)
+  151          {
+  152   1          return display_color_state;
+  153   1      }
+
+
+Module Information          Static   Overlayable
+------------------------------------------------
+  code size            =       421     ------
+  ecode size           =    ------     ------
+  data size            =    ------     ------
+  idata size           =    ------     ------
+  pdata size           =    ------     ------
+  xdata size           =       192     ------
+  xdata-const size     =    ------     ------
+  edata size           =         1          1
+  bit size             =    ------     ------
+  ebit size            =    ------     ------
+  bitaddressable size  =    ------     ------
+  ebitaddressable size =    ------     ------
+  far data size        =    ------     ------
+  huge data size       =    ------     ------
+  const size           =    ------     ------
+  hconst size          =        85     ------
+End of Module Information.
+
+
+C251 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

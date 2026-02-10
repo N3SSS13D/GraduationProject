@@ -1,0 +1,125 @@
+C251 COMPILER V5.60.0,  exti                                                               25/01/26  03:00:11  PAGE 1   
+
+
+C251 COMPILER V5.60.0, COMPILATION OF MODULE exti
+OBJECT MODULE PLACED IN .\Objects\exti.obj
+COMPILER INVOKED BY: S:\Embedded\Keil\C251\BIN\C251.EXE Sources\exti.c XSMALL BROWSE INCDIR(.\Sources\inc;.\Sources\app;
+                    -.\Sources\hal;.\Sources\fml;.\Sources\utils) DEBUG PRINT(.\Listings\exti.lst) OBJECT(.\Objects\exti.obj) 
+
+stmt  level    source
+
+    1          //<<AICUBE_USER_HEADER_REMARK_BEGIN>>
+    2          ////////////////////////////////////////
+    3          // 在此添加用户文件头说明信息  
+    4          // 文件名称: exti.c
+    5          // 文件描述: 
+    6          // 文件版本: V1.0
+    7          // 修改记录:
+    8          //   1. (2025-12-28) 创建文件
+    9          ////////////////////////////////////////
+   10          //<<AICUBE_USER_HEADER_REMARK_END>>
+   11          
+   12          
+   13          #include "config.h"
+   14          
+   15          
+   16          //<<AICUBE_USER_INCLUDE_BEGIN>>
+   17          // 在此添加用户头文件包含  
+   18          //<<AICUBE_USER_INCLUDE_END>>
+   19          
+   20          
+   21          //<<AICUBE_USER_GLOBAL_DEFINE_BEGIN>>
+   22          // 在此添加用户全局变量定义、用户宏定义以及函数声明  
+   23          //<<AICUBE_USER_GLOBAL_DEFINE_END>>
+   24          
+   25          
+   26          
+   27          ////////////////////////////////////////
+   28          // 外部中断INT0初始化函数
+   29          // 入口参数: 无
+   30          // 函数返回: 无
+   31          ////////////////////////////////////////
+   32          void EXTI0_Init(void)
+   33          {
+   34   1          INT0_FallingInt();                  //设置外部中断为下降沿中断
+   35   1          INT0_SetIntPriority(0);             //设置中断为最低优先级
+   36   1          INT0_EnableInt();                   //使能外部中断
+   37   1      
+   38   1          //<<AICUBE_USER_EXTI0_INITIAL_BEGIN>>
+   39   1          // 在此添加用户初始化代码  
+   40   1          //<<AICUBE_USER_EXTI0_INITIAL_END>>
+   41   1      }
+   42          
+   43          ////////////////////////////////////////
+   44          // 外部中断INT1初始化函数
+   45          // 入口参数: 无
+   46          // 函数返回: 无
+   47          ////////////////////////////////////////
+   48          void EXTI1_Init(void)
+   49          {
+   50   1          INT1_FallingInt();                  //设置外部中断为下降沿中断
+   51   1          INT1_SetIntPriority(0);             //设置中断为最低优先级
+   52   1          INT1_EnableInt();                   //使能外部中断
+   53   1      
+   54   1          //<<AICUBE_USER_EXTI1_INITIAL_BEGIN>>
+   55   1          // 在此添加用户初始化代码  
+   56   1          //<<AICUBE_USER_EXTI1_INITIAL_END>>
+   57   1      }
+   58          
+C251 COMPILER V5.60.0,  exti                                                               25/01/26  03:00:11  PAGE 2   
+
+   59          
+   60          ////////////////////////////////////////
+   61          // 外部中断INT0中断服务程序
+   62          // 入口参数: 无
+   63          // 函数返回: 无
+   64          ////////////////////////////////////////
+   65          void EXTI0_ISR(void) interrupt INT0_VECTOR
+   66          {
+   67   1          //<<AICUBE_USER_EXTI0_ISR_CODE1_BEGIN>>
+   68   1          // 在此添加中断函数用户代码  
+   69   1          //<<AICUBE_USER_EXTI0_ISR_CODE1_END>>
+   70   1      }
+   71          
+   72          ////////////////////////////////////////
+   73          // 外部中断INT1中断服务程序
+   74          // 入口参数: 无
+   75          // 函数返回: 无
+   76          ////////////////////////////////////////
+   77          void EXTI1_ISR(void) interrupt INT1_VECTOR
+   78          {
+   79   1          //<<AICUBE_USER_EXTI1_ISR_CODE1_BEGIN>>
+   80   1          // 在此添加中断函数用户代码  
+   81   1          //<<AICUBE_USER_EXTI1_ISR_CODE1_END>>
+   82   1      }
+   83          
+   84          
+   85          //<<AICUBE_USER_FUNCTION_IMPLEMENT_BEGIN>>
+   86          // 在此添加用户函数实现代码  
+   87          //<<AICUBE_USER_FUNCTION_IMPLEMENT_END>>
+   88          
+   89          
+
+
+Module Information          Static   Overlayable
+------------------------------------------------
+  code size            =        28     ------
+  ecode size           =    ------     ------
+  data size            =    ------     ------
+  idata size           =    ------     ------
+  pdata size           =    ------     ------
+  xdata size           =    ------     ------
+  xdata-const size     =    ------     ------
+  edata size           =    ------     ------
+  bit size             =    ------     ------
+  ebit size            =    ------     ------
+  bitaddressable size  =    ------     ------
+  ebitaddressable size =    ------     ------
+  far data size        =    ------     ------
+  huge data size       =    ------     ------
+  const size           =    ------     ------
+  hconst size          =    ------     ------
+End of Module Information.
+
+
+C251 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

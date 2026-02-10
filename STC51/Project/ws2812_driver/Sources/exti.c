@@ -31,7 +31,7 @@
 ////////////////////////////////////////
 void EXTI0_Init(void)
 {
-    INT0_FallingRisingInt();            //设置外部中断为边沿中断 (上升沿+下降沿)
+    INT0_FallingInt();                  //设置外部中断为下降沿中断
     INT0_SetIntPriority(0);             //设置中断为最低优先级
     INT0_EnableInt();                   //使能外部中断
 
@@ -47,7 +47,7 @@ void EXTI0_Init(void)
 ////////////////////////////////////////
 void EXTI1_Init(void)
 {
-    INT1_FallingRisingInt();            //设置外部中断为边沿中断 (上升沿+下降沿)
+    INT1_FallingInt();                  //设置外部中断为下降沿中断
     INT1_SetIntPriority(0);             //设置中断为最低优先级
     INT1_EnableInt();                   //使能外部中断
 

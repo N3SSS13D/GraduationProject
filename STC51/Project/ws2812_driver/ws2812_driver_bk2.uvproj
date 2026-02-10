@@ -45,7 +45,7 @@
             <NotGenerated>0</NotGenerated>
             <InvalidFlash>1</InvalidFlash>
           </TargetStatus>
-          <OutputDirectory>.\Output\</OutputDirectory>
+          <OutputDirectory>.\Objects\</OutputDirectory>
           <OutputName>ws2812_driver</OutputName>
           <CreateExecutable>1</CreateExecutable>
           <CreateLib>0</CreateLib>
@@ -272,7 +272,7 @@
               <MiscControls></MiscControls>
               <Define></Define>
               <Undefine></Undefine>
-              <IncludePath>.\Sources\inc;.\Sources\app;.\Sources\driver;.\Sources\utils;.\Sources\hal</IncludePath>
+              <IncludePath>.\Sources\inc;.\Sources\app;.\Sources\hal;.\Sources\fml;.\Sources\utils</IncludePath>
             </VariousControls>
           </C251>
           <Ax51>
@@ -322,30 +322,17 @@
       </TargetOption>
       <Groups>
         <Group>
-          <GroupName>User Sources</GroupName>
-        </Group>
-        <Group>
           <GroupName>app</GroupName>
           <Files>
             <File>
-              <FileName>ws2812_io_app.c</FileName>
+              <FileName>ws2812_display.c</FileName>
               <FileType>1</FileType>
-              <FilePath>.\Sources\app\ws2812_io_app.c</FilePath>
+              <FilePath>.\Sources\app\ws2812_display.c</FilePath>
             </File>
           </Files>
-        </Group>
-        <Group>
-          <GroupName>driver</GroupName>
         </Group>
         <Group>
           <GroupName>hal</GroupName>
-          <Files>
-            <File>
-              <FileName>ws2812_io_hal.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\Sources\hal\ws2812_io_hal.c</FilePath>
-            </File>
-          </Files>
         </Group>
         <Group>
           <GroupName>utils</GroupName>
@@ -359,6 +346,21 @@
               <FilePath>.\Sources\main.c</FilePath>
             </File>
             <File>
+              <FileName>timer.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Sources\timer.c</FilePath>
+            </File>
+            <File>
+              <FileName>exti.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Sources\exti.c</FilePath>
+            </File>
+            <File>
+              <FileName>pwm.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Sources\pwm.c</FilePath>
+            </File>
+            <File>
               <FileName>usblib.c</FileName>
               <FileType>1</FileType>
               <FilePath>.\Sources\usblib.c</FilePath>
@@ -367,6 +369,16 @@
               <FileName>stc_usb_cdc_32g.lib</FileName>
               <FileType>4</FileType>
               <FilePath>.\Sources\lib\stc_usb_cdc_32g.lib</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>fml</GroupName>
+          <Files>
+            <File>
+              <FileName>ws2812_driver.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Sources\fml\ws2812_driver.c</FilePath>
             </File>
           </Files>
         </Group>
