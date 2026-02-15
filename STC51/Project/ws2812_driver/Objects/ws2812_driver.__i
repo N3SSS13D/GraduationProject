@@ -1,1 +1,0 @@
-"Sources\fml\ws2812_driver.c" XSMALL BROWSE INCDIR(.\Sources\inc;.\Sources\app;.\Sources\hal;.\Sources\fml;.\Sources\utils) DEBUG PRINT(.\Listings\ws2812_driver.lst) OBJECT(.\Objects\ws2812_driver.obj)

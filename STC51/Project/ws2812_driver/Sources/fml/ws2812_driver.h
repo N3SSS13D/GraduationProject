@@ -5,7 +5,11 @@
 
 #define WS2812_LED_COUNT 64
 
+#define WS2812_OUT_P10 0
+#define WS2812_OUT_P12 1
+
 void ws2812_init(void);
+void ws2812_select_output_pin(uint8_t output_pin);
 void ws2812_reset_latch(void);
 void ws2812_send_bit(uint8_t bit_val);
 void ws2812_send_byte(uint8_t value);

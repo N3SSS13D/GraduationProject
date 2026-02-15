@@ -1,0 +1,92 @@
+C251 COMPILER V5.60.0,  port                                                               16/02/26  01:45:12  PAGE 1   
+
+
+C251 COMPILER V5.60.0, COMPILATION OF MODULE port
+OBJECT MODULE PLACED IN .\Objects\port.obj
+COMPILER INVOKED BY: D:\Program Files (x86)\Keil_v5\C251\BIN\C251.EXE Sources\port.c XSMALL BROWSE INCDIR(.\Sources\inc;
+                    -.\Sources\app;.\Sources\hal;.\Sources\fml;.\Sources\utils;.\Sources;.\Sources\lib) DEBUG PRINT(.\Listings\port.lst) OBJE
+                    -CT(.\Objects\port.obj) 
+
+stmt  level    source
+
+    1          //<<AICUBE_USER_HEADER_REMARK_BEGIN>>
+    2          ////////////////////////////////////////
+    3          // 在此添加用户文件头说明信息  
+    4          // 文件名称: port.c
+    5          // 文件描述: 
+    6          // 文件版本: V1.0
+    7          // 修改记录:
+    8          //   1. (2026-02-15) 创建文件
+    9          ////////////////////////////////////////
+   10          //<<AICUBE_USER_HEADER_REMARK_END>>
+   11          
+   12          
+   13          #include "config.h"
+   14          
+   15          
+   16          //<<AICUBE_USER_INCLUDE_BEGIN>>
+   17          // 在此添加用户头文件包含  
+   18          //<<AICUBE_USER_INCLUDE_END>>
+   19          
+   20          
+   21          //<<AICUBE_USER_GLOBAL_DEFINE_BEGIN>>
+   22          // 在此添加用户全局变量定义、用户宏定义以及函数声明  
+   23          //<<AICUBE_USER_GLOBAL_DEFINE_END>>
+   24          
+   25          
+   26          
+   27          ////////////////////////////////////////
+   28          // P0口初始化函数
+   29          // 入口参数: 无
+   30          // 函数返回: 无
+   31          ////////////////////////////////////////
+   32          void PORT0_Init(void)
+   33          {
+   34   1          SetP0nInitLevelHigh(PIN_ALL);       //设置P0初始化电平
+   35   1          SetP0nQuasiMode(PIN_ALL);           //设置P0为准双向口模式
+   36   1      
+   37   1          DisableP0nPullUp(PIN_ALL);          //关闭P0内部上拉电阻
+   38   1          DisableP0nPullDown(PIN_ALL);        //关闭P0内部下拉电阻
+   39   1          DisableP0nSchmitt(PIN_ALL);         //使能P0施密特触发
+   40   1          SetP0nSlewRateNormal(PIN_ALL);      //设置P0一般翻转速度
+   41   1          SetP0nDrivingNormal(PIN_ALL);       //设置P0一般驱动能力
+   42   1          SetP0nDigitalInput(PIN_ALL);        //使能P0数字信号输入功能
+   43   1      
+   44   1          //<<AICUBE_USER_PORT0_INITIAL_BEGIN>>
+   45   1          // 在此添加用户初始化代码  
+   46   1          //<<AICUBE_USER_PORT0_INITIAL_END>>
+   47   1      }
+   48          
+   49          
+   50          
+   51          //<<AICUBE_USER_FUNCTION_IMPLEMENT_BEGIN>>
+   52          // 在此添加用户函数实现代码  
+   53          //<<AICUBE_USER_FUNCTION_IMPLEMENT_END>>
+   54          
+   55          
+
+
+C251 COMPILER V5.60.0,  port                                                               16/02/26  01:45:12  PAGE 2   
+
+Module Information          Static   Overlayable
+------------------------------------------------
+  code size            =        59     ------
+  ecode size           =    ------     ------
+  data size            =    ------     ------
+  idata size           =    ------     ------
+  pdata size           =    ------     ------
+  xdata size           =    ------     ------
+  xdata-const size     =    ------     ------
+  edata size           =    ------     ------
+  bit size             =    ------     ------
+  ebit size            =    ------     ------
+  bitaddressable size  =    ------     ------
+  ebitaddressable size =    ------     ------
+  far data size        =    ------     ------
+  huge data size       =    ------     ------
+  const size           =    ------     ------
+  hconst size          =    ------     ------
+End of Module Information.
+
+
+C251 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

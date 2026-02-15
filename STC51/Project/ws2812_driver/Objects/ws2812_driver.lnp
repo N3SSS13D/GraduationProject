@@ -1,11 +1,10 @@
 ".\Objects\ws2812_display.obj",
+".\Objects\ws2812_test.obj",
+".\Objects\ws2812_driver.obj",
 ".\Objects\main.obj",
-".\Objects\timer.obj",
-".\Objects\exti.obj",
-".\Objects\pwm.obj",
+".\Objects\port.obj",
 ".\Objects\usblib.obj",
-".\Sources\lib\stc_usb_cdc_32g.lib",
-".\Objects\ws2812_driver.obj" 
+".\Sources\lib\stc_usb_cdc_32g.lib" 
 TO ".\Objects\ws2812_driver" 
 PRINT(".\Listings\ws2812_driver.map") CASE DISABLEWARNING (16) 
 REMOVEUNUSED 

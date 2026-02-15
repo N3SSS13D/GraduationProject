@@ -1,11 +1,11 @@
 //<<AICUBE_USER_HEADER_REMARK_BEGIN>>
 ////////////////////////////////////////
-// ÔÚ´ËÌí¼ÓÓÃ»§ÎÄ¼þÍ·ËµÃ÷ÐÅÏ¢  
-// ÎÄ¼þÃû³Æ: usblib.c
-// ÎÄ¼þÃèÊö: 
-// ÎÄ¼þ°æ±¾: V1.0
-// ÐÞ¸Ä¼ÇÂ¼:
-//   1. (2025-12-13) ´´½¨ÎÄ¼þ
+// åœ¨æ­¤æ·»åŠ ç”¨æˆ·æ–‡ä»¶å¤´è¯´æ˜Žä¿¡æ¯  
+// æ–‡ä»¶åç§°: usblib.c
+// æ–‡ä»¶æè¿°: 
+// æ–‡ä»¶ç‰ˆæœ¬: V1.0
+// ä¿®æ”¹è®°å½•:
+//   1. (2025-12-13) åˆ›å»ºæ–‡ä»¶
 ////////////////////////////////////////
 //<<AICUBE_USER_HEADER_REMARK_END>>
 
@@ -14,64 +14,64 @@
 
 
 //<<AICUBE_USER_INCLUDE_BEGIN>>
-// ÔÚ´ËÌí¼ÓÓÃ»§Í·ÎÄ¼þ°üº¬  
+// åœ¨æ­¤æ·»åŠ ç”¨æˆ·å¤´æ–‡ä»¶åŒ…å«  
 //<<AICUBE_USER_INCLUDE_END>>
 
 
 //<<AICUBE_USER_GLOBAL_DEFINE_BEGIN>>
-// ÔÚ´ËÌí¼ÓÓÃ»§È«¾Ö±äÁ¿¶¨Òå¡¢ÓÃ»§ºê¶¨ÒåÒÔ¼°º¯ÊýÉùÃ÷  
+// åœ¨æ­¤æ·»åŠ ç”¨æˆ·å…¨å±€å˜é‡å®šä¹‰ã€ç”¨æˆ·å®å®šä¹‰ä»¥åŠå‡½æ•°å£°æ˜Ž  
 //<<AICUBE_USER_GLOBAL_DEFINE_END>>
 
 
 
 ////////////////////////////////////////
-// USB¿â³õÊ¼»¯º¯Êý
-// Èë¿Ú²ÎÊý: ÎÞ
-// º¯Êý·µ»Ø: ÎÞ
+// USBåº“åˆå§‹åŒ–å‡½æ•°
+// å…¥å£å‚æ•°: æ— 
+// å‡½æ•°è¿”å›ž: æ— 
 ////////////////////////////////////////
 void USBLIB_Init(void)
 {
-    usb_init();                         //³õÊ¼»¯USBÄ£¿é
-    USB_SetIntPriority(0);              //ÉèÖÃÖÐ¶ÏÎª×îµÍÓÅÏÈ¼¶
-    set_usb_OUT_callback(USBLIB_OUT_Callback); //ÉèÖÃUSBÖÐ¶Ï»Øµ÷º¯Êý
-    set_usb_ispcmd("@STCISP#");         //ÉèÖÃUSB²»Í£µçÏÂÔØÃüÁî
+    usb_init();                         //åˆå§‹åŒ–USBæ¨¡å—
+    USB_SetIntPriority(0);              //è®¾ç½®ä¸­æ–­ä¸ºæœ€ä½Žä¼˜å…ˆçº§
+    set_usb_OUT_callback(USBLIB_OUT_Callback); //è®¾ç½®USBä¸­æ–­å›žè°ƒå‡½æ•°
+    set_usb_ispcmd("@STCISP#");         //è®¾ç½®USBä¸åœç”µä¸‹è½½å‘½ä»¤
 
     //<<AICUBE_USER_USBLIB_INITIAL_BEGIN>>
-    // ÔÚ´ËÌí¼ÓÓÃ»§³õÊ¼»¯´úÂë  
+    // åœ¨æ­¤æ·»åŠ ç”¨æˆ·åˆå§‹åŒ–ä»£ç   
     //<<AICUBE_USER_USBLIB_INITIAL_END>>
 }
 
 ////////////////////////////////////////
-// µÈ´ýUSBÅäÖÃÍê³Éº¯Êý
-// Èë¿Ú²ÎÊý: ÎÞ
-// º¯Êý·µ»Ø: ÎÞ
+// ç­‰å¾…USBé…ç½®å®Œæˆå‡½æ•°
+// å…¥å£å‚æ•°: æ— 
+// å‡½æ•°è¿”å›ž: æ— 
 ////////////////////////////////////////
 void USBLIB_WaitConfiged(void)
 {
-    while (DeviceState != DEVSTATE_CONFIGURED) //µÈ´ýUSBÍê³ÉÅäÖÃ
-        WDT_Clear();                    //Çå¿´ÃÅ¹·¶¨Ê±Æ÷ (·ÀÖ¹Ó²¼þ×Ô¶¯Ê¹ÄÜ¿´ÃÅ¹·)
+    while (DeviceState != DEVSTATE_CONFIGURED) //ç­‰å¾…USBå®Œæˆé…ç½®
+        WDT_Clear();                    //æ¸…çœ‹é—¨ç‹—å®šæ—¶å™¨ (é˜²æ­¢ç¡¬ä»¶è‡ªåŠ¨ä½¿èƒ½çœ‹é—¨ç‹—)
 }
 
 ////////////////////////////////////////
-// USBÉè±¸½ÓÊÕÊý¾ÝÖÐ¶Ï»Øµ÷³ÌÐò
-// Èë¿Ú²ÎÊý: ÎÞ
-// º¯Êý·µ»Ø: ÎÞ
-// OutNumber£ºUSBÉè±¸½ÓÊÕµ½µÄÊý¾Ý³¤¶È
-// UsbOutBuffer£º±£´æUSBÉè±¸½ÓÊÕµ½µÄÊý¾Ý
+// USBè®¾å¤‡æŽ¥æ”¶æ•°æ®ä¸­æ–­å›žè°ƒç¨‹åº
+// å…¥å£å‚æ•°: æ— 
+// å‡½æ•°è¿”å›ž: æ— 
+// OutNumberï¼šUSBè®¾å¤‡æŽ¥æ”¶åˆ°çš„æ•°æ®é•¿åº¦
+// UsbOutBufferï¼šä¿å­˜USBè®¾å¤‡æŽ¥æ”¶åˆ°çš„æ•°æ®
 ////////////////////////////////////////
 void USBLIB_OUT_Callback(void)
 {
     //<<AICUBE_USER_USBLIB_ISR_CODE1_BEGIN>>
-    // ÔÚ´ËÌí¼ÓÖÐ¶Ïº¯ÊýÓÃ»§´úÂë  
-    USB_SendData(UsbOutBuffer, OutNumber); //Ô­Â··µ»Ø, ÓÃÓÚ²âÊÔ
-    // ÔÚ´Ë´¦Ìí¼ÓÓÃ»§´¦Àí½ÓÊÕÊý¾ÝµÄ´úÂë
+    // åœ¨æ­¤æ·»åŠ ä¸­æ–­å‡½æ•°ç”¨æˆ·ä»£ç   
+    USB_SendData(UsbOutBuffer, OutNumber); //åŽŸè·¯è¿”å›ž, ç”¨äºŽæµ‹è¯•
+    // åœ¨æ­¤å¤„æ·»åŠ ç”¨æˆ·å¤„ç†æŽ¥æ”¶æ•°æ®çš„ä»£ç 
     //<<AICUBE_USER_USBLIB_ISR_CODE1_END>>
 }
 
 
 
 //<<AICUBE_USER_FUNCTION_IMPLEMENT_BEGIN>>
-// ÔÚ´ËÌí¼ÓÓÃ»§º¯ÊýÊµÏÖ´úÂë  
+// åœ¨æ­¤æ·»åŠ ç”¨æˆ·å‡½æ•°å®žçŽ°ä»£ç   
 //<<AICUBE_USER_FUNCTION_IMPLEMENT_END>>
 
 

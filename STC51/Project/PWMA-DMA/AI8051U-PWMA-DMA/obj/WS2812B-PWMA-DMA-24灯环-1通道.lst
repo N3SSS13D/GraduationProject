@@ -1,20 +1,21 @@
-C251 COMPILER V5.60.0,  WS2812B-PWMA-DMA-24µÆ»·-1Í¨µÀ                                      27/09/24  15:55:21  PAGE 1   
+C251 COMPILER V5.60.0,  WS2812B-PWMA-DMA-24µÆ»·-1Í¨µÀ                                      15/02/26  23:20:03  PAGE 1   
 
 
 C251 COMPILER V5.60.0, COMPILATION OF MODULE WS2812B-PWMA-DMA-24µÆ»·-1Í¨µÀ
 OBJECT MODULE PLACED IN .\obj\WS2812B-PWMA-DMA-24µÆ»·-1Í¨µÀ.obj
-COMPILER INVOKED BY: C:\Keil_v5\C251\BIN\C251.EXE WS2812B-PWMA-DMA-24µÆ»·-1Í¨µÀ.c XSMALL BROWSE DEBUG PRINT(.\obj\WS2812
-                    -B-PWMA-DMA-24µÆ»·-1Í¨µÀ.lst) TABS(2) OBJECT(.\obj\WS2812B-PWMA-DMA-24µÆ»·-1Í¨µÀ.obj) 
+COMPILER INVOKED BY: D:\Program Files (x86)\Keil_v5\C251\BIN\C251.EXE WS2812B-PWMA-DMA-24µÆ»·-1Í¨µÀ.c XSMALL BROWSE INCD
+                    -IR(D:\Program Files (x86)\Keil_v5\C251\INC) DEBUG PRINT(.\obj\WS2812B-PWMA-DMA-24µÆ»·-1Í¨µÀ.lst) OBJECT(.\obj\WS2812B-PW
+                    -MA-DMA-24µÆ»·-1Í¨µÀ.obj) 
 
 stmt  level    source
 
     1          
-    2          #define   MAIN_Fosc   40000000UL  //¶¨ÒåÖ÷Ê±ÖÓ
+    2          #define         MAIN_Fosc               40000000UL      //¶¨ÒåÖ÷Ê±ÖÓ
     3          
-    4          #include  "AI8051U.h"
+    4          #include        "AI8051U.h"
     5          
     6          
-    7          /*************  ¹¦ÄÜËµÃ÷  **************
+    7          /*************  ¹¦ÄÜËµÃ÷        **************
     8          
     9          ÇëÏÈ±ðÐÞ¸Ä³ÌÐò, Ö±½ÓÏÂÔØ"SPI.hex"²âÊÔ, ÏÂÔØÊ±Ñ¡ÔñÖ÷Æµ40MHz¡£
    10          
@@ -43,34 +44,34 @@ stmt  level    source
    31          
    32          ******************************************/
    33          
-   34          /*************  ±¾µØ³£Á¿ÉùÃ÷  **************/
+   34          /*************  ±¾µØ³£Á¿ÉùÃ÷    **************/
    35          
    36          
-   37          /*************  ±¾µØ±äÁ¿ÉùÃ÷  **************/
+   37          /*************  ±¾µØ±äÁ¿ÉùÃ÷    **************/
    38          
    39          
-   40          /*************  ±¾µØº¯ÊýÉùÃ÷  **************/
+   40          /*************  ±¾µØº¯ÊýÉùÃ÷    **************/
    41          
-   42          #define COLOR 50        //ÁÁ¶È£¬×î´ó255
+   42          #define COLOR   50                              //ÁÁ¶È£¬×î´ó255
    43          
-   44          #define LED_NUM 24        //LEDµÆ¸öÊý
+   44          #define LED_NUM 24                              //LEDµÆ¸öÊý
    45          #define PWM_NUM (LED_NUM*24+2)  //LEDµÆ¶ÔÓ¦PWM×Ö½ÚÊý, ¶à·¢2¸öÖÜÆÚ£¬µÚÒ»¸öÕ¼¿Õ±ÈÎª0(±ÜÃâÒì²½×°ÔØDMA¶ªÊ§µÚÒ»
              -¸öÊý¾Ý)£¬×îºóÒ»¸öÕ¼¿Õ±ÈÎª0£¬Á¬ÐøÊä³ö0.
    46          
-   47          u8  xdata  led_RGB[LED_NUM][3]; //LED¶ÔÓ¦µÄRGB£¬led_buff[i][0]-->ÂÌ£¬led_buff[i][1]-->ºì£¬led_buff[i][2]--
+   47          u8      xdata  led_RGB[LED_NUM][3];     //LED¶ÔÓ¦µÄRGB£¬led_buff[i][0]-->ÂÌ£¬led_buff[i][1]-->ºì£¬led_buff[i][2]--
              ->À¶.
-   48          u8  xdata  led_pwm[PWM_NUM];  //LEDµÆ¶ÔÓ¦PWM×Ö½ÚÊý
+   48          u8      xdata  led_pwm[PWM_NUM];        //LEDµÆ¶ÔÓ¦PWM×Ö½ÚÊý
    49          
-   50          bit B_PWMAT_DMA_busy; //PWMAT-DMAÃ¦±êÖ¾
+   50          bit     B_PWMAT_DMA_busy;       //PWMAT-DMAÃ¦±êÖ¾
    51          
    52          
    53          /*************  Íâ²¿º¯ÊýºÍ±äÁ¿ÉùÃ÷ *****************/
-   54          void  LoadSPI(void);
-C251 COMPILER V5.60.0,  WS2812B-PWMA-DMA-24µÆ»·-1Í¨µÀ                                      27/09/24  15:55:21  PAGE 2   
+C251 COMPILER V5.60.0,  WS2812B-PWMA-DMA-24µÆ»·-1Í¨µÀ                                      15/02/26  23:20:03  PAGE 2   
 
-   55          void  PWMA_config(void);
-   56          void  PWMAT_DMA_TRIG(u8 xdata *TxBuf, u16 num);
-   57          void  delay_ms(u16 ms);
+   54          void    LoadSPI(void);
+   55          void    PWMA_config(void);
+   56          void    PWMAT_DMA_TRIG(u8 xdata *TxBuf, u16 num);
+   57          void    delay_ms(u16 ms);
    58          
    59          
    60          
@@ -78,84 +79,84 @@ stmt  level    source
    62          
    63          void main(void)
    64          {
-   65   1        u16 i,k;
-   66   1        u8  xdata *px;
+   65   1              u16     i,k;
+   66   1              u8      xdata *px;
    67   1      
-   68   1        EAXFR = 1;  //ÔÊÐí·ÃÎÊÀ©Õ¹¼Ä´æÆ÷
-   69   1        WTST  = 0;
-   70   1        CKCON = 0;
+   68   1              EAXFR = 1;      //ÔÊÐí·ÃÎÊÀ©Õ¹¼Ä´æÆ÷
+   69   1              WTST  = 0;
+   70   1              CKCON = 0;
    71   1      
-   72   1        P1M1 = 0; P1M0 = 0;
-   73   1        P3M1 = 0; P3M0 = 0;
+   72   1              P1M1 = 0;       P1M0 = 0;
+   73   1              P3M1 = 0;       P3M0 = 0;
    74   1      
-   75   1        PWMA_config();
-   76   1        EA = 1;
-   77   1      //  MCLKO47_DIV(100); //Ö÷Æµ·ÖÆµÊä³ö£¬ÓÃÓÚ²âÁ¿Ö÷Æµ
+   75   1              PWMA_config();
+   76   1              EA = 1;
+   77   1      //      MCLKO47_DIV(100);       //Ö÷Æµ·ÖÆµÊä³ö£¬ÓÃÓÚ²âÁ¿Ö÷Æµ
    78   1      
-   79   1        k = 0;    //
-   80   1        B_PWMAT_DMA_busy = 0;
+   79   1              k = 0;          //
+   80   1              B_PWMAT_DMA_busy = 0;
    81   1      
-   82   1        while (1)
-   83   1        {
-   84   2          while(B_PWMAT_DMA_busy) ; //µÈ´ýDMAÍê³É
+   82   1              while (1)
+   83   1              {
+   84   2                      while(B_PWMAT_DMA_busy) ;       //µÈ´ýDMAÍê³É
    85   2      
-   86   2          px = &led_RGB[0][0];  //ÁÁ¶È(ÑÕÉ«)Ê×µØÖ·
-   87   2          for(i=0; i<(LED_NUM*3); i++, px++)  *px = 0;  //Çå³ýËùÓÐµÄÑÕÉ«
+   86   2                      px = &led_RGB[0][0];    //ÁÁ¶È(ÑÕÉ«)Ê×µØÖ·
+   87   2                      for(i=0; i<(LED_NUM*3); i++, px++)      *px = 0;        //Çå³ýËùÓÐµÄÑÕÉ«
    88   2      
-   89   2          i = k;
-   90   2          led_RGB[i][1] = COLOR;    //ºìÉ«
-   91   2          if(++i >= LED_NUM)  i = 0;  //ÏÂÒ»¸öµÆ
-   92   2          led_RGB[i][0] = COLOR;    //ÂÌÉ«
-   93   2          if(++i >= LED_NUM)  i = 0;  //ÏÂÒ»¸öµÆ
-   94   2          led_RGB[i][2] = COLOR;    //À¶É«
+   89   2                      i = k;
+   90   2                      led_RGB[i][1] = COLOR;          //ºìÉ«
+   91   2                      if(++i >= LED_NUM)      i = 0;  //ÏÂÒ»¸öµÆ
+   92   2                      led_RGB[i][0] = COLOR;          //ÂÌÉ«
+   93   2                      if(++i >= LED_NUM)      i = 0;  //ÏÂÒ»¸öµÆ
+   94   2                      led_RGB[i][2] = COLOR;          //À¶É«
    95   2      
-   96   2          LoadSPI();      //½«ÑÕÉ«×°ÔØµ½SPIÊý¾Ý
-   97   2          PWMAT_DMA_TRIG(led_pwm, PWM_NUM); //(u16 xdata *TxBuf, u16 num) ´¥·¢SPWMA DMA£¬numÎªÒª´«ÊäµÄ×Ö½ÚÊý
+   96   2                      LoadSPI();                      //½«ÑÕÉ«×°ÔØµ½SPIÊý¾Ý
+   97   2                      PWMAT_DMA_TRIG(led_pwm, PWM_NUM);       //(u16 xdata *TxBuf, u16 num)   ´¥·¢SPWMA DMA£¬numÎªÒª´«ÊäµÄ×Ö½ÚÊý
    98   2      
-   99   2          if(++k >= LED_NUM)  k = 0;      //Ë³Ê±Õë
-  100   2        //  if(--k >= LED_NUM)  k = LED_NUM-1;  //ÄæÊ±Õë
-  101   2          delay_ms(50);
-  102   2        }
+   99   2                      if(++k >= LED_NUM)      k = 0;                  //Ë³Ê±Õë
+  100   2              //      if(--k >= LED_NUM)      k = LED_NUM-1;  //ÄæÊ±Õë
+  101   2                      delay_ms(50);
+  102   2              }
   103   1      }
   104          
   105          
   106          //================ ÑÓÊ±º¯Êý ==============
   107          void  delay_ms(u16 ms)
   108          {
-  109   1        u16 i;
-  110   1        do
-  111   1        {
-  112   2          i = MAIN_Fosc / 6000;
-  113   2          while(--i)  ;
-  114   2        }while(--ms);
+  109   1              u16 i;
+  110   1              do
+  111   1              {
+  112   2                      i = MAIN_Fosc / 6000;
+  113   2                      while(--i)      ;
+  114   2              }while(--ms);
   115   1      }
   116          
   117          
   118          
   119          //================ ½«ÑÕÉ«×°ÔØµ½SPIÊý¾Ý ==============
-  120          void  LoadSPI(void)
-C251 COMPILER V5.60.0,  WS2812B-PWMA-DMA-24µÆ»·-1Í¨µÀ                                      27/09/24  15:55:21  PAGE 3   
+C251 COMPILER V5.60.0,  WS2812B-PWMA-DMA-24µÆ»·-1Í¨µÀ                                      15/02/26  23:20:03  PAGE 3   
 
+  120          void    LoadSPI(void)
   121          {
-  122   1        u8  xdata *px;
-  123   1        u16 i,j;
-  124   1        u8  k;
-  125   1        u8  dat;
+  122   1              u8      xdata *px;
+  123   1              u16     i,j;
+  124   1              u8      k;
+  125   1              u8      dat;
   126   1      
-  127   1        for(i=0; i<(PWM_NUM); i++)  led_pwm[i] = 0;
-  128   1        px = &led_RGB[0][0];  //Ê×µØÖ·
-  129   1        for(i=0, j=1; i<(LED_NUM*3); i++)
-  130   1        {
-  131   2          dat = *px;
-  132   2          px++;
-  133   2          for(k=0; k<8; k++)
-  134   2          {
-  135   3            if(dat & 0x80)  led_pwm[j]  = 37; //Êý¾Ý1
-  136   3            else      led_pwm[j]  = 12; //Êý¾Ý0
-  137   3            dat <<= 1;
-  138   3            j++;
-  139   3          }
-  140   2        }
+  127   1              for(i=0; i<(PWM_NUM); i++)      led_pwm[i] = 0;
+  128   1              px = &led_RGB[0][0];    //Ê×µØÖ·
+  129   1              for(i=0, j=1; i<(LED_NUM*3); i++)
+  130   1              {
+  131   2                      dat = *px;
+  132   2                      px++;
+  133   2                      for(k=0; k<8; k++)
+  134   2                      {
+  135   3                              if(dat & 0x80)  led_pwm[j]  = 37;       //Êý¾Ý1
+  136   3                              else                    led_pwm[j]  = 12;       //Êý¾Ý0
+  137   3                              dat <<= 1;
+  138   3                              j++;
+  139   3                      }
+  140   2              }
   141   1      }
   142          
   143          
@@ -169,52 +170,52 @@ stmt  level    source
   151          //========================================================================
   152          void PWMA_config(void)
   153          {
-  154   1        u8  ccer1;
-  155   1        u8  ccer2;
-  156   1        u8  ps;
-  157   1        u8  eno;
+  154   1              u8      ccer1;
+  155   1              u8      ccer2;
+  156   1              u8      ps;
+  157   1              u8      eno;
   158   1      
-  159   1        PWMA_ENO    = 0;  // IOÊä³ö½ûÖ¹
-  160   1        PWMA_IER    = 0;  // ½ûÖ¹ÖÐ¶Ï
-  161   1        PWMA_SR1    = 0;  // Çå³ý×´Ì¬
-  162   1        PWMA_SR2    = 0;  // Çå³ý×´Ì¬
-  163   1        ccer1 = 0;
-  164   1        ccer2 = 0;
-  165   1        ps    = 0;
-  166   1        eno   = 0;
+  159   1              PWMA_ENO    = 0;        // IOÊä³ö½ûÖ¹
+  160   1              PWMA_IER    = 0;        // ½ûÖ¹ÖÐ¶Ï
+  161   1              PWMA_SR1    = 0;        // Çå³ý×´Ì¬
+  162   1              PWMA_SR2    = 0;        // Çå³ý×´Ì¬
+  163   1              ccer1 = 0;
+  164   1              ccer2 = 0;
+  165   1              ps    = 0;
+  166   1              eno   = 0;
   167   1      
-  168   1        PWMA_PSCRH = 0;   // Ô¤·ÖÆµ¼Ä´æÆ÷, ·ÖÆµ Fck_cnt = Fck_psc/(PSCR[15:0}+1), ±ßÑØ¶ÔÆëPWMÆµÂÊ = SYSclk/((PSCR
+  168   1              PWMA_PSCRH = 0;         // Ô¤·ÖÆµ¼Ä´æÆ÷, ·ÖÆµ Fck_cnt = Fck_psc/(PSCR[15:0}+1), ±ßÑØ¶ÔÆëPWMÆµÂÊ = SYSclk/((PSCR
              -+1)*(AAR+1)), ÖÐÑë¶ÔÆëPWMÆµÂÊ = SYSclk/((PSCR+1)*(AAR+1)*2).
-  169   1        PWMA_PSCRL = 0;
-  170   1        PWMA_DTR  = 24;     // ËÀÇøÊ±¼äÅäÖÃ, n=0~127: DTR= n T,   0x80 ~(0x80+n), n=0~63: DTR=(64+n)*2T,
-  171   1                    //        0xc0 ~(0xc0+n), n=0~31: DTR=(32+n)*8T,   0xE0 ~(0xE0+n), n=0~31: DTR=(32+n)*16T,
-  172   1        PWMA_ARRH   = 0;  // ×Ô¶¯ÖØ×°ÔØ¼Ä´æÆ÷,  ¿ØÖÆPWMÖÜÆÚ
-  173   1        PWMA_ARRL   = (50-1);
+  169   1              PWMA_PSCRL = 0;
+  170   1              PWMA_DTR  = 24;                 // ËÀÇøÊ±¼äÅäÖÃ, n=0~127: DTR= n T,   0x80 ~(0x80+n), n=0~63: DTR=(64+n)*2T,
+  171   1                                                              //                              0xc0 ~(0xc0+n), n=0~31: DTR=(32+n)*8T,   0xE0 ~(0xE0+n), n=0~31: DTR=(32+n)*16T,
+  172   1              PWMA_ARRH   = 0;        // ×Ô¶¯ÖØ×°ÔØ¼Ä´æÆ÷,  ¿ØÖÆPWMÖÜÆÚ
+  173   1              PWMA_ARRL   = (50-1);
   174   1      
-  175   1        PWMA_CCMR1  = 0x60;   // Í¨µÀÄ£Ê½ÅäÖÃ, PWMÄ£Ê½1
-  176   1        PWMA_CCR1H  = 0;    // ±È½ÏÖµ, ¿ØÖÆÕ¼¿Õ±È(¸ßµçÆ½Ê±ÖÓÊý)
-  177   1        PWMA_CCR1L  = 0;
-  178   1        ccer1 |= 0x05;      // ¿ªÆô±È½ÏÊä³ö, ¸ßµçÆ½ÓÐÐ§
-  179   1        ps    |= 0;       // Ñ¡ÔñIO, 0:Ñ¡ÔñP1.0 P1.1, 1:Ñ¡ÔñP0.0 P0.1, 2:Ñ¡ÔñP2.0 P2.1,
-  180   1        eno   |= 0x01;      // IOÊä³öÔÊÐí,  bit7: ENO4N, bit6: ENO4P, bit5: ENO3N, bit4: ENO3P,  bit3: ENO2N,  bit2
+  175   1              PWMA_CCMR1  = 0x60;             // Í¨µÀÄ£Ê½ÅäÖÃ, PWMÄ£Ê½1
+  176   1              PWMA_CCR1H  = 0;                // ±È½ÏÖµ, ¿ØÖÆÕ¼¿Õ±È(¸ßµçÆ½Ê±ÖÓÊý)
+  177   1              PWMA_CCR1L  = 0;
+  178   1              ccer1 |= 0x05;                  // ¿ªÆô±È½ÏÊä³ö, ¸ßµçÆ½ÓÐÐ§
+  179   1              ps    |= 0;                             // Ñ¡ÔñIO, 0:Ñ¡ÔñP1.0 P1.1, 1:Ñ¡ÔñP0.0 P0.1, 2:Ñ¡ÔñP2.0 P2.1,
+  180   1              eno   |= 0x01;                  // IOÊä³öÔÊÐí,  bit7: ENO4N, bit6: ENO4P, bit5: ENO3N, bit4: ENO3P,  bit3: ENO2N,  bit2
              -: ENO2P,  bit1: ENO1N,  bit0: ENO1P
-  181   1        P1n_push_pull(Pin0);
+  181   1              P1n_push_pull(Pin0);
   182   1      
-  183   1        PWMA_CCER1  = ccer1;  // ²¶»ñ/±È½ÏÊ¹ÄÜ¼Ä´æÆ÷1
-  184   1        PWMA_CCER2  = ccer2;  // ²¶»ñ/±È½ÏÊ¹ÄÜ¼Ä´æÆ÷2
-C251 COMPILER V5.60.0,  WS2812B-PWMA-DMA-24µÆ»·-1Í¨µÀ                                      27/09/24  15:55:21  PAGE 4   
+  183   1              PWMA_CCER1  = ccer1;    // ²¶»ñ/±È½ÏÊ¹ÄÜ¼Ä´æÆ÷1
+C251 COMPILER V5.60.0,  WS2812B-PWMA-DMA-24µÆ»·-1Í¨µÀ                                      15/02/26  23:20:03  PAGE 4   
 
-  185   1        PWMA_PS     = ps;   // Ñ¡ÔñIO
-  186   1        PWMA_CCMR1  = 0x68;   // Í¨µÀÄ£Ê½ÅäÖÃ, PWMÄ£Ê½1, Ô¤×°ÔØÔÊÐí
+  184   1              PWMA_CCER2  = ccer2;    // ²¶»ñ/±È½ÏÊ¹ÄÜ¼Ä´æÆ÷2
+  185   1              PWMA_PS     = ps;               // Ñ¡ÔñIO
+  186   1              PWMA_CCMR1  = 0x68;             // Í¨µÀÄ£Ê½ÅäÖÃ, PWMÄ£Ê½1, Ô¤×°ÔØÔÊÐí
   187   1      
-  188   1        PWMA_BKR    = 0x80;   // Ö÷Êä³öÊ¹ÄÜ Ïàµ±ÓÚ×Ü¿ª¹Ø
-  189   1        PWMA_CR1    = 0x81;   // Ê¹ÄÜ¼ÆÊýÆ÷, ÔÊÐí×Ô¶¯ÖØ×°ÔØ¼Ä´æÆ÷»º³å, ±ßÑØ¶ÔÆëÄ£Ê½, ÏòÉÏ¼ÆÊý,  bit7=1:Ð´×Ô¶¯ÖØ×°
+  188   1              PWMA_BKR    = 0x80;             // Ö÷Êä³öÊ¹ÄÜ Ïàµ±ÓÚ×Ü¿ª¹Ø
+  189   1              PWMA_CR1    = 0x81;             // Ê¹ÄÜ¼ÆÊýÆ÷, ÔÊÐí×Ô¶¯ÖØ×°ÔØ¼Ä´æÆ÷»º³å, ±ßÑØ¶ÔÆëÄ£Ê½, ÏòÉÏ¼ÆÊý,  bit7=1:Ð´×Ô¶¯ÖØ×°
              -ÔØ¼Ä´æÆ÷»º³å(±¾ÖÜÆÚ²»»á±»´òÈÅ), =0:Ö±½ÓÐ´×Ô¶¯ÖØ×°ÔØ¼Ä´æÆ÷±¾(ÖÜÆÚ¿ÉÄÜ»áÂÒµô)
-  190   1        PWMA_EGR    = 0x01;   //²úÉúÒ»´Î¸üÐÂÊÂ¼þ, Çå³ý¼ÆÊýÆ÷ºÍÔ¤·ÖÆµ¼ÆÊýÆ÷, ×°ÔØÔ¤·ÖÆµ¼Ä´æÆ÷µÄÖµ
-  191   1        PWMA_ENO    = eno;    // ÔÊÐíIOÊä³ö
+  190   1              PWMA_EGR    = 0x01;             //²úÉúÒ»´Î¸üÐÂÊÂ¼þ, Çå³ý¼ÆÊýÆ÷ºÍÔ¤·ÖÆµ¼ÆÊýÆ÷, ×°ÔØÔ¤·ÖÆµ¼Ä´æÆ÷µÄÖµ
+  191   1              PWMA_ENO    = eno;              // ÔÊÐíIOÊä³ö
   192   1      }
   193          
-  194          //  PWMA_PS   = (0<<6)+(0<<4)+(0<<2)+0; //Ñ¡ÔñIO, 4Ïî´Ó¸ßµ½µÍ(´Ó×óµ½ÓÒ)¶ÔÓ¦PWM1 PWM2 PWM3 PWM4, 0:Ñ¡ÔñP1.x
+  194          //      PWMA_PS   = (0<<6)+(0<<4)+(0<<2)+0;     //Ñ¡ÔñIO, 4Ïî´Ó¸ßµ½µÍ(´Ó×óµ½ÓÒ)¶ÔÓ¦PWM1 PWM2 PWM3 PWM4, 0:Ñ¡ÔñP1.x
              -, 1:Ñ¡ÔñP2.x, 2:Ñ¡ÔñP6.x,
   195          //  PWMA_PS    PWM4N PWM4P    PWM3N PWM3P    PWM2N PWM2P    PWM1N PWM1P
   196          //    00       P1.7  P1.6     P1.5  P1.4     P1.3  P1.2     P1.1  P1.0
@@ -226,83 +227,62 @@ stmt  level    source
   202          //================================== PWMA DMA ===========================================================
              -======================
   203          //DMA_PWMAT_CR  PWMAT_DMA¿ØÖÆ¼Ä´æÆ÷
-  204          #define   DMA_ENPWMAT   (1<<7)  // PWMAT_DMA¹¦ÄÜÊ¹ÄÜ¿ØÖÆÎ», bit7, 0:½ûÖ¹PWMAT DMA¹¦ÄÜ£¬  1£ºÔÊÐíPWMAT DMA¹¦Ä
+  204          #define         DMA_ENPWMAT             (1<<7)  // PWMAT_DMA¹¦ÄÜÊ¹ÄÜ¿ØÖÆÎ», bit7, 0:½ûÖ¹PWMAT DMA¹¦ÄÜ£¬  1£ºÔÊÐíPWMAT DMA¹¦Ä
              -Ü¡£
-  205          #define   PWMAT_TRIG    (1<<6)  // PWMAT_DMA´¥·¢¿ØÖÆÎ»£¬    bit6, 0:Ð´0ÎÞÐ§£¬          1£ºÐ´1¿ªÊ¼PWMAT DMA²Ù×
+  205          #define         PWMAT_TRIG              (1<<6)  // PWMAT_DMA´¥·¢¿ØÖÆÎ»£¬    bit6, 0:Ð´0ÎÞÐ§£¬          1£ºÐ´1¿ªÊ¼PWMAT DMA²Ù×
              -÷¡£
   206          
-  207          //DMA_PWMAT_CFG   PWMAT_DMAÅäÖÃ¼Ä´æÆ÷
-  208          #define   DMA_PWMATIE (1<<7)  // PWMAT_DMAÖÐ¶ÏÊ¹ÄÜ¿ØÖÆÎ»£¬bit7, 0:½ûÖ¹PWMAT DMAÖÐ¶Ï£¬     1£ºÔÊÐíÖÐ¶Ï¡£
-  209          #define   DMA_PWMATIP (0<<2)  // PWMAT_DMAÖÐ¶ÏÓÅÏÈ¼¶¿ØÖÆÎ»£¬bit3~bit2, (×îµÍ)0~3(×î¸ß).
-  210          #define   DMA_PWMATPTY  2 // PWMAT_DMAÊý¾Ý×ÜÏß·ÃÎÊÓÅÏÈ¼¶¿ØÖÆÎ»£¬bit1~bit0, (×îµÍ)0~3(×î¸ß).
+  207          //DMA_PWMAT_CFG         PWMAT_DMAÅäÖÃ¼Ä´æÆ÷
+  208          #define         DMA_PWMATIE     (1<<7)  // PWMAT_DMAÖÐ¶ÏÊ¹ÄÜ¿ØÖÆÎ»£¬bit7, 0:½ûÖ¹PWMAT DMAÖÐ¶Ï£¬     1£ºÔÊÐíÖÐ¶Ï¡£
+  209          #define         DMA_PWMATIP     (0<<2)  // PWMAT_DMAÖÐ¶ÏÓÅÏÈ¼¶¿ØÖÆÎ»£¬bit3~bit2, (×îµÍ)0~3(×î¸ß).
+  210          #define         DMA_PWMATPTY    2       // PWMAT_DMAÊý¾Ý×ÜÏß·ÃÎÊÓÅÏÈ¼¶¿ØÖÆÎ»£¬bit1~bit0, (×îµÍ)0~3(×î¸ß).
   211          
-  212          //DMA_PWMAT_STA   PWMAT_DMA×´Ì¬¼Ä´æÆ÷
-  213          #define   PWMAT_TXOVW (1<<2)  // PWMAT DMAÊý¾Ý¸²¸Ç±êÖ¾Î»£¬bit2, Èí¼þÇå0.
-  214          #define   DMA_PWMATIF   1 // PWMAT DMAÖÐ¶ÏÇëÇó±êÖ¾Î»£¬bit0, Èí¼þÇå0.
+  212          //DMA_PWMAT_STA         PWMAT_DMA×´Ì¬¼Ä´æÆ÷
+  213          #define         PWMAT_TXOVW     (1<<2)  // PWMAT DMAÊý¾Ý¸²¸Ç±êÖ¾Î»£¬bit2, Èí¼þÇå0.
+  214          #define         DMA_PWMATIF             1       // PWMAT DMAÖÐ¶ÏÇëÇó±êÖ¾Î»£¬bit0, Èí¼þÇå0.
   215          
-  216          void  PWMAT_DMA_TRIG(u8 xdata *TxBuf, u16 num)
+  216          void    PWMAT_DMA_TRIG(u8 xdata *TxBuf, u16 num)
   217          {
-  218   1        u16 i;
+  218   1              u16     i;
   219   1      
   220   1          PWMA_DBA   = 0x0D;  //DMA´«ÊäÄ¿±êÆðÊ¼µØÖ·(offset´úÂë), 0x0d¶ÔÓ¦µÄ¾ÍÊÇPWM1_CCR1H, Çë²Î¿¼¡°»ùµØÖ·DBAÓëÊµ
              -¼ÊÕ¼¿Õ±È¼Ä´æÆ÷¶ÔÓ¦¹ØÏµ±í.jpg¡±
-  221   1          PWMA_DBL   = 0x00;  //DMA´«ÊäÍ¨µÀÊýÎª1Í¨µÀ(n+1)   DBL=DMA burst length = N+1
+  221   1          PWMA_DBL   = 0x00;  //DMA´«ÊäÍ¨µÀÊýÎª1Í¨µÀ(n+1)             DBL=DMA burst length = N+1
   222   1          PWMA_DER   = 0x01;  //DMA´«ÊäÊý¾Ý´¥·¢Ìõ¼þÎª¸üÐÂÇëÇó£¬¼´Ã¿¸öPWMÖÜÆÚ¿ªÊ¼ºó¾Í´¥·¢DMA·¢ËÍÒ»´Î
   223   1          PWMA_DMACR = 0x14;  //Bit4(DSKIP)=1:Ìø¹ý±£Áô×Ö½Ú, Bit3(DDIR)=0:´«Êä·½ÏòXRAMµ½PWMA£¬BIt2(DMAEN)=1:ÔÊÐíP
              -WMA_DMA£¬ dsize{1:0]=1:Ã¿¸öÍ¨µÀ·¢ËÍ×Ö½ÚÊýÎª2×Ö½Ú¡£
   224   1      
-  225   1        i = (u16)TxBuf; //È¡Ê×µØÖ·
-  226   1        DMA_PWMAT_TXAH = (u8)(i >> 8);    //·¢ËÍµØÖ·¼Ä´æÆ÷¸ß×Ö½Ú
-  227   1        DMA_PWMAT_TXAL = (u8)i;       //·¢ËÍµØÖ·¼Ä´æÆ÷µÍ×Ö½Ú
-  228   1        DMA_PWMAT_AMTH = (u8)((num-1)/256); //ÉèÖÃ´«Êä×Ü×Ö½ÚÊý = n+1
-  229   1        DMA_PWMAT_AMT  = (u8)((num-1)%256); //ÉèÖÃ´«Êä×Ü×Ö½ÚÊý = n+1
-  230   1      //  DMA_PWMA_ITVH  = (u8)(2460/256);  //Ôö¼ÓµÄ¼ä¸ôÊ±¼ä£¬N+1¸öÏµÍ³Ê±ÖÓ
-  231   1      //  DMA_PWMA_ITVL  = (u8)(2460%256);
-  232   1        DMA_PWMAT_STA  = 0x00;
-  233   1        DMA_PWMAT_CFG  = DMA_PWMATIE | DMA_PWMATIP | DMA_PWMATPTY;
-  234   1        DMA_PWMAT_CR   = DMA_ENPWMAT | PWMAT_TRIG;
-  235   1      P33 = 1;  //¸ßµçÆ½Ê±¼äÓÃÓÚÖ¸Ê¾DMA´«Êä×ÜºÄÊ±
-  236   1        B_PWMAT_DMA_busy = 1; //±êÖ¾PWMAT-DMAÃ¦£¬PWMAT DMAÖÐ¶ÏÖÐÇå³ý´Ë±êÖ¾£¬Ê¹ÓÃPWMAT DMAÇ°ÒªÈ·ÈÏ´Ë±êÖ¾Îª0
+  225   1              i = (u16)TxBuf; //È¡Ê×µØÖ·
+  226   1              DMA_PWMAT_TXAH = (u8)(i >> 8);          //·¢ËÍµØÖ·¼Ä´æÆ÷¸ß×Ö½Ú
+  227   1              DMA_PWMAT_TXAL = (u8)i;                         //·¢ËÍµØÖ·¼Ä´æÆ÷µÍ×Ö½Ú
+  228   1              DMA_PWMAT_AMTH = (u8)((num-1)/256);     //ÉèÖÃ´«Êä×Ü×Ö½ÚÊý = n+1
+  229   1              DMA_PWMAT_AMT  = (u8)((num-1)%256);     //ÉèÖÃ´«Êä×Ü×Ö½ÚÊý = n+1
+  230   1      //      DMA_PWMA_ITVH  = (u8)(2460/256);        //Ôö¼ÓµÄ¼ä¸ôÊ±¼ä£¬N+1¸öÏµÍ³Ê±ÖÓ
+  231   1      //      DMA_PWMA_ITVL  = (u8)(2460%256);
+  232   1              DMA_PWMAT_STA  = 0x00;
+  233   1              DMA_PWMAT_CFG  = DMA_PWMATIE | DMA_PWMATIP | DMA_PWMATPTY;
+  234   1              DMA_PWMAT_CR   = DMA_ENPWMAT | PWMAT_TRIG;
+  235   1      P33 = 1;        //¸ßµçÆ½Ê±¼äÓÃÓÚÖ¸Ê¾DMA´«Êä×ÜºÄÊ±
+  236   1              B_PWMAT_DMA_busy = 1;   //±êÖ¾PWMAT-DMAÃ¦£¬PWMAT DMAÖÐ¶ÏÖÐÇå³ý´Ë±êÖ¾£¬Ê¹ÓÃPWMAT DMAÇ°ÒªÈ·ÈÏ´Ë±êÖ¾Îª0
   237   1      
   238   1      }
   239          
   240          //========================================================================
   241          // º¯Êý: void PWMAT_DMA_ISR (void) interrupt DMA_PWMAT_VECTOR
   242          // ÃèÊö:  PWMAT_DMAÖÐ¶Ïº¯Êý.
-  243          // ²ÎÊý: none.
-C251 COMPILER V5.60.0,  WS2812B-PWMA-DMA-24µÆ»·-1Í¨µÀ                                      27/09/24  15:55:21  PAGE 5   
+C251 COMPILER V5.60.0,  WS2812B-PWMA-DMA-24µÆ»·-1Í¨µÀ                                      15/02/26  23:20:03  PAGE 5   
 
+  243          // ²ÎÊý: none.
   244          // ·µ»Ø: none.
   245          // °æ±¾: V1.0, 2024-1-5
   246          //========================================================================
   247          void PWMAT_DMA_ISR (void) interrupt DMA_PWMAT_VECTOR
   248          {
-  249   1      P33 = 0;  //¸ßµçÆ½Ê±¼äÓÃÓÚÖ¸Ê¾DMA´«Êä×ÜºÄÊ±
-  250   1        B_PWMAT_DMA_busy = 0; //Çå³ý±êÖ¾PWMA-DMAÃ¦£¬PWMAT DMAÖÐ¶ÏÖÐÇå³ý´Ë±êÖ¾£¬Ê¹ÓÃPWMAT DMAÇ°ÒªÈ·ÈÏ´Ë±êÖ¾Îª0
-  251   1      //  DMA_PWMAT_CR  = 0;
-  252   1        DMA_PWMAT_STA = 0;    //Çå³ýÖÐ¶Ï±êÖ¾
+*** ERROR C168 IN LINE 248 OF WS2812B-PWMA-DMA-24µÆ»·-1Í¨µÀ.c: interrupt: value not in range 0 ... 31
+  249   1      P33 = 0;        //¸ßµçÆ½Ê±¼äÓÃÓÚÖ¸Ê¾DMA´«Êä×ÜºÄÊ±
+  250   1              B_PWMAT_DMA_busy = 0;   //Çå³ý±êÖ¾PWMA-DMAÃ¦£¬PWMAT DMAÖÐ¶ÏÖÐÇå³ý´Ë±êÖ¾£¬Ê¹ÓÃPWMAT DMAÇ°ÒªÈ·ÈÏ´Ë±êÖ¾Îª0
+  251   1      //      DMA_PWMAT_CR  = 0;
+  252   1              DMA_PWMAT_STA = 0;              //Çå³ýÖÐ¶Ï±êÖ¾
   253   1      }
 
-
-Module Information          Static   Overlayable
-------------------------------------------------
-  code size            =       621     ------
-  ecode size           =    ------     ------
-  data size            =    ------     ------
-  idata size           =    ------     ------
-  pdata size           =    ------     ------
-  xdata size           =       650     ------
-  xdata-const size     =    ------     ------
-  edata size           =    ------          2
-  bit size             =         1     ------
-  ebit size            =    ------     ------
-  bitaddressable size  =    ------     ------
-  ebitaddressable size =    ------     ------
-  far data size        =    ------     ------
-  huge data size       =    ------     ------
-  const size           =    ------     ------
-  hconst size          =    ------     ------
-End of Module Information.
-
-
-C251 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)
+C251 COMPILATION COMPLETE.  0 WARNING(S),  1 ERROR(S)

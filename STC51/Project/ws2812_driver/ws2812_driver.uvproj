@@ -272,7 +272,7 @@
               <MiscControls></MiscControls>
               <Define></Define>
               <Undefine></Undefine>
-              <IncludePath>.\Sources\inc;.\Sources\app;.\Sources\hal;.\Sources\fml;.\Sources\utils</IncludePath>
+              <IncludePath>.\Sources\inc;.\Sources\app;.\Sources\hal;.\Sources\fml;.\Sources\utils;.\Sources;.\Sources\lib</IncludePath>
             </VariousControls>
           </C251>
           <Ax51>
@@ -332,10 +332,78 @@
           </Files>
         </Group>
         <Group>
+          <GroupName>test</GroupName>
+          <Files>
+            <File>
+              <FileName>ws2812_test.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Sources\test\ws2812_test.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
           <GroupName>hal</GroupName>
         </Group>
         <Group>
           <GroupName>utils</GroupName>
+        </Group>
+        <Group>
+          <GroupName>fml</GroupName>
+          <Files>
+            <File>
+              <FileName>ws2812_driver.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Sources\fml\ws2812_driver.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>inc</GroupName>
+          <Files>
+            <File>
+              <FileName>ai8051u_def.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\Sources\inc\ai8051u_def.h</FilePath>
+            </File>
+            <File>
+              <FileName>config.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\Sources\inc\config.h</FilePath>
+            </File>
+            <File>
+              <FileName>def.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\Sources\inc\def.h</FilePath>
+            </File>
+            <File>
+              <FileName>exti.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\Sources\inc\exti.h</FilePath>
+            </File>
+            <File>
+              <FileName>pwm.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\Sources\inc\pwm.h</FilePath>
+            </File>
+            <File>
+              <FileName>spi.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\Sources\inc\spi.h</FilePath>
+            </File>
+            <File>
+              <FileName>timer.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\Sources\inc\timer.h</FilePath>
+            </File>
+            <File>
+              <FileName>usblib.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\Sources\inc\usblib.h</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>User Sources</GroupName>
         </Group>
         <Group>
           <GroupName>AiCube</GroupName>
@@ -346,19 +414,9 @@
               <FilePath>.\Sources\main.c</FilePath>
             </File>
             <File>
-              <FileName>timer.c</FileName>
+              <FileName>port.c</FileName>
               <FileType>1</FileType>
-              <FilePath>.\Sources\timer.c</FilePath>
-            </File>
-            <File>
-              <FileName>exti.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\Sources\exti.c</FilePath>
-            </File>
-            <File>
-              <FileName>pwm.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\Sources\pwm.c</FilePath>
+              <FilePath>.\Sources\port.c</FilePath>
             </File>
             <File>
               <FileName>usblib.c</FileName>
@@ -369,16 +427,6 @@
               <FileName>stc_usb_cdc_32g.lib</FileName>
               <FileType>4</FileType>
               <FilePath>.\Sources\lib\stc_usb_cdc_32g.lib</FilePath>
-            </File>
-          </Files>
-        </Group>
-        <Group>
-          <GroupName>fml</GroupName>
-          <Files>
-            <File>
-              <FileName>ws2812_driver.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\Sources\fml\ws2812_driver.c</FilePath>
             </File>
           </Files>
         </Group>

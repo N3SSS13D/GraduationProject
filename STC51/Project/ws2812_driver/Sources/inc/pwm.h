@@ -1,7 +1,7 @@
 //<<AICUBE_USER_HEADER_REMARK_BEGIN>>
 ////////////////////////////////////////
-// �ڴ������û��ļ�ͷ˵����Ϣ  
-// �ļ�����: pwm.h
+// 在此添加用户文件头说明信息  
+// 文件名称: pwm.h
 ////////////////////////////////////////
 //<<AICUBE_USER_HEADER_REMARK_END>>
 
@@ -11,7 +11,7 @@
 
 
 //<<AICUBE_USER_DEFINE_BEGIN>>
-// �ڴ������û��궨��  
+// 在此添加用户宏定义  
 //<<AICUBE_USER_DEFINE_END>>
 
 
@@ -46,7 +46,7 @@ extern uint8_t xdata pu8PWMADMATxBuffer[100];
 
 
 //<<AICUBE_USER_EXTERNAL_DECLARE_BEGIN>>
-// �ڴ������û��ⲿ�������ⲿ��������  
+// 在此添加用户外部函数和外部变量声明  
 //<<AICUBE_USER_EXTERNAL_DECLARE_END>>
 
 

@@ -6,7 +6,7 @@
 		<McuPackage>34608</McuPackage>
 		<ProjectName>ws2812_driver</ProjectName>
 		<ProjectType>1</ProjectType>
-		<Encoding>0</Encoding>
+		<Encoding>1</Encoding>
 	</Target>
 	<Keil>
 		<CPUMode>1</CPUMode>
@@ -80,7 +80,7 @@
 		<IAPOffset>0xfc00</IAPOffset>
 	</IAP>
 	<PORT0>
-		<PeriEnable>0</PeriEnable>
+		<PeriEnable>1</PeriEnable>
 		<IntPriority>0</IntPriority>
 		<PortMD_0>0</PortMD_0>
 		<PortPU_0>0</PortPU_0>
@@ -584,7 +584,7 @@
 		<PortLevel_7>1</PortLevel_7>
 	</PORT5>
 	<TIMER0>
-		<PeriEnable>1</PeriEnable>
+		<PeriEnable>0</PeriEnable>
 		<EnableCLKO>0</EnableCLKO>
 		<EnableGATE>0</EnableGATE>
 		<BaudrateX2>0</BaudrateX2>
@@ -844,13 +844,13 @@
 		<P2PDestination>0</P2PDestination>
 	</UART4>
 	<EXTI0>
-		<PeriEnable>1</PeriEnable>
+		<PeriEnable>0</PeriEnable>
 		<EnableInt>1</EnableInt>
 		<IntType>1</IntType>
 		<IntPriority>0</IntPriority>
 	</EXTI0>
 	<EXTI1>
-		<PeriEnable>1</PeriEnable>
+		<PeriEnable>0</PeriEnable>
 		<EnableInt>1</EnableInt>
 		<IntType>1</IntType>
 		<IntPriority>0</IntPriority>
@@ -1141,7 +1141,7 @@
 		<P2PDestination>0</P2PDestination>
 	</QSPI>
 	<PWMA>
-		<PeriEnable>1</PeriEnable>
+		<PeriEnable>0</PeriEnable>
 		<WorkMode>2</WorkMode>
 		<Prescaler>0</Prescaler>
 		<Counter>0</Counter>
@@ -1202,7 +1202,7 @@
 		<DMAAmount>100</DMAAmount>
 		<DMASkipReserved>1</DMASkipReserved>
 		<EnableCCnInt_CC1>0</EnableCCnInt_CC1>
-		<CCnPort_CC1>0</CCnPort_CC1>
+		<CCnPort_CC1>-1</CCnPort_CC1>
 		<EnableChannel_CC1>1</EnableChannel_CC1>
 		<CCnDirection_CC1>0</CCnDirection_CC1>
 		<POutputMode_CC1>1</POutputMode_CC1>
@@ -1437,8 +1437,6 @@
 		<Pin17Map>-1</Pin17Map>
 		<Pin29Map>-1</Pin29Map>
 		<Pin41Map>-1</Pin41Map>
-		<Pin43Map>4</Pin43Map>
-		<Pin44Map>8</Pin44Map>
 	</PINMAP>
 	<PINALIAS></PINALIAS>
 </Project>

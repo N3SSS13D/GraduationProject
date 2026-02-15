@@ -272,7 +272,7 @@
               <MiscControls></MiscControls>
               <Define></Define>
               <Undefine></Undefine>
-              <IncludePath></IncludePath>
+              <IncludePath>D:\Program Files (x86)\Keil_v5\C251\INC</IncludePath>
             </VariousControls>
           </C251>
           <Ax51>

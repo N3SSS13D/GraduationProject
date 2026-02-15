@@ -1,7 +1,9 @@
 #include "ws2812_driver.h"
 
-// WS2812 data input on P1.0
-static sbit WS2812_DI = P1^0;
+static sbit WS2812_DI_P10 = P0^3;
+static sbit WS2812_DI_P12 = P0^4;
+
+static uint8_t ws2812_output_pin = WS2812_OUT_P10;
 
 // WS2812 timing constant
 #define WS_RESET_US   100  // latch time >= 80 us
@@ -34,19 +36,58 @@ static void Delay600ns(void)
     while (i) i--;
 }
 
+static void ws2812_line_high(void)
+{
+    if (ws2812_output_pin == WS2812_OUT_P12)
+    {
+        WS2812_DI_P12 = 1;
+    }
+    else
+    {
+        WS2812_DI_P10 = 1;
+    }
+}
+
+static void ws2812_line_low(void)
+{
+    if (ws2812_output_pin == WS2812_OUT_P12)
+    {
+        WS2812_DI_P12 = 0;
+    }
+    else
+    {
+        WS2812_DI_P10 = 0;
+    }
+}
+
 void ws2812_init(void)
 {
-    // Set P1.0 as push-pull output for clean edges
-    P1M1 &= ~BIT0;
-    P1M0 |= BIT0;
+    P0M1 &= ~(BIT3 | BIT4);
+    P0M0 |= (BIT3 | BIT4);
 
-    WS2812_DI = 0;
+    WS2812_DI_P10 = 0;
+    WS2812_DI_P12 = 0;
+    ws2812_output_pin = WS2812_OUT_P10;
     ws2812_reset_latch();
+}
+
+void ws2812_select_output_pin(uint8_t output_pin)
+{
+    if (output_pin == WS2812_OUT_P12)
+    {
+        ws2812_output_pin = WS2812_OUT_P12;
+        WS2812_DI_P10 = 0;
+    }
+    else
+    {
+        ws2812_output_pin = WS2812_OUT_P10;
+        WS2812_DI_P12 = 0;
+    }
 }
 
 void ws2812_reset_latch(void)
 {
-    WS2812_DI = 0;
+    ws2812_line_low();
     delay_us(WS_RESET_US);
 }
 
@@ -55,17 +96,17 @@ void ws2812_send_bit(uint8_t bit_val)
     if (bit_val)
     {
         // T1H: high time for "1" code (~0.6us), T1L: low time (~0.3us)
-        WS2812_DI = 1;
+        ws2812_line_high();
         Delay600ns();
-        WS2812_DI = 0;
+        ws2812_line_low();
         Delay300ns();
     }
     else
     {
         // T0H: high time for "0" code (~0.3us), T0L: low time (~0.6us)
-        WS2812_DI = 1;
+        ws2812_line_high();
         Delay300ns();
-        WS2812_DI = 0;
+        ws2812_line_low();
         Delay600ns();
     }
 }
