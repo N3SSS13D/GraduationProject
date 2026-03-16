@@ -5,8 +5,10 @@
 		<McuName>Ai8051U-32Bit</McuName>
 		<McuPackage>34608</McuPackage>
 		<ProjectName>ws2812_driver</ProjectName>
-		<ProjectType>1</ProjectType>
+		<ProjectType>0</ProjectType>
 		<Encoding>1</Encoding>
+		<PortInitStatus>1</PortInitStatus>
+		<AliasSortMode>0</AliasSortMode>
 	</Target>
 	<Keil>
 		<CPUMode>1</CPUMode>
@@ -17,68 +19,8 @@
 		<Linker51>0</Linker51>
 		<InterruptFrame4>1</InterruptFrame4>
 		<RemoveUnused>1</RemoveUnused>
+		<NoOverlay>1</NoOverlay>
 	</Keil>
-	<CLOCK>
-		<PeriEnable>0</PeriEnable>
-		<EnableHIRC>1</EnableHIRC>
-		<HIRCFreqency>40000000</HIRCFreqency>
-		<HIRCSource>1</HIRCSource>
-		<HIRCPreset>7</HIRCPreset>
-		<EnableXOSC>0</EnableXOSC>
-		<XOSCFreqency>24000000</XOSCFreqency>
-		<XOSCType>0</XOSCType>
-		<XOSCGain>0</XOSCGain>
-		<EnableLIRC>0</EnableLIRC>
-		<EnableX32K>0</EnableX32K>
-		<EnableIRC48M>0</EnableIRC48M>
-		<EnablePLL>0</EnablePLL>
-		<PLLClockSource>0</PLLClockSource>
-		<PLLClockInDivider>2</PLLClockInDivider>
-		<PLLClockOutSel>0</PLLClockOutSel>
-		<PLLFrequency>0</PLLFrequency>
-		<MCLKClockSource>0</MCLKClockSource>
-		<MCLKDivider>1</MCLKDivider>
-		<SYSCLKFreqency>40000000</SYSCLKFreqency>
-		<EnableMCLKO>0</EnableMCLKO>
-		<MCLKODivider>4</MCLKODivider>
-		<MCLKOPort>-1</MCLKOPort>
-		<HSIOClockSource>0</HSIOClockSource>
-		<HSIODivider>1</HSIODivider>
-		<HSSPIDivider>1</HSSPIDivider>
-		<HSI2SDivider>1</HSI2SDivider>
-		<HSPWMADivider>1</HSPWMADivider>
-		<HSPWMBDivider>1</HSPWMBDivider>
-		<HSTFPUDivider>1</HSTFPUDivider>
-	</CLOCK>
-	<CRE>
-		<PeriEnable>0</PeriEnable>
-		<EnableX32K>1</EnableX32K>
-		<CREFreqency>40000000</CREFreqency>
-		<CREError>5</CREError>
-		<CREBand>3</CREBand>
-		<CRECycle>0</CRECycle>
-		<CREStep>0</CREStep>
-	</CRE>
-	<WDT>
-		<PeriEnable>0</PeriEnable>
-		<WDTIdleRun>0</WDTIdleRun>
-		<WDTPrescale>3</WDTPrescale>
-	</WDT>
-	<LVR>
-		<PeriEnable>0</PeriEnable>
-		<ResetPin>0</ResetPin>
-		<EnableLvr>0</EnableLvr>
-		<LvdSel>0</LvdSel>
-		<EnableInt>0</EnableInt>
-		<IntPriority>0</IntPriority>
-	</LVR>
-	<IAP>
-		<PeriEnable>0</PeriEnable>
-		<IAPEraseFunc>1</IAPEraseFunc>
-		<IAPProgramFunc>1</IAPProgramFunc>
-		<IAPReadFunc>1</IAPReadFunc>
-		<IAPOffset>0xfc00</IAPOffset>
-	</IAP>
 	<PORT0>
 		<PeriEnable>1</PeriEnable>
 		<IntPriority>0</IntPriority>
@@ -164,7 +106,7 @@
 		<PortLevel_7>1</PortLevel_7>
 	</PORT0>
 	<PORT1>
-		<PeriEnable>0</PeriEnable>
+		<PeriEnable>1</PeriEnable>
 		<IntPriority>0</IntPriority>
 		<PortMD_0>0</PortMD_0>
 		<PortPU_0>0</PortPU_0>
@@ -332,7 +274,7 @@
 		<PortLevel_7>1</PortLevel_7>
 	</PORT2>
 	<PORT3>
-		<PeriEnable>0</PeriEnable>
+		<PeriEnable>1</PeriEnable>
 		<IntPriority>0</IntPriority>
 		<PortMD_0>2</PortMD_0>
 		<PortPU_0>0</PortPU_0>
@@ -583,21 +525,81 @@
 		<PortWK_7>0</PortWK_7>
 		<PortLevel_7>1</PortLevel_7>
 	</PORT5>
-	<TIMER0>
+	<CLOCK>
 		<PeriEnable>0</PeriEnable>
+		<EnableHIRC>1</EnableHIRC>
+		<HIRCFrequency>40000000</HIRCFrequency>
+		<HIRCSource>1</HIRCSource>
+		<HIRCPreset>7</HIRCPreset>
+		<EnableXOSC>0</EnableXOSC>
+		<XOSCFrequency>24000000</XOSCFrequency>
+		<XOSCType>1</XOSCType>
+		<XOSCGain>0</XOSCGain>
+		<EnableLIRC>0</EnableLIRC>
+		<EnableX32K>0</EnableX32K>
+		<EnableIRC48M>0</EnableIRC48M>
+		<EnablePLL>0</EnablePLL>
+		<PLLClockSource>0</PLLClockSource>
+		<PLLClockInDivider>2</PLLClockInDivider>
+		<PLLClockOutSel>0</PLLClockOutSel>
+		<PLLFrequency>0</PLLFrequency>
+		<MCLKClockSource>0</MCLKClockSource>
+		<MCLKDivider>1</MCLKDivider>
+		<SYSCLKFrequency>40000000</SYSCLKFrequency>
+		<EnableMCLKO>0</EnableMCLKO>
+		<MCLKODivider>4</MCLKODivider>
+		<MCLKOPort>-1</MCLKOPort>
+		<HSIOClockSource>0</HSIOClockSource>
+		<HSIODivider>1</HSIODivider>
+		<HSSPIDivider>1</HSSPIDivider>
+		<HSI2SDivider>1</HSI2SDivider>
+		<HSPWMADivider>1</HSPWMADivider>
+		<HSPWMBDivider>1</HSPWMBDivider>
+		<HSTFPUDivider>1</HSTFPUDivider>
+	</CLOCK>
+	<CRE>
+		<PeriEnable>0</PeriEnable>
+		<EnableX32K>1</EnableX32K>
+		<CREFrequency>40000000</CREFrequency>
+		<CREError>5</CREError>
+		<CREBand>3</CREBand>
+		<CRECycle>0</CRECycle>
+		<CREStep>0</CREStep>
+	</CRE>
+	<WDT>
+		<PeriEnable>0</PeriEnable>
+		<WDTIdleRun>0</WDTIdleRun>
+		<WDTPrescale>3</WDTPrescale>
+	</WDT>
+	<LVR>
+		<PeriEnable>0</PeriEnable>
+		<ResetPin>0</ResetPin>
+		<EnableLvr>0</EnableLvr>
+		<LvdSel>0</LvdSel>
+		<EnableInt>0</EnableInt>
+		<IntPriority>0</IntPriority>
+	</LVR>
+	<IAP>
+		<PeriEnable>0</PeriEnable>
+		<IAPEraseFunc>1</IAPEraseFunc>
+		<IAPProgramFunc>1</IAPProgramFunc>
+		<IAPReadFunc>1</IAPReadFunc>
+		<IAPOffset>0xfc00</IAPOffset>
+	</IAP>
+	<TIMER0>
+		<PeriEnable>1</PeriEnable>
 		<EnableCLKO>0</EnableCLKO>
 		<EnableGATE>0</EnableGATE>
 		<BaudrateX2>0</BaudrateX2>
 		<ClockSource>0</ClockSource>
-		<TimerClock>40000000</TimerClock>
-		<Clock12T>0</Clock12T>
+		<Clock12T>1</Clock12T>
 		<TimerCT>0</TimerCT>
 		<TimerMode>0</TimerMode>
 		<TimerAction>0</TimerAction>
 		<TimerInterval>1</TimerInterval>
-		<TimerUnit>2</TimerUnit>
-		<TimerReload>64103</TimerReload>
-		<ClockPrescale>51</ClockPrescale>
+		<TimerUnit>1</TimerUnit>
+		<TimerReload>20000</TimerReload>
+		<ClockPrescale>1</ClockPrescale>
 		<UartBaudrate>9600</UartBaudrate>
 		<CLKOPort>-1</CLKOPort>
 		<EnableInt>1</EnableInt>
@@ -609,7 +611,6 @@
 		<EnableGATE>0</EnableGATE>
 		<BaudrateX2>0</BaudrateX2>
 		<ClockSource>0</ClockSource>
-		<TimerClock>0</TimerClock>
 		<Clock12T>0</Clock12T>
 		<TimerCT>0</TimerCT>
 		<TimerMode>0</TimerMode>
@@ -629,7 +630,6 @@
 		<EnableGATE>0</EnableGATE>
 		<BaudrateX2>0</BaudrateX2>
 		<ClockSource>0</ClockSource>
-		<TimerClock>0</TimerClock>
 		<Clock12T>0</Clock12T>
 		<TimerCT>0</TimerCT>
 		<TimerMode>0</TimerMode>
@@ -649,7 +649,6 @@
 		<EnableGATE>0</EnableGATE>
 		<BaudrateX2>0</BaudrateX2>
 		<ClockSource>0</ClockSource>
-		<TimerClock>0</TimerClock>
 		<Clock12T>0</Clock12T>
 		<TimerCT>0</TimerCT>
 		<TimerMode>0</TimerMode>
@@ -669,7 +668,6 @@
 		<EnableGATE>0</EnableGATE>
 		<BaudrateX2>0</BaudrateX2>
 		<ClockSource>0</ClockSource>
-		<TimerClock>0</TimerClock>
 		<Clock12T>0</Clock12T>
 		<TimerCT>0</TimerCT>
 		<TimerMode>0</TimerMode>
@@ -689,7 +687,6 @@
 		<EnableGATE>0</EnableGATE>
 		<BaudrateX2>0</BaudrateX2>
 		<ClockSource>0</ClockSource>
-		<TimerClock>0</TimerClock>
 		<Clock12T>0</Clock12T>
 		<TimerCT>0</TimerCT>
 		<TimerMode>0</TimerMode>
@@ -845,14 +842,14 @@
 	</UART4>
 	<EXTI0>
 		<PeriEnable>0</PeriEnable>
-		<EnableInt>1</EnableInt>
-		<IntType>1</IntType>
+		<EnableInt>0</EnableInt>
+		<IntType>0</IntType>
 		<IntPriority>0</IntPriority>
 	</EXTI0>
 	<EXTI1>
 		<PeriEnable>0</PeriEnable>
-		<EnableInt>1</EnableInt>
-		<IntType>1</IntType>
+		<EnableInt>0</EnableInt>
+		<IntType>0</IntType>
 		<IntPriority>0</IntPriority>
 	</EXTI1>
 	<EXTI2>
@@ -885,7 +882,7 @@
 		<ETRPort>-1</ETRPort>
 		<RepeatConvert>0</RepeatConvert>
 		<IntPriority>0</IntPriority>
-		<EanablePWMTrig>0</EanablePWMTrig>
+		<EnablePWMTrig>0</EnablePWMTrig>
 		<EnableDMA>0</EnableDMA>
 		<EnableDMAInt>0</EnableDMAInt>
 		<EnableInt>0</EnableInt>
@@ -920,7 +917,7 @@
 		<EnableHSSPI>0</EnableHSSPI>
 		<EnableTMO>0</EnableTMO>
 		<EnableTMOInt>0</EnableTMOInt>
-		<EnableInt>1</EnableInt>
+		<EnableInt>0</EnableInt>
 		<SPIPort>-1</SPIPort>
 		<SPISwap>0</SPISwap>
 		<SPIMode>0</SPIMode>
@@ -934,12 +931,12 @@
 		<TMOInterval>10</TMOInterval>
 		<TMOUnit>0</TMOUnit>
 		<IntPriority>0</IntPriority>
-		<EnableDMA>1</EnableDMA>
-		<EnableDMAInt>1</EnableDMAInt>
+		<EnableDMA>0</EnableDMA>
+		<EnableDMAInt>0</EnableDMAInt>
 		<EnableDMAAutoSS>0</EnableDMAAutoSS>
-		<DMAAmount>192</DMAAmount>
+		<DMAAmount>16</DMAAmount>
 		<DMAInterval>0</DMAInterval>
-		<DMAMode>0</DMAMode>
+		<DMAMode>2</DMAMode>
 		<DMAAutoSSPort>0</DMAAutoSSPort>
 		<DMAIntPriority>0</DMAIntPriority>
 		<DMABusPriority>0</DMABusPriority>
@@ -1001,8 +998,8 @@
 		<EnableAlarm>0</EnableAlarm>
 		<RTCClockSource>0</RTCClockSource>
 		<IntPriority>0</IntPriority>
-		<InitialTime>22:23:05</InitialTime>
-		<InitialDate>2025-12-13</InitialDate>
+		<InitialTime>23:25:19</InitialTime>
+		<InitialDate>2026-03-15</InitialDate>
 		<RTCAlarm>12:00:00</RTCAlarm>
 	</RTC>
 	<PCA>
@@ -1114,11 +1111,11 @@
 		<AlternateMode>0</AlternateMode>
 		<AddressSize>0</AddressSize>
 		<AddressMode>0</AddressMode>
-		<InstructionMode>2</InstructionMode>
+		<InstructionMode>0</InstructionMode>
 		<InstructionSendMode>0</InstructionSendMode>
 		<AlternateSize>0</AlternateSize>
 		<DummyCycles>0</DummyCycles>
-		<DataMode>2</DataMode>
+		<DataMode>0</DataMode>
 		<FunctionMode>0</FunctionMode>
 		<PollingMatchMode>0</PollingMatchMode>
 		<PollingStopMode>1</PollingStopMode>
@@ -1139,10 +1136,12 @@
 		<EnableP2PB>0</EnableP2PB>
 		<P2PSource>0</P2PSource>
 		<P2PDestination>0</P2PDestination>
+		<EnableQSPILib>1</EnableQSPILib>
+		<EnableW25QLib>1</EnableW25QLib>
 	</QSPI>
 	<PWMA>
 		<PeriEnable>0</PeriEnable>
-		<WorkMode>2</WorkMode>
+		<WorkMode>0</WorkMode>
 		<Prescaler>0</Prescaler>
 		<Counter>0</Counter>
 		<AutoReload>999</AutoReload>
@@ -1176,24 +1175,24 @@
 		<EnableTriggerInt>0</EnableTriggerInt>
 		<EnableCOMInt>0</EnableCOMInt>
 		<EnableUpdateInt>0</EnableUpdateInt>
-		<EnableTxDMA>1</EnableTxDMA>
+		<EnableTxDMA>0</EnableTxDMA>
 		<EnableRxDMA>0</EnableRxDMA>
 		<EnableTxDMAInt>0</EnableTxDMAInt>
 		<EnableRxDMAInt>0</EnableRxDMAInt>
 		<IntPriority>0</IntPriority>
 		<EnableHSMode>0</EnableHSMode>
 		<EnableHSInt>0</EnableHSInt>
-		<TxDMAAmount>100</TxDMAAmount>
+		<TxDMAAmount>1</TxDMAAmount>
 		<TxDMAInterval>0</TxDMAInterval>
 		<TxDMAIntPriority>0</TxDMAIntPriority>
 		<TxDMABusPriority>0</TxDMABusPriority>
 		<TxDMABuffer>pu8PWMADMATxBuffer</TxDMABuffer>
-		<RxDMAAmount>100</RxDMAAmount>
+		<RxDMAAmount>1</RxDMAAmount>
 		<RxDMAInterval>0</RxDMAInterval>
 		<RxDMAIntPriority>0</RxDMAIntPriority>
 		<RxDMABusPriority>0</RxDMABusPriority>
 		<RxDMABuffer>pu8PWMADMARxBuffer</RxDMABuffer>
-		<DMAEnable>1</DMAEnable>
+		<DMAEnable>0</DMAEnable>
 		<DMADirect>0</DMADirect>
 		<DMATriggerEvent>1</DMATriggerEvent>
 		<DMARegisterBase>13</DMARegisterBase>
@@ -1202,10 +1201,10 @@
 		<DMAAmount>100</DMAAmount>
 		<DMASkipReserved>1</DMASkipReserved>
 		<EnableCCnInt_CC1>0</EnableCCnInt_CC1>
-		<CCnPort_CC1>-1</CCnPort_CC1>
-		<EnableChannel_CC1>1</EnableChannel_CC1>
+		<CCnPort_CC1>0</CCnPort_CC1>
+		<EnableChannel_CC1>0</EnableChannel_CC1>
 		<CCnDirection_CC1>0</CCnDirection_CC1>
-		<POutputMode_CC1>1</POutputMode_CC1>
+		<POutputMode_CC1>0</POutputMode_CC1>
 		<NOutputMode_CC1>0</NOutputMode_CC1>
 		<ETRClearOutput_CC1>0</ETRClearOutput_CC1>
 		<OutputMode_CC1>0</OutputMode_CC1>
@@ -1213,14 +1212,14 @@
 		<PreloadCCR_CC1>0</PreloadCCR_CC1>
 		<IdlePOutputState_CC1>0</IdlePOutputState_CC1>
 		<IdleNOutputState_CC1>0</IdleNOutputState_CC1>
-		<PWMDuty_CC1>33.300</PWMDuty_CC1>
-		<CompareValue_CC1>333</CompareValue_CC1>
+		<PWMDuty_CC1>10.000</PWMDuty_CC1>
+		<CompareValue_CC1>500</CompareValue_CC1>
 		<CaptureMap_CC1>0</CaptureMap_CC1>
 		<CaptureMode_CC1>0</CaptureMode_CC1>
 		<CaptureFilter_CC1>0</CaptureFilter_CC1>
 		<CaptureDivider_CC1>0</CaptureDivider_CC1>
 		<EnableCCnInt_CC2>0</EnableCCnInt_CC2>
-		<CCnPort_CC2>-1</CCnPort_CC2>
+		<CCnPort_CC2>0</CCnPort_CC2>
 		<EnableChannel_CC2>0</EnableChannel_CC2>
 		<CCnDirection_CC2>0</CCnDirection_CC2>
 		<POutputMode_CC2>0</POutputMode_CC2>
@@ -1231,7 +1230,7 @@
 		<PreloadCCR_CC2>0</PreloadCCR_CC2>
 		<IdlePOutputState_CC2>0</IdlePOutputState_CC2>
 		<IdleNOutputState_CC2>0</IdleNOutputState_CC2>
-		<PWMDuty_CC2>50.000</PWMDuty_CC2>
+		<PWMDuty_CC2>10.000</PWMDuty_CC2>
 		<CompareValue_CC2>500</CompareValue_CC2>
 		<CaptureMap_CC2>0</CaptureMap_CC2>
 		<CaptureMode_CC2>0</CaptureMode_CC2>
@@ -1249,7 +1248,7 @@
 		<PreloadCCR_CC3>0</PreloadCCR_CC3>
 		<IdlePOutputState_CC3>0</IdlePOutputState_CC3>
 		<IdleNOutputState_CC3>0</IdleNOutputState_CC3>
-		<PWMDuty_CC3>50.000</PWMDuty_CC3>
+		<PWMDuty_CC3>10.000</PWMDuty_CC3>
 		<CompareValue_CC3>500</CompareValue_CC3>
 		<CaptureMap_CC3>0</CaptureMap_CC3>
 		<CaptureMode_CC3>0</CaptureMode_CC3>
@@ -1267,7 +1266,7 @@
 		<PreloadCCR_CC4>0</PreloadCCR_CC4>
 		<IdlePOutputState_CC4>0</IdlePOutputState_CC4>
 		<IdleNOutputState_CC4>0</IdleNOutputState_CC4>
-		<PWMDuty_CC4>50.000</PWMDuty_CC4>
+		<PWMDuty_CC4>10.000</PWMDuty_CC4>
 		<CompareValue_CC4>500</CompareValue_CC4>
 		<CaptureMap_CC4>0</CaptureMap_CC4>
 		<CaptureMode_CC4>0</CaptureMode_CC4>
@@ -1278,7 +1277,7 @@
 	</PWMA>
 	<PWMB>
 		<PeriEnable>0</PeriEnable>
-		<WorkMode>2</WorkMode>
+		<WorkMode>0</WorkMode>
 		<Prescaler>0</Prescaler>
 		<Counter>0</Counter>
 		<AutoReload>999</AutoReload>
@@ -1323,12 +1322,12 @@
 		<TxDMAInterval>0</TxDMAInterval>
 		<TxDMAIntPriority>0</TxDMAIntPriority>
 		<TxDMABusPriority>0</TxDMABusPriority>
-		<TxDMABuffer></TxDMABuffer>
+		<TxDMABuffer>pu8PWMBDMATxBuffer</TxDMABuffer>
 		<RxDMAAmount>0</RxDMAAmount>
 		<RxDMAInterval>0</RxDMAInterval>
 		<RxDMAIntPriority>0</RxDMAIntPriority>
 		<RxDMABusPriority>0</RxDMABusPriority>
-		<RxDMABuffer></RxDMABuffer>
+		<RxDMABuffer>pu8PWMBDMARxBuffer</RxDMABuffer>
 		<DMAEnable>0</DMAEnable>
 		<DMADirect>0</DMADirect>
 		<DMATriggerEvent>1</DMATriggerEvent>
@@ -1349,7 +1348,7 @@
 		<PreloadCCR_CC1>0</PreloadCCR_CC1>
 		<IdlePOutputState_CC1>0</IdlePOutputState_CC1>
 		<IdleNOutputState_CC1>0</IdleNOutputState_CC1>
-		<PWMDuty_CC1>50.000</PWMDuty_CC1>
+		<PWMDuty_CC1>10.000</PWMDuty_CC1>
 		<CompareValue_CC1>500</CompareValue_CC1>
 		<CaptureMap_CC1>0</CaptureMap_CC1>
 		<CaptureMode_CC1>0</CaptureMode_CC1>
@@ -1367,7 +1366,7 @@
 		<PreloadCCR_CC2>0</PreloadCCR_CC2>
 		<IdlePOutputState_CC2>0</IdlePOutputState_CC2>
 		<IdleNOutputState_CC2>0</IdleNOutputState_CC2>
-		<PWMDuty_CC2>50.000</PWMDuty_CC2>
+		<PWMDuty_CC2>10.000</PWMDuty_CC2>
 		<CompareValue_CC2>500</CompareValue_CC2>
 		<CaptureMap_CC2>0</CaptureMap_CC2>
 		<CaptureMode_CC2>0</CaptureMode_CC2>
@@ -1375,9 +1374,9 @@
 		<CaptureDivider_CC2>0</CaptureDivider_CC2>
 		<EnableCCnInt_CC3>0</EnableCCnInt_CC3>
 		<CCnPort_CC3>-1</CCnPort_CC3>
-		<EnableChannel_CC3>1</EnableChannel_CC3>
+		<EnableChannel_CC3>0</EnableChannel_CC3>
 		<CCnDirection_CC3>0</CCnDirection_CC3>
-		<POutputMode_CC3>1</POutputMode_CC3>
+		<POutputMode_CC3>0</POutputMode_CC3>
 		<NOutputMode_CC3>0</NOutputMode_CC3>
 		<ETRClearOutput_CC3>0</ETRClearOutput_CC3>
 		<OutputMode_CC3>0</OutputMode_CC3>
@@ -1385,8 +1384,8 @@
 		<PreloadCCR_CC3>0</PreloadCCR_CC3>
 		<IdlePOutputState_CC3>0</IdlePOutputState_CC3>
 		<IdleNOutputState_CC3>0</IdleNOutputState_CC3>
-		<PWMDuty_CC3>33.300</PWMDuty_CC3>
-		<CompareValue_CC3>333</CompareValue_CC3>
+		<PWMDuty_CC3>10.000</PWMDuty_CC3>
+		<CompareValue_CC3>500</CompareValue_CC3>
 		<CaptureMap_CC3>0</CaptureMap_CC3>
 		<CaptureMode_CC3>0</CaptureMode_CC3>
 		<CaptureFilter_CC3>0</CaptureFilter_CC3>
@@ -1403,7 +1402,7 @@
 		<PreloadCCR_CC4>0</PreloadCCR_CC4>
 		<IdlePOutputState_CC4>0</IdlePOutputState_CC4>
 		<IdleNOutputState_CC4>0</IdleNOutputState_CC4>
-		<PWMDuty_CC4>50.000</PWMDuty_CC4>
+		<PWMDuty_CC4>10.000</PWMDuty_CC4>
 		<CompareValue_CC4>500</CompareValue_CC4>
 		<CaptureMap_CC4>0</CaptureMap_CC4>
 		<CaptureMode_CC4>0</CaptureMode_CC4>
@@ -1434,9 +1433,13 @@
 		<PinCount>256</PinCount>
 		<Pin06Map>4</Pin06Map>
 		<Pin08Map>2</Pin08Map>
-		<Pin17Map>-1</Pin17Map>
-		<Pin29Map>-1</Pin29Map>
-		<Pin41Map>-1</Pin41Map>
+		<Pin17Map>255</Pin17Map>
+		<Pin29Map>255</Pin29Map>
+		<Pin41Map>255</Pin41Map>
+		<Pin43Map>4</Pin43Map>
+		<Pin44Map>8</Pin44Map>
+		<Pin45Map>8</Pin45Map>
+		<Pin46Map>8</Pin46Map>
 	</PINMAP>
 	<PINALIAS></PINALIAS>
 </Project>

@@ -715,12 +715,12 @@
 #define I2C_CheckSlaveSTOFlag()         READ_REG_BIT(I2CSLST, I2CSLST_STOIF_MSK)
 #define I2C_CheckSlaveRXFlag()          READ_REG_BIT(I2CSLST, I2CSLST_RXIF_MSK)
 #define I2C_CheckSlaveTXFlag()          READ_REG_BIT(I2CSLST, I2CSLST_TXIF_MSK)
-#define I2C_CheckSlaveAllFlag()         READ_REG_BIT(I2CSLST, I2CSLST_STAIF_MSK | I2CSLST_STOIT_MSK | I2CSLST_RXIT_MSK | I2CSLST_TXIF_MSK)
+#define I2C_CheckSlaveAllFlag()         READ_REG_BIT(I2CSLST, I2CSLST_STAIF_MSK | I2CSLST_STOIF_MSK | I2CSLST_RXIF_MSK | I2CSLST_TXIF_MSK)
 #define I2C_ClearSlaveSTAFlag()         CLR_REG_BIT(I2CSLST, I2CSLST_STAIF_MSK)
 #define I2C_ClearSlaveSTOFlag()         CLR_REG_BIT(I2CSLST, I2CSLST_STOIF_MSK)
 #define I2C_ClearSlaveRXFlag()          CLR_REG_BIT(I2CSLST, I2CSLST_RXIF_MSK)
 #define I2C_ClearSlaveTXFlag()          CLR_REG_BIT(I2CSLST, I2CSLST_TXIF_MSK)
-#define I2C_ClearSlaveAllFlag()         CLR_REG_BIT(I2CSLST, I2CSLST_STAIF_MSK | I2CSLST_STOIT_MSK | I2CSLST_RXIT_MSK | I2CSLST_TXIF_MSK)
+#define I2C_ClearSlaveAllFlag()         CLR_REG_BIT(I2CSLST, I2CSLST_STAIF_MSK | I2CSLST_STOIF_MSK | I2CSLST_RXIF_MSK | I2CSLST_TXIF_MSK)
 
 #define PWMASR1_BIF_MSK                 BIT7
 #define PWMASR1_TIF_MSK                 BIT6
@@ -810,45 +810,45 @@
 #define PWMASR2_CC3OF_MSK               BIT3
 #define PWMASR2_CC2OF_MSK               BIT2
 #define PWMASR2_CC1OF_MSK               BIT1
-#define PWMA_CheckCC4OverFlag()         READ_REG_BIT(PWMA_SR2, PWMASR1_CC4OF_MSK)
-#define PWMA_CheckCC3OverFlag()         READ_REG_BIT(PWMA_SR2, PWMASR1_CC3OF_MSK)
-#define PWMA_CheckCC2OverFlag()         READ_REG_BIT(PWMA_SR2, PWMASR1_CC2OF_MSK)
-#define PWMA_CheckCC1OverFlag()         READ_REG_BIT(PWMA_SR2, PWMASR1_CC1OF_MSK)
-#define PWMA_ClearCC4OverFlag()         CLR_REG_BIT(PWMA_SR2, PWMASR1_CC4OF_MSK)
-#define PWMA_ClearCC3OverFlag()         CLR_REG_BIT(PWMA_SR2, PWMASR1_CC3OF_MSK)
-#define PWMA_ClearCC2OverFlag()         CLR_REG_BIT(PWMA_SR2, PWMASR1_CC2OF_MSK)
-#define PWMA_ClearCC1OverFlag()         CLR_REG_BIT(PWMA_SR2, PWMASR1_CC1OF_MSK)
+#define PWMA_CheckCC4OverFlag()         READ_REG_BIT(PWMA_SR2, PWMASR2_CC4OF_MSK)
+#define PWMA_CheckCC3OverFlag()         READ_REG_BIT(PWMA_SR2, PWMASR2_CC3OF_MSK)
+#define PWMA_CheckCC2OverFlag()         READ_REG_BIT(PWMA_SR2, PWMASR2_CC2OF_MSK)
+#define PWMA_CheckCC1OverFlag()         READ_REG_BIT(PWMA_SR2, PWMASR2_CC1OF_MSK)
+#define PWMA_ClearCC4OverFlag()         CLR_REG_BIT(PWMA_SR2, PWMASR2_CC4OF_MSK)
+#define PWMA_ClearCC3OverFlag()         CLR_REG_BIT(PWMA_SR2, PWMASR2_CC3OF_MSK)
+#define PWMA_ClearCC2OverFlag()         CLR_REG_BIT(PWMA_SR2, PWMASR2_CC2OF_MSK)
+#define PWMA_ClearCC1OverFlag()         CLR_REG_BIT(PWMA_SR2, PWMASR2_CC1OF_MSK)
 
-#define HSPWMA_CheckCC4OverFlag()       READ_HSPWMA_BIT(PWMA_SR2, PWMASR1_CC4OF_MSK)
-#define HSPWMA_CheckCC3OverFlag()       READ_HSPWMA_BIT(PWMA_SR2, PWMASR1_CC3OF_MSK)
-#define HSPWMA_CheckCC2OverFlag()       READ_HSPWMA_BIT(PWMA_SR2, PWMASR1_CC2OF_MSK)
-#define HSPWMA_CheckCC1OverFlag()       READ_HSPWMA_BIT(PWMA_SR2, PWMASR1_CC1OF_MSK)
-#define HSPWMA_ClearCC4OverFlag()       CLR_HSPWMA_BIT(PWMA_SR2, PWMASR1_CC4OF_MSK)
-#define HSPWMA_ClearCC3OverFlag()       CLR_HSPWMA_BIT(PWMA_SR2, PWMASR1_CC3OF_MSK)
-#define HSPWMA_ClearCC2OverFlag()       CLR_HSPWMA_BIT(PWMA_SR2, PWMASR1_CC2OF_MSK)
-#define HSPWMA_ClearCC1OverFlag()       CLR_HSPWMA_BIT(PWMA_SR2, PWMASR1_CC1OF_MSK)
+#define HSPWMA_CheckCC4OverFlag()       READ_HSPWMA_BIT(PWMA_SR2, PWMASR2_CC4OF_MSK)
+#define HSPWMA_CheckCC3OverFlag()       READ_HSPWMA_BIT(PWMA_SR2, PWMASR2_CC3OF_MSK)
+#define HSPWMA_CheckCC2OverFlag()       READ_HSPWMA_BIT(PWMA_SR2, PWMASR2_CC2OF_MSK)
+#define HSPWMA_CheckCC1OverFlag()       READ_HSPWMA_BIT(PWMA_SR2, PWMASR2_CC1OF_MSK)
+#define HSPWMA_ClearCC4OverFlag()       CLR_HSPWMA_BIT(PWMA_SR2, PWMASR2_CC4OF_MSK)
+#define HSPWMA_ClearCC3OverFlag()       CLR_HSPWMA_BIT(PWMA_SR2, PWMASR2_CC3OF_MSK)
+#define HSPWMA_ClearCC2OverFlag()       CLR_HSPWMA_BIT(PWMA_SR2, PWMASR2_CC2OF_MSK)
+#define HSPWMA_ClearCC1OverFlag()       CLR_HSPWMA_BIT(PWMA_SR2, PWMASR2_CC1OF_MSK)
 
 #define PWMBSR2_CC8OF_MSK               BIT4
 #define PWMBSR2_CC7OF_MSK               BIT3
 #define PWMBSR2_CC6OF_MSK               BIT2
 #define PWMBSR2_CC5OF_MSK               BIT1
-#define PWMB_CheckCC8OverFlag()         READ_REG_BIT(PWMB_SR2, PWMASR1_CC8OF_MSK)
-#define PWMB_CheckCC7OverFlag()         READ_REG_BIT(PWMB_SR2, PWMASR1_CC7OF_MSK)
-#define PWMB_CheckCC6OverFlag()         READ_REG_BIT(PWMB_SR2, PWMASR1_CC6OF_MSK)
-#define PWMB_CheckCC5OverFlag()         READ_REG_BIT(PWMB_SR2, PWMASR1_CC5OF_MSK)
-#define PWMB_ClearCC8OverFlag()         CLR_REG_BIT(PWMB_SR2, PWMASR1_CC8OF_MSK)
-#define PWMB_ClearCC7OverFlag()         CLR_REG_BIT(PWMB_SR2, PWMASR1_CC7OF_MSK)
-#define PWMB_ClearCC6OverFlag()         CLR_REG_BIT(PWMB_SR2, PWMASR1_CC6OF_MSK)
-#define PWMB_ClearCC5OverFlag()         CLR_REG_BIT(PWMB_SR2, PWMASR1_CC5OF_MSK)
+#define PWMB_CheckCC8OverFlag()         READ_REG_BIT(PWMB_SR2, PWMASR2_CC8OF_MSK)
+#define PWMB_CheckCC7OverFlag()         READ_REG_BIT(PWMB_SR2, PWMASR2_CC7OF_MSK)
+#define PWMB_CheckCC6OverFlag()         READ_REG_BIT(PWMB_SR2, PWMASR2_CC6OF_MSK)
+#define PWMB_CheckCC5OverFlag()         READ_REG_BIT(PWMB_SR2, PWMASR2_CC5OF_MSK)
+#define PWMB_ClearCC8OverFlag()         CLR_REG_BIT(PWMB_SR2, PWMASR2_CC8OF_MSK)
+#define PWMB_ClearCC7OverFlag()         CLR_REG_BIT(PWMB_SR2, PWMASR2_CC7OF_MSK)
+#define PWMB_ClearCC6OverFlag()         CLR_REG_BIT(PWMB_SR2, PWMASR2_CC6OF_MSK)
+#define PWMB_ClearCC5OverFlag()         CLR_REG_BIT(PWMB_SR2, PWMASR2_CC5OF_MSK)
 
-#define HSPWMB_CheckCC8OverFlag()       READ_HSPWMB_BIT(PWMB_SR2, PWMASR1_CC8OF_MSK)
-#define HSPWMB_CheckCC7OverFlag()       READ_HSPWMB_BIT(PWMB_SR2, PWMASR1_CC7OF_MSK)
-#define HSPWMB_CheckCC6OverFlag()       READ_HSPWMB_BIT(PWMB_SR2, PWMASR1_CC6OF_MSK)
-#define HSPWMB_CheckCC5OverFlag()       READ_HSPWMB_BIT(PWMB_SR2, PWMASR1_CC5OF_MSK)
-#define HSPWMB_ClearCC8OverFlag()       CLR_HSPWMB_BIT(PWMB_SR2, PWMASR1_CC8OF_MSK)
-#define HSPWMB_ClearCC7OverFlag()       CLR_HSPWMB_BIT(PWMB_SR2, PWMASR1_CC7OF_MSK)
-#define HSPWMB_ClearCC6OverFlag()       CLR_HSPWMB_BIT(PWMB_SR2, PWMASR1_CC6OF_MSK)
-#define HSPWMB_ClearCC5OverFlag()       CLR_HSPWMB_BIT(PWMB_SR2, PWMASR1_CC5OF_MSK)
+#define HSPWMB_CheckCC8OverFlag()       READ_HSPWMB_BIT(PWMB_SR2, PWMASR2_CC8OF_MSK)
+#define HSPWMB_CheckCC7OverFlag()       READ_HSPWMB_BIT(PWMB_SR2, PWMASR2_CC7OF_MSK)
+#define HSPWMB_CheckCC6OverFlag()       READ_HSPWMB_BIT(PWMB_SR2, PWMASR2_CC6OF_MSK)
+#define HSPWMB_CheckCC5OverFlag()       READ_HSPWMB_BIT(PWMB_SR2, PWMASR2_CC5OF_MSK)
+#define HSPWMB_ClearCC8OverFlag()       CLR_HSPWMB_BIT(PWMB_SR2, PWMASR2_CC8OF_MSK)
+#define HSPWMB_ClearCC7OverFlag()       CLR_HSPWMB_BIT(PWMB_SR2, PWMASR2_CC7OF_MSK)
+#define HSPWMB_ClearCC6OverFlag()       CLR_HSPWMB_BIT(PWMB_SR2, PWMASR2_CC6OF_MSK)
+#define HSPWMB_ClearCC5OverFlag()       CLR_HSPWMB_BIT(PWMB_SR2, PWMASR2_CC5OF_MSK)
 
 #define PORT_CheckFlag(p, b)            READ_REG_BIT(P##p##INTF, (b))
 #define PORT_ClearFlag(p, b)            CLR_REG_BIT(P##p##INTF, (b))
@@ -1151,7 +1151,7 @@
 #define EAXFR_MSK                       BIT7
 #define EnableAccessXFR()               SET_REG_BIT(P_SW2, EAXFR_MSK)
 
-#define AccessCodeSpeed(n)              WRITE_REG(WTST, (n)) 
+#define AccessCodeSpeed(n)              WRITE_REG(WTST, (n))
 #define AccessCodeFastest()             AccessCodeSpeed(0)
 
 #define ACCIXRAM_MSK                    (BIT2 | BIT1 | BIT0)
@@ -1344,18 +1344,18 @@
 #define PWMA_BRKSwitchCMPO()            MODIFY_REG(PWMA_ETRPS, PWMA_BRKPS_MSK, ((1) << 2))
 #define PWMA_BRKSwitchP06()             MODIFY_REG(PWMA_ETRPS, PWMA_BRKPS_MSK, ((2) << 2))
 
-#define HSPWMA_BRKSwitchP35()           PWMA_BRKSwitchP35() 
+#define HSPWMA_BRKSwitchP35()           PWMA_BRKSwitchP35()
 #define HSPWMA_BRKSwitchCMPO()          PWMA_BRKSwitchCMPO()
-#define HSPWMA_BRKSwitchP06()           PWMA_BRKSwitchP06() 
+#define HSPWMA_BRKSwitchP06()           PWMA_BRKSwitchP06()
 
 #define PWMB_BRKPS_MSK                  (BIT3 | BIT2)
 #define PWMB_BRKSwitchP35()             MODIFY_REG(PWMB_ETRPS, PWMB_BRKPS_MSK, ((0) << 2))
 #define PWMB_BRKSwitchCMPO()            MODIFY_REG(PWMB_ETRPS, PWMB_BRKPS_MSK, ((1) << 2))
 #define PWMB_BRKSwitchP06()             MODIFY_REG(PWMB_ETRPS, PWMB_BRKPS_MSK, ((2) << 2))
 
-#define HSPWMB_BRKSwitchP35()           PWMB_BRKSwitchP35() 
+#define HSPWMB_BRKSwitchP35()           PWMB_BRKSwitchP35()
 #define HSPWMB_BRKSwitchCMPO()          PWMB_BRKSwitchCMPO()
-#define HSPWMB_BRKSwitchP06()           PWMB_BRKSwitchP06() 
+#define HSPWMB_BRKSwitchP06()           PWMB_BRKSwitchP06()
 
 #define ADC_ETRPS_MSK                   (BIT7 | BIT6)
 #define ADC_ETRSwitchP47()              MODIFY_REG(ADCEXCFG, ADC_ETRPS_MSK, ((0) << 6))
@@ -1883,9 +1883,9 @@
 #define TIMER1_SetPrescale(n)           (TM1PS = (n))
 
 #define TMOD_T1M_MSK                    (BIT5 | BIT4)
-#define TIMER1_Mode0()                  MODIFY_REG(TMOD, TMOD_T1M_MSK, ((0) << 0))
-#define TIMER1_Mode1()                  MODIFY_REG(TMOD, TMOD_T1M_MSK, ((1) << 0))
-#define TIMER1_Mode2()                  MODIFY_REG(TMOD, TMOD_T1M_MSK, ((2) << 0))
+#define TIMER1_Mode0()                  MODIFY_REG(TMOD, TMOD_T1M_MSK, ((0) << 4))
+#define TIMER1_Mode1()                  MODIFY_REG(TMOD, TMOD_T1M_MSK, ((1) << 4))
+#define TIMER1_Mode2()                  MODIFY_REG(TMOD, TMOD_T1M_MSK, ((2) << 4))
 
 #define AUXR_T1X12_MSK                  BIT6
 #define TIMER1_1TMode()                 SET_REG_BIT(AUXR, AUXR_T1X12_MSK)
@@ -2072,6 +2072,9 @@
 
 #define S2CFG_S2M0X6_MSK                BIT5
 #define UART2_Mode0BaudrateX6()         SET_REG_BIT(S2CFG, S2CFG_S2M0X6_MSK)
+
+#define S2CFG_W1_MSK                    BIT1
+#define UART2_Timer2BRT()               SET_REG_BIT(S2CFG, S2CFG_W1_MSK)
 
 #define USART2CR2_PCEN_MSK              BIT2
 #define USART2CR2_PS_MSK                BIT1
@@ -2548,13 +2551,13 @@
                                         QSPI_AR1 = BYTE0(n)
 
 /*
-#define QSPI_SetAlternate(n)            QSPI_ABR4 = BYTE3(n);       \           
-                                        QSPI_ABR3 = BYTE2(n);       \           
-                                        QSPI_ABR2 = BYTE1(n);       \          
-                                        QSPI_ABR1 = BYTE0(n)               
+#define QSPI_SetAlternate(n)            QSPI_ABR4 = BYTE3(n);       \
+                                        QSPI_ABR3 = BYTE2(n);       \
+                                        QSPI_ABR2 = BYTE1(n);       \
+                                        QSPI_ABR1 = BYTE0(n)
 */
 
-#define QSPI_SetAlternate(n)            QSPI_ABR = BYTE0(n)               
+#define QSPI_SetAlternate(n)            QSPI_ABR = BYTE0(n)
 
 #define QSPI_SetInstruction(n)          (QSPI_CCR1 = (n))
 
@@ -2986,7 +2989,7 @@
 #define DMA_UART2_ReadTxDone()          MAKEWORD(DMA_UR2T_DONE, DMA_UR2T_DONEH)
 #define DMA_UART3_ReadTxDone()          MAKEWORD(DMA_UR3T_DONE, DMA_UR3T_DONEH)
 #define DMA_UART4_ReadTxDone()          MAKEWORD(DMA_UR4T_DONE, DMA_UR4T_DONEH)
-                               
+
 #define DMA_UART1_ReadRxDone()          MAKEWORD(DMA_UR1R_DONE, DMA_UR1R_DONEH)
 #define DMA_UART2_ReadRxDone()          MAKEWORD(DMA_UR2R_DONE, DMA_UR2R_DONEH)
 #define DMA_UART3_ReadRxDone()          MAKEWORD(DMA_UR3R_DONE, DMA_UR3R_DONEH)

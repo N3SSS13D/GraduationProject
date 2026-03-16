@@ -42,8 +42,14 @@
 //<<AICUBE_USER_INCLUDE_END>>
 
 
-#include "port.h"
-#include "usblib.h"
+void PORT0_Init(void);
+void PORT1_Init(void);
+void PORT3_Init(void);
+void TIMER0_Init(void);
+void USBLIB_Init(void);
+void USBLIB_WaitConfiged(void);
+void USBLIB_OUT_Callback(void);
+
 
 void SYS_Init(void);
 void delay_us(uint16_t us);
