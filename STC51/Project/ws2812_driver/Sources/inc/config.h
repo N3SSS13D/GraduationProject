@@ -38,18 +38,16 @@
 
 
 //<<AICUBE_USER_INCLUDE_BEGIN>>
-// 在此添加用户头文件包含  
+// 在此添加用户头文件包含 
+#include "test.h" 
 //<<AICUBE_USER_INCLUDE_END>>
 
 
-void PORT0_Init(void);
-void PORT1_Init(void);
-void PORT3_Init(void);
-void TIMER0_Init(void);
-void USBLIB_Init(void);
-void USBLIB_WaitConfiged(void);
-void USBLIB_OUT_Callback(void);
-
+#include "port.h"
+#include "timer.h"
+#include "exti.h"
+#include "pwm.h"
+#include "usblib.h"
 
 void SYS_Init(void);
 void delay_us(uint16_t us);

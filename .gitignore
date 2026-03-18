@@ -1,0 +1,84 @@
+# Ignore legacy PWMA-DMA reference project under STC51 Project
+STC51/Project/PWMA-DMA/
+STC51/Project/test/
+
+# Ignore archive packages under STC51 Project
+STC51/Project/*.rar
+STC51/Project/**/*.rar
+STC51/Project/*.RAR
+STC51/Project/**/*.RAR
+
+# Build output folders (Keil / embedded projects)
+**/Objects/
+**/Object/
+**/Listings/
+**/Listing/
+**/Output/
+**/output/
+**/obj/
+**/bin/
+
+# Build and debug artifacts
+*.o
+*.obj
+*.d
+*.dep
+*.su
+*.lst
+*.map
+*.hex
+*.bin
+*.elf
+*.axf
+*.crf
+*.lnp
+*.m51
+*.build_log.htm
+
+# Flash/programmer and temporary runtime files
+*.log
+*.bak
+*.tmp
+*.temp
+*.cache
+*.pid
+*.seed
+*.stackdump
+*~
+
+# Editor temporary files
+*.swp
+*.swo
+*.orig
+
+# Keil user-specific files (keep shared project files tracked)
+*.uvopt
+*.uvoptx
+*.uvgui.*
+
+# Visual Studio Code / IDE local files
+# Keep project-level VS Code configuration tracked.
+.vscode/*.log
+.vscode/*.tmp
+.vscode/*.temp
+.vscode/*.cache
+.vscode/*.pid
+.vscode/*.seed
+.vscode/*.stackdump
+.vscode/*~
+.vscode/*.code-snippets
+.vscode/*.db
+.vscode/*.sqlite
+.vscode/ipch/
+.vscode/.ropeproject/
+.idea/
+*.code-workspace
+
+# OS generated files
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+STC51/Project/ws2812_driver/ws2812_driver.uvgui.XiaoHai
+STC51/Project/ws2812_driver/ws2812_driver.uvopt
+STC51/Project/ws2812_driver/ws2812_driver.uvproj

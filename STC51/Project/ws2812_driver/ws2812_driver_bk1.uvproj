@@ -7,20 +7,20 @@
 
   <Targets>
     <Target>
-      <TargetName>Target 1</TargetName>
+      <TargetName>ws2812_driver</TargetName>
       <ToolsetNumber>0x1</ToolsetNumber>
       <ToolsetName>MCS-251</ToolsetName>
-      <uAC6>0</uAC6>
+      <uAC6>8</uAC6>
       <TargetOption>
         <TargetCommonOption>
-          <Device>STC32G12K128 Series</Device>
-          <Vendor>STC</Vendor>
-          <Cpu>IRAM(0-0xFFF) XRAM(0x10000-0x11FFF) IROM(0xFE0000-0xFFFFFF) CLOCK(35000000)</Cpu>
+          <Device>AI8051U-32Bit Series</Device>
+          <Vendor>AI</Vendor>
+          <Cpu>IRAM(0-0x7FF) XRAM(0x10000-0x17FFF) IROM(0xFF0000-0xFFFFFF) CLOCK(35000000)</Cpu>
           <FlashUtilSpec></FlashUtilSpec>
           <StartupFile>"LIB\STARTUP251.ASM" ("80251 Startup Code")</StartupFile>
           <FlashDriverDll></FlashDriverDll>
-          <DeviceId>63457</DeviceId>
-          <RegisterFile>STC16F.H</RegisterFile>
+          <DeviceId>30900</DeviceId>
+          <RegisterFile>AI8051U.H</RegisterFile>
           <MemoryEnv></MemoryEnv>
           <Cmp></Cmp>
           <Asm></Asm>
@@ -33,10 +33,10 @@
           <SFDFile></SFDFile>
           <bCustSvd>0</bCustSvd>
           <UseEnv>0</UseEnv>
-          <BinPath></BinPath>
+          <BinPath>S:\Embedded\Keil\C251\BIN\</BinPath>
           <IncludePath></IncludePath>
           <LibPath></LibPath>
-          <RegisterFilePath>STC\</RegisterFilePath>
+          <RegisterFilePath></RegisterFilePath>
           <DBRegisterFilePath>STC\</DBRegisterFilePath>
           <TargetStatus>
             <Error>0</Error>
@@ -45,14 +45,14 @@
             <NotGenerated>0</NotGenerated>
             <InvalidFlash>1</InvalidFlash>
           </TargetStatus>
-          <OutputDirectory>.\obj\</OutputDirectory>
-          <OutputName>pwm</OutputName>
+          <OutputDirectory>.\Objects\</OutputDirectory>
+          <OutputName>ws2812_driver</OutputName>
           <CreateExecutable>1</CreateExecutable>
           <CreateLib>0</CreateLib>
           <CreateHexFile>1</CreateHexFile>
           <DebugInformation>1</DebugInformation>
           <BrowseInformation>1</BrowseInformation>
-          <ListingPath>.\obj\</ListingPath>
+          <ListingPath>.\Listings\</ListingPath>
           <HexFormatSelection>0</HexFormatSelection>
           <Merge32K>0</Merge32K>
           <CreateBatchFile>0</CreateBatchFile>
@@ -145,7 +145,7 @@
             <RestoreMemoryDisplay>1</RestoreMemoryDisplay>
             <RestoreFunctions>0</RestoreFunctions>
             <RestoreToolbox>1</RestoreToolbox>
-            <RestoreTracepoints>1</RestoreTracepoints>
+            <RestoreTracepoints>0</RestoreTracepoints>
             <RestoreSysVw>1</RestoreSysVw>
           </Target>
           <RunDebugAfterBuild>0</RunDebugAfterBuild>
@@ -211,18 +211,18 @@
               </RCB>
               <IROM>
                 <Type>1</Type>
-                <StartAddress>0xfe0000</StartAddress>
-                <Size>0x20000</Size>
+                <StartAddress>0xff0000</StartAddress>
+                <Size>0x10000</Size>
               </IROM>
               <IRAM>
                 <Type>0</Type>
                 <StartAddress>0x0</StartAddress>
-                <Size>0x1000</Size>
+                <Size>0x800</Size>
               </IRAM>
               <XRAM>
                 <Type>0</Type>
                 <StartAddress>0x10000</StartAddress>
-                <Size>0x2000</Size>
+                <Size>0x8000</Size>
               </XRAM>
               <Ocm1>
                 <Type>0</Type>
@@ -272,7 +272,7 @@
               <MiscControls></MiscControls>
               <Define></Define>
               <Undefine></Undefine>
-              <IncludePath>D:\Program Files (x86)\Keil_v5\C251\INC</IncludePath>
+              <IncludePath>.\Sources\inc;.\Sources\lib;.\Sources\app;.\Sources\drv;.\Sources\hal;.\Sources\mid;S:\Embedded\Keil\C251\INC\STC</IncludePath>
             </VariousControls>
           </C251>
           <Ax51>
@@ -295,8 +295,8 @@
             <WarningLevel>2</WarningLevel>
             <DataOverlaying>1</DataOverlaying>
             <OverlayString></OverlayString>
-            <MiscControls></MiscControls>
-            <DisableWarningNumbers></DisableWarningNumbers>
+            <MiscControls>REMOVEUNUSED, NOOVERLAY</MiscControls>
+            <DisableWarningNumbers>16</DisableWarningNumbers>
             <LinkerCmdFile></LinkerCmdFile>
             <Assign></Assign>
             <ReserveString></ReserveString>
@@ -322,12 +322,76 @@
       </TargetOption>
       <Groups>
         <Group>
-          <GroupName>Source Group 1</GroupName>
+          <GroupName>User Sources</GroupName>
+        </Group>
+        <Group>
+          <GroupName>app</GroupName>
           <Files>
             <File>
-              <FileName>WS2812B-PWMA-DMA-24灯环-1通道.c</FileName>
+              <FileName>test.c</FileName>
               <FileType>1</FileType>
-              <FilePath>.\WS2812B-PWMA-DMA-24灯环-1通道.c</FilePath>
+              <FilePath>.\Sources\app\test.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>drv</GroupName>
+          <Files>
+            <File>
+              <FileName>ws2812_drv.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Sources\drv\ws2812_drv.c</FilePath>
+            </File>
+            <File>
+              <FileName>hc595_drv.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Sources\drv\hc595_drv.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>hal</GroupName>
+        </Group>
+        <Group>
+          <GroupName>mid</GroupName>
+        </Group>
+        <Group>
+          <GroupName>AiCube</GroupName>
+          <Files>
+            <File>
+              <FileName>main.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Sources\main.c</FilePath>
+            </File>
+            <File>
+              <FileName>port.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Sources\port.c</FilePath>
+            </File>
+            <File>
+              <FileName>timer.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Sources\timer.c</FilePath>
+            </File>
+            <File>
+              <FileName>exti.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Sources\exti.c</FilePath>
+            </File>
+            <File>
+              <FileName>pwm.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Sources\pwm.c</FilePath>
+            </File>
+            <File>
+              <FileName>usblib.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Sources\usblib.c</FilePath>
+            </File>
+            <File>
+              <FileName>stc_usb_cdc_32g.lib</FileName>
+              <FileType>4</FileType>
+              <FilePath>.\Sources\lib\stc_usb_cdc_32g.lib</FilePath>
             </File>
           </Files>
         </Group>

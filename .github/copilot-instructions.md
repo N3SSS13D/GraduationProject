@@ -39,3 +39,6 @@
 - Initialize variables before their first use (initialization at point of use is acceptable); always initialize pointers and global variables at their definition
 - Add a file-level comment block to every header file containing at minimum: filename, author, creation date, and version number
 - Write all comments in Doxygen style using `/* */` block syntax; write comments in English; never nest comments; delete unused code rather than commenting it out; avoid inserting comments in the middle of a code line
+- After each code change, add appropriate explanatory comments for structure and behavior in modified code (follow existing comment style, keep comments concise, and avoid redundant comments)
+- After each completed coding task, provide a Markdown-formatted summary report that includes: change overview, affected files, key logic updates, and verification status
+- When adding custom functions, only use existing/valid APIs and ensure each custom function is declared in the corresponding header file before use

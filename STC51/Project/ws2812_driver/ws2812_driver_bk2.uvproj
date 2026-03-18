@@ -354,18 +354,6 @@
         </Group>
         <Group>
           <GroupName>mid</GroupName>
-          <Files>
-            <File>
-              <FileName>key_ctrl.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\Sources\mid\key_ctrl.c</FilePath>
-            </File>
-            <File>
-              <FileName>mid_task.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\Sources\mid\mid_task.c</FilePath>
-            </File>
-          </Files>
         </Group>
         <Group>
           <GroupName>AiCube</GroupName>
