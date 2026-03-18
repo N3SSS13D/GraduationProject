@@ -73,9 +73,9 @@ void SYS_Init(void)
     PORT1_Init();                       //P1口初始化
     PORT3_Init();                       //P3口初始化
     PORT4_Init();                       //P4口初始化
-    // TIMER0_Init();                      //定时器0初始化
-    // EXTI0_Init();                       //INT0初始化
-    // EXTI1_Init();                       //INT1初始化
+    TIMER0_Init();                      //定时器0初始化
+    EXTI0_Init();                       //INT0初始化(P32按键)
+    EXTI1_Init();                       //INT1初始化(P33按键)
     // PWMA_Init();                        //高级PWMA初始化
     delay_ms(1);
     USBLIB_Init();                      //USB库初始化

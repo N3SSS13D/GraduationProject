@@ -16,10 +16,14 @@
 
 
 typedef void (*Timer0Hook1ms_t)(void);
+typedef void (*Timer0HookUs_t)(void);
 
 void TIMER0_Init(void);
 uint32_t TIMER0_GetTickMs(void);
 void TIMER0_Register1msHook(Timer0Hook1ms_t hook);
+void TIMER0_RegisterUsHook(Timer0HookUs_t hook);
+void TIMER0_StartOneShotUs(uint32_t delayUs);
+// void TIMER0_Stop(void);
 
 
 
