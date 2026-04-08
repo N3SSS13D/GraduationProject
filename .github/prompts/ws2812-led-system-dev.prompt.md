@@ -53,3 +53,19 @@ Output format:
 - "Next steps"
 
 If the request is ambiguous, ask only the minimum clarifying questions needed to continue.
+
+---
+
+## Iteration Issue Summary (append-only)
+
+### 2026-04-08
+
+- Issue: occasional channel-group disorder under dual-channel PWM+DMA output.
+- Root causes: pair-length alignment, DMA source address alignment, tail-boundary sensitivity, and weak fault recovery.
+- Applied fixes:
+	- enforce even TX length,
+	- enforce aligned DMA source pointer,
+	- append a CH1/CH2 zero tail guard pair,
+	- add DMA timeout + recovery,
+	- keep fixed even-row->CH1 and odd-row->CH2 mapping.
+- Architecture update: image buffering and PWM+DMA pipeline moved into `ws2812_drv`; `test.c` now focuses on scheduling and fixed test pattern generation.

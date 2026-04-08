@@ -35,6 +35,9 @@ void HC595_Write16(uint16_t value)
 {
     int8_t bitIdx;
 
+    /* Keep shift/latch sequence atomic to avoid accidental row-map corruption by interrupts. */
+    DisableGlobalInt();
+
     for (bitIdx = 15; bitIdx >= 0; bitIdx--)
     {
         g_hc595Ser = (value >> bitIdx) & 0x01;
@@ -42,6 +45,7 @@ void HC595_Write16(uint16_t value)
     }
 
     HC595_PulseRclk();
+    EnableGlobalInt();
 }
 
 void HC595_SelectRows(uint8_t rowA, uint8_t rowB)

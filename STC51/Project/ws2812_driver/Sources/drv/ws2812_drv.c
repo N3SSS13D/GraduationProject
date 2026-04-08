@@ -2,318 +2,342 @@
 #include "ws2812_drv.h"
 #include "hc595_drv.h"
 
-typedef enum
-{
-	WS2812DRV_SCAN_IDLE = 0,
-	WS2812DRV_SCAN_DMA_WAIT,
-	WS2812DRV_SCAN_HOLD
-} WS2812DRV_ScanState_t;
+/* PWMAT-DMA control bits. */
+#define WS2812DRV_DMA_BASE_CCR1H            0x0D
+#define WS2812DRV_DMA_ENPWMAT               (1 << 7)
+#define WS2812DRV_PWMAT_TRIG                (1 << 6)
+#define WS2812DRV_DMA_PWMATIE               (1 << 7)
+#define WS2812DRV_DMA_PWMATIP               (0 << 2)
+#define WS2812DRV_DMA_PWMATPTY              2
+#define WS2812DRV_DMA_WAIT_LOOP_MAX         60000U
 
-static uint8_t xdata g_ws2812Rgb[WS2812DRV_PANEL_HEIGHT][WS2812DRV_PANEL_WIDTH][WS2812DRV_COLORS_PER_LED];
-static uint8_t g_scanPairIndex = 0;
-static uint8_t g_scanTickFlag = 0;
-static uint8_t g_scanHoldTick = 0;
-static uint8_t g_forceRefresh = 1;
-static uint8_t g_fadePhase = 0;
-static uint8_t g_hwInited = 0;
-static WS2812DRV_ScanState_t g_scanState = WS2812DRV_SCAN_IDLE;
+static uint8_t xdata g_ws2812ImageBuf[WS2812DRV_ROW_NUM][WS2812DRV_COL_NUM][WS2812DRV_PIXEL_CHANNELS];
+static uint8_t xdata g_ws2812RowPwmBuf[WS2812DRV_ROW_NUM][WS2812DRV_PWM_NUM];
+static uint8_t xdata g_ws2812DualRowPwmBufRaw[WS2812DRV_PWM_NUM_DUAL + WS2812DRV_DMA_TAIL_GUARD_BYTES + 1];
+static uint8_t xdata *g_ws2812DualRowPwmBuf = 0;
+static bit g_ws2812DmaBusy = 0;
 
-static void WS2812DRV_StartPwmDmaOutput(void)
+static void WS2812DRV_ResetDmaPwmat(void)
 {
-	PWM_UpdateDuty(PWMA_CH1, 0);
-	PWM_UpdateDuty(PWMA_CH2, 0);
-	PWMA_GenerateUpdateEvent();
-	PWMA_SetCounter(0);
-	PWMA_EnableMainOutput();
-	PWMA_Run();
+	DMA_PWMAT_CR = 0x00;
+	DMA_PWMAT_CFG = 0x00;
+	DMA_PWMAT_STA = 0x00;
+	PWMA_DER = 0x00;
+	PWMA_DMACR = 0x00;
 }
 
-static void WS2812DRV_StopPwmDmaOutput(void)
+static void WS2812DRV_InitDualRowDmaBuffer(void)
 {
-	PWMA_Stop();
-	PWMA_DisableMainOutput();
-	SetP1nInitLevelLow(PIN_0 | PIN_2);
+	uint16_t addr;
+
+	addr = (uint16_t)g_ws2812DualRowPwmBufRaw;
+	if ((addr & 0x0001U) == 0U)
+	{
+		g_ws2812DualRowPwmBuf = g_ws2812DualRowPwmBufRaw;
+	}
+	else
+	{
+		g_ws2812DualRowPwmBuf = g_ws2812DualRowPwmBufRaw + 1;
+	}
 }
 
-static uint8_t WS2812DRV_ApplyFade(uint8_t value, uint8_t gain)
+static void WS2812DRV_PWMAConfig(void)
 {
-	uint16_t scaled;
+	uint8_t ccer1;
+	uint8_t ccer2;
+	uint8_t ps;
+	uint8_t eno;
 
-	scaled = (uint16_t)value * (uint16_t)gain;
-	scaled = scaled / 255;
+	PWMA_ENO = 0;
+	PWMA_IER = 0;
+	PWMA_SR1 = 0;
+	PWMA_SR2 = 0;
+	ccer1 = 0;
+	ccer2 = 0;
+	ps = 0;
+	eno = 0;
 
-	return (uint8_t)scaled;
+	PWMA_PSCRH = 0;
+	PWMA_PSCRL = 0;
+	PWMA_DTR = 24;
+	PWMA_ARRH = 0;
+	PWMA_ARRL = (48 - 1);
+
+	PWMA_CCMR1 = 0x60;
+	PWMA_CCR1H = 0;
+	PWMA_CCR1L = 0;
+	PWMA_CCMR2 = 0x60;
+	PWMA_CCR2H = 0;
+	PWMA_CCR2L = 0;
+
+	ccer1 |= 0x05;
+	ccer1 |= 0x50;
+	ps |= 0;
+	eno |= 0x05;
+	SetP1nPushPullMode(PIN_0 | PIN_2);
+
+	PWMA_CCER1 = ccer1;
+	PWMA_CCER2 = ccer2;
+	PWMA_PS = ps;
+	PWMA_CCMR1 = 0x68;
+	PWMA_CCMR2 = 0x68;
+
+	PWMA_BKR = 0x80;
+	PWMA_CR1 = 0x81;
+	PWMA_EGR = 0x01;
+	PWMA_ENO = eno;
 }
 
-static void WS2812DRV_LoadRowSymbolPair(uint8_t rowA, uint8_t rowB)
+static void WS2812DRV_EncodeRowToPwm(uint8_t row)
 {
+	uint16_t i;
+	uint16_t pwmIdx;
 	uint8_t col;
 	uint8_t colorIdx;
+	uint8_t dat;
 	uint8_t bitIdx;
-	uint8_t dataA;
-	uint8_t dataB;
-	uint8_t gainA;
-	uint8_t gainB;
-	uint16_t txIdx;
 
-	gainA = g_fadePhase;
-	gainB = (uint8_t)(255 - g_fadePhase);
-
-	pu8PWMADMATxBuffer[0] = 0;
-	pu8PWMADMATxBuffer[1] = 0;
-	txIdx = 2;
-
-	for (col = 0; col < WS2812DRV_PANEL_WIDTH; col++)
+	for (i = 0; i < WS2812DRV_PWM_NUM; i++)
 	{
-		for (colorIdx = 0; colorIdx < WS2812DRV_COLORS_PER_LED; colorIdx++)
+		g_ws2812RowPwmBuf[row][i] = 0;
+	}
+
+	pwmIdx = 1;
+	for (col = 0; col < WS2812DRV_COL_NUM; col++)
+	{
+		for (colorIdx = 0; colorIdx < WS2812DRV_PIXEL_CHANNELS; colorIdx++)
 		{
-			dataA = g_ws2812Rgb[rowA][col][colorIdx];
-			dataB = g_ws2812Rgb[rowB][col][colorIdx];
-
-			if (colorIdx == 0)
-			{
-				dataA = WS2812DRV_ApplyFade(dataA, gainA);
-				dataB = WS2812DRV_ApplyFade(dataB, gainB);
-			}
-
+			dat = g_ws2812ImageBuf[row][col][colorIdx];
 			for (bitIdx = 0; bitIdx < 8; bitIdx++)
 			{
-				pu8PWMADMATxBuffer[txIdx] = ((dataA & 0x80) != 0) ? WS2812DRV_PWM_DUTY_BIT1 : WS2812DRV_PWM_DUTY_BIT0;
-				pu8PWMADMATxBuffer[txIdx + 1] = ((dataB & 0x80) != 0) ? WS2812DRV_PWM_DUTY_BIT1 : WS2812DRV_PWM_DUTY_BIT0;
-				dataA <<= 1;
-				dataB <<= 1;
-				txIdx += 2;
+				if ((dat & 0x80) != 0)
+				{
+					g_ws2812RowPwmBuf[row][pwmIdx] = WS2812DRV_PWM_DUTY_BIT1;
+				}
+				else
+				{
+					g_ws2812RowPwmBuf[row][pwmIdx] = WS2812DRV_PWM_DUTY_BIT0;
+				}
+
+				dat <<= 1;
+				pwmIdx++;
 			}
 		}
 	}
-
-	pu8PWMADMATxBuffer[txIdx] = 0;
-	pu8PWMADMATxBuffer[txIdx + 1] = 0;
-}
-
-static void WS2812DRV_LoadSingleRowSymbol(uint8_t row)
-{
-	uint8_t col;
-	uint8_t colorIdx;
-	uint8_t bitIdx;
-	uint8_t dataA;
-	uint16_t txIdx;
-
-	pu8PWMADMATxBuffer[0] = 0;
-	pu8PWMADMATxBuffer[1] = 0;
-	txIdx = 2;
-
-	for (col = 0; col < WS2812DRV_PANEL_WIDTH; col++)
-	{
-		for (colorIdx = 0; colorIdx < WS2812DRV_COLORS_PER_LED; colorIdx++)
-		{
-			dataA = g_ws2812Rgb[row][col][colorIdx];
-			for (bitIdx = 0; bitIdx < 8; bitIdx++)
-			{
-				pu8PWMADMATxBuffer[txIdx] = ((dataA & 0x80) != 0) ? WS2812DRV_PWM_DUTY_BIT1 : WS2812DRV_PWM_DUTY_BIT0;
-				pu8PWMADMATxBuffer[txIdx + 1] = 0;
-				dataA <<= 1;
-				txIdx += 2;
-			}
-		}
-	}
-
-	pu8PWMADMATxBuffer[txIdx] = 0;
-	pu8PWMADMATxBuffer[txIdx + 1] = 0;
-}
-
-static void WS2812DRV_TriggerRowPairSend(uint8_t pairIdx)
-{
-	uint8_t rowA;
-	uint8_t rowB;
-
-	rowA = (uint8_t)(pairIdx * 2);
-	rowB = (uint8_t)(rowA + 1);
-
-	HC595_AllOff();
-	delay_us(WS2812DRV_PMOS_OFF_TO_ON_US);
-	HC595_SelectRows(rowA, rowB);
-	delay_us(WS2812DRV_ROW_SWITCH_SETTLE_US);
-
-	WS2812DRV_LoadRowSymbolPair(rowA, rowB);
-	WS2812DRV_StartPwmDmaOutput();
-	DMA_PWMA_SetTxAmount(WS2812DRV_TX_BYTE_COUNT - 1);
-	DMA_PWMA_ClearTxFlag();
-	DMA_PWMA_TriggerTx();
 }
 
 void WS2812DRV_Init(void)
 {
-	uint8_t row;
-	uint8_t col;
+	EAXFR = 1;
+	WTST = 0;
+	CKCON = 0;
 
-	if (g_hwInited != 0)
-	{
-		return;
-	}
+	WS2812DRV_PWMAConfig();
+	WS2812DRV_InitDualRowDmaBuffer();
+	WS2812DRV_ClearImage();
+	WS2812DRV_EncodeAllRows();
 
-	HC595_Init();
-	HC595_AllOff();
-	WS2812DRV_StopPwmDmaOutput();
-
-	for (row = 0; row < WS2812DRV_PANEL_HEIGHT; row++)
-	{
-		for (col = 0; col < WS2812DRV_PANEL_WIDTH; col++)
-		{
-			g_ws2812Rgb[row][col][0] = 0;
-			g_ws2812Rgb[row][col][1] = 0;
-			g_ws2812Rgb[row][col][2] = 0;
-		}
-	}
-
-	g_scanPairIndex = 0;
-	g_scanTickFlag = 0;
-	g_scanHoldTick = 0;
-	g_scanState = WS2812DRV_SCAN_IDLE;
-	g_forceRefresh = 1;
-	g_fadePhase = 0;
-	g_hwInited = 1;
+	g_ws2812DmaBusy = 0;
 }
 
-void WS2812DRV_ClearAll(void)
+void WS2812DRV_ClearImage(void)
 {
 	uint8_t row;
 	uint8_t col;
 
-	for (row = 0; row < WS2812DRV_PANEL_HEIGHT; row++)
+	for (row = 0; row < WS2812DRV_ROW_NUM; row++)
 	{
-		for (col = 0; col < WS2812DRV_PANEL_WIDTH; col++)
+		for (col = 0; col < WS2812DRV_COL_NUM; col++)
 		{
-			g_ws2812Rgb[row][col][0] = 0;
-			g_ws2812Rgb[row][col][1] = 0;
-			g_ws2812Rgb[row][col][2] = 0;
+			g_ws2812ImageBuf[row][col][0] = 0;
+			g_ws2812ImageBuf[row][col][1] = 0;
+			g_ws2812ImageBuf[row][col][2] = 0;
 		}
 	}
-
-	g_forceRefresh = 1;
 }
 
-void WS2812DRV_SetPixelRgb(uint8_t x, uint8_t y, uint8_t r, uint8_t g, uint8_t b)
+void WS2812DRV_SetPixelRgb(uint8_t row, uint8_t col, uint8_t r, uint8_t g, uint8_t b)
 {
-	if ((x >= WS2812DRV_PANEL_WIDTH) || (y >= WS2812DRV_PANEL_HEIGHT))
+	if ((row >= WS2812DRV_ROW_NUM) || (col >= WS2812DRV_COL_NUM))
 	{
 		return;
 	}
 
-	g_ws2812Rgb[y][x][0] = g;
-	g_ws2812Rgb[y][x][1] = r;
-	g_ws2812Rgb[y][x][2] = b;
-	g_forceRefresh = 1;
+	/* WS2812 transmit order is GRB. */
+	g_ws2812ImageBuf[row][col][0] = g;
+	g_ws2812ImageBuf[row][col][1] = r;
+	g_ws2812ImageBuf[row][col][2] = b;
 }
 
-void WS2812DRV_Scan1msHook(void)
+void WS2812DRV_EncodeAllRows(void)
 {
-	g_scanTickFlag = 1;
-}
+	uint8_t row;
 
-void WS2812DRV_ForceRefreshAll(void)
-{
-	g_forceRefresh = 1;
-}
-
-uint8_t WS2812DRV_IsBusy(void)
-{
-	return (g_scanState != WS2812DRV_SCAN_IDLE) ? 1 : 0;
-}
-
-void WS2812DRV_TaskService(void)
-{
-	if ((g_hwInited == 0) || ((g_scanTickFlag == 0) && (g_scanState == WS2812DRV_SCAN_IDLE) && (g_forceRefresh == 0)))
+	for (row = 0; row < WS2812DRV_ROW_NUM; row++)
 	{
-		return;
-	}
-
-	if (g_scanState == WS2812DRV_SCAN_IDLE)
-	{
-		g_scanTickFlag = 0;
-		WS2812DRV_TriggerRowPairSend(g_scanPairIndex);
-		g_scanState = WS2812DRV_SCAN_DMA_WAIT;
-
-		return;
-	}
-
-	if (g_scanState == WS2812DRV_SCAN_DMA_WAIT)
-	{
-		if (DMA_PWMA_CheckTxFlag() == 0)
-		{
-			return;
-		}
-
-		DMA_PWMA_ClearTxFlag();
-		WS2812DRV_StopPwmDmaOutput();
-		g_scanState = WS2812DRV_SCAN_HOLD;
-		g_scanHoldTick = 0;
-
-		return;
-	}
-
-	if (g_scanState == WS2812DRV_SCAN_HOLD)
-	{
-		if (g_scanTickFlag == 0)
-		{
-			return;
-		}
-
-		g_scanTickFlag = 0;
-		g_scanHoldTick++;
-		if (g_scanHoldTick < WS2812DRV_SCAN_HOLD_TICKS)
-		{
-			return;
-		}
-
-		HC595_AllOff();
-		g_scanPairIndex++;
-		if (g_scanPairIndex >= WS2812DRV_ROW_PAIRS)
-		{
-			g_scanPairIndex = 0;
-			g_fadePhase = (uint8_t)(g_fadePhase + WS2812DRV_FADE_PHASE_STEP);
-			g_forceRefresh = 0;
-		}
-		g_scanState = WS2812DRV_SCAN_IDLE;
+		WS2812DRV_EncodeRowToPwm(row);
 	}
 }
 
-void WS2812DRV_ShowRowRedCount(uint8_t row, uint8_t ledCount)
+uint16_t WS2812DRV_BuildDualRowPwmBuffer(uint8_t rowA, uint8_t rowB)
 {
-	uint8_t col;
+	uint16_t idx;
+	uint16_t outIdx;
+	uint8_t xdata *dualBuf;
 
-	if (row >= WS2812DRV_PANEL_HEIGHT)
+	if ((rowA >= WS2812DRV_ROW_NUM) || (rowB >= WS2812DRV_ROW_NUM))
 	{
-		return;
+		return 0;
 	}
 
-	if (ledCount > WS2812DRV_PANEL_WIDTH)
+	dualBuf = g_ws2812DualRowPwmBuf;
+	outIdx = 0;
+	for (idx = 0; idx < WS2812DRV_PWM_NUM; idx++)
 	{
-		ledCount = WS2812DRV_PANEL_WIDTH;
+		dualBuf[outIdx] = g_ws2812RowPwmBuf[rowA][idx];
+		outIdx++;
+		dualBuf[outIdx] = g_ws2812RowPwmBuf[rowB][idx];
+		outIdx++;
 	}
 
-	WS2812DRV_ClearAll();
-	for (col = 0; col < ledCount; col++)
-	{
-		WS2812DRV_SetPixelRgb(col, row, WS2812DRV_TEST_RED_LEVEL, 0, 0);
-	}
+	/* Append one CH1/CH2 zero pair as DMA tail guard. */
+	dualBuf[outIdx] = 0;
+	outIdx++;
+	dualBuf[outIdx] = 0;
+	outIdx++;
 
-	HC595_AllOff();
-	delay_us(WS2812DRV_PMOS_OFF_TO_ON_US);
-	HC595_SelectRows(row, 0xFF);
+	return outIdx;
+}
+
+uint8_t xdata *WS2812DRV_GetDualRowPwmBuffer(void)
+{
+	return g_ws2812DualRowPwmBuf;
+}
+
+void WS2812DRV_SelectRows(uint8_t rowA, uint8_t rowB)
+{
+	HC595_SelectRows(rowA, rowB);
 	delay_us(WS2812DRV_ROW_SWITCH_SETTLE_US);
+}
 
-	WS2812DRV_LoadSingleRowSymbol(row);
-	WS2812DRV_StartPwmDmaOutput();
-	DMA_PWMA_SetTxAmount(WS2812DRV_TX_BYTE_COUNT - 1);
-	DMA_PWMA_ClearTxFlag();
-	DMA_PWMA_TriggerTx();
-	while (DMA_PWMA_CheckTxFlag() == 0)
+void WS2812DRV_TriggerDualRowDma(uint8_t xdata *txBuf, uint16_t num)
+{
+	uint16_t addr;
+	uint16_t alignedNum;
+
+	if (num < 2U)
 	{
+		return;
 	}
-	DMA_PWMA_ClearTxFlag();
 
-	WS2812DRV_StopPwmDmaOutput();
-	HC595_AllOff();
-	delay_us(WS2812DRV_RESET_HOLD_US);
+	/* DMA stream must keep CH1/CH2 pair alignment. */
+	alignedNum = (uint16_t)(num & (uint16_t)~0x0001U);
+	if (alignedNum < 2U)
+	{
+		return;
+	}
+
+	DisableGlobalInt();
+
+	WS2812DRV_ResetDmaPwmat();
+
+	PWMA_DBA = WS2812DRV_DMA_BASE_CCR1H;
+	PWMA_DBL = 0x01;
+	PWMA_DER = 0x01;
+	PWMA_DMACR = 0x14;
+
+	addr = (uint16_t)txBuf;
+	DMA_PWMAT_TXAH = (uint8_t)(addr >> 8);
+	DMA_PWMAT_TXAL = (uint8_t)addr;
+	DMA_PWMAT_AMTH = (uint8_t)((alignedNum - 1U) / 256U);
+	DMA_PWMAT_AMT = (uint8_t)((alignedNum - 1U) % 256U);
+
+	g_ws2812DmaBusy = 1;
+
+	DMA_PWMAT_CFG = WS2812DRV_DMA_PWMATIE | WS2812DRV_DMA_PWMATIP | WS2812DRV_DMA_PWMATPTY;
+	DMA_PWMAT_CR = WS2812DRV_DMA_ENPWMAT | WS2812DRV_PWMAT_TRIG;
+
+	EnableGlobalInt();
+}
+
+bit WS2812DRV_WaitDmaDone(void)
+{
+	uint16_t waitCnt;
+
+	waitCnt = 0;
+	while (g_ws2812DmaBusy != 0)
+	{
+		waitCnt++;
+		if (waitCnt >= WS2812DRV_DMA_WAIT_LOOP_MAX)
+		{
+			DisableGlobalInt();
+			WS2812DRV_ResetDmaPwmat();
+			g_ws2812DmaBusy = 0;
+			EnableGlobalInt();
+
+			return 0;
+		}
+	}
+
+	return 1;
+}
+
+void WS2812DRV_StopPwmDualChannels(void)
+{
+	PWMA_CCR1H = 0;
+	PWMA_CCR1L = 0;
+	PWMA_CCR2H = 0;
+	PWMA_CCR2L = 0;
+}
+
+bit WS2812DRV_SendRowPair(uint8_t rowA, uint8_t rowB)
+{
+	uint8_t sendRowA;
+	uint8_t sendRowB;
+	uint8_t temp;
+	uint16_t txLen;
+
+	if ((rowA >= WS2812DRV_ROW_NUM) || (rowB >= WS2812DRV_ROW_NUM))
+	{
+		return 0;
+	}
+
+	sendRowA = rowA;
+	sendRowB = rowB;
+	if ((sendRowA & 0x01U) != 0U)
+	{
+		temp = sendRowA;
+		sendRowA = sendRowB;
+		sendRowB = temp;
+	}
+
+	txLen = WS2812DRV_BuildDualRowPwmBuffer(sendRowA, sendRowB);
+	if (txLen < 2U)
+	{
+		return 0;
+	}
+
+	WS2812DRV_SelectRows(sendRowA, sendRowB);
+	WS2812DRV_TriggerDualRowDma(g_ws2812DualRowPwmBuf, txLen);
+	if (WS2812DRV_WaitDmaDone() == 0)
+	{
+		WS2812DRV_StopPwmDualChannels();
+
+		return 0;
+	}
+
+	WS2812DRV_StopPwmDualChannels();
+
+	return 1;
+}
+
+void WS2812DRV_OnDmaIsr(void)
+{
+	g_ws2812DmaBusy = 0;
+	DMA_PWMAT_STA = 0;
+}
+
+bit WS2812DRV_IsDmaBusy(void)
+{
+	return g_ws2812DmaBusy;
 }
