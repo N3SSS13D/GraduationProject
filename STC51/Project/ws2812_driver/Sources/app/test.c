@@ -59,6 +59,7 @@ void Test_Init(void)
 {
     /* PWM/DMA and frame pipeline are delegated to ws2812 and draw drivers. */
     WS2812DRV_Init();
+    (void)WS2812DRV_SetDisplayMode(WS2812DRV_MODE_16X8);
     DrawDrv_Init();
 
     MidTask_Init();
@@ -101,6 +102,43 @@ uint8_t Test_SetDebugRow(uint8_t row)
 void Test_ClearDebugRow(void)
 {
     DrawDrv_DisableSingleRowDebug();
+}
+
+uint8_t Test_SetDisplayMode(uint8_t mode16x)
+{
+    WS2812DRV_DisplayMode_t mode;
+
+    if (mode16x == 8U)
+    {
+        mode = WS2812DRV_MODE_16X8;
+    }
+    else if (mode16x == 16U)
+    {
+        mode = WS2812DRV_MODE_16X16;
+    }
+    else
+    {
+        return 0;
+    }
+
+    if (WS2812DRV_SetDisplayMode(mode) == 0)
+    {
+        return 0;
+    }
+
+    DrawDrv_RequestRebuild();
+
+    return 1;
+}
+
+uint8_t Test_GetDisplayMode(void)
+{
+    if (WS2812DRV_GetDisplayMode() == WS2812DRV_MODE_16X16)
+    {
+        return 16U;
+    }
+
+    return 8U;
 }
 
 void PWMAT_DMA_ISR(void) interrupt DMA_PWMAT_VECTOR

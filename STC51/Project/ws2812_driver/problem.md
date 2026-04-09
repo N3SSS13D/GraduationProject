@@ -43,3 +43,23 @@
   - Dual-row packet build (`BuildDualRowPwmBuffer`)
   - DMA trigger/wait/recovery (`TriggerDualRowDma`, `WaitDmaDone`, `OnDmaIsr`)
   - One-call pair send (`SendRowPair`)
+
+## Shared-line weak-light issue (confirmed)
+
+### Phenomenon
+- When one row is enabled, another row sharing the same signal path can weakly light.
+
+### Confirmed hardware fix
+- Adding a bleeder/discharge resistor on the power side effectively removes residual-charge-induced weak lighting.
+- This hardware fix is now considered the primary solution.
+
+### Software coordination strategy
+- Keep deterministic row update sequence:
+  - full blank before row select update,
+  - short delay,
+  - then apply new row select.
+- Avoid immediate full blank in DMA complete ISR to reduce unnecessary duty loss.
+
+### Trade-off note
+- Strong software blanking can suppress ghosting but may reduce brightness.
+- Final recommendation: prioritize the hardware resistor fix, and use software blanking only as timing coordination.
