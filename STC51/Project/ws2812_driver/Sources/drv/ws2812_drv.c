@@ -12,7 +12,7 @@
 #define WS2812DRV_DMA_WAIT_LOOP_MAX         60000U
 #define WS2812DRV_BUF_ACTIVE                0U
 #define WS2812DRV_BUF_BACK                  1U
-#define WS2812DRV_LINE_DISCHARGE_US         3U
+#define WS2812DRV_LINE_DISCHARGE_US         5U
 
 static uint8_t xdata g_ws2812ImageBuf[2][WS2812DRV_ROW_NUM][WS2812DRV_COL_NUM][WS2812DRV_PIXEL_CHANNELS];
 static uint8_t xdata g_ws2812RowPwmBuf[2][WS2812DRV_ROW_NUM][WS2812DRV_PWM_NUM];
@@ -24,6 +24,13 @@ static bit g_ws2812PwmSwapPending = 0;
 static uint8_t g_ws2812ActivePwmBufIdx = WS2812DRV_BUF_ACTIVE;
 static uint8_t g_ws2812PendingPwmBufIdx = WS2812DRV_BUF_BACK;
 static uint8_t g_ws2812ScanRowIdx = 0;
+
+static void WS2812DRV_BlankOutputs(void)
+{
+	/* Force both PWM data lines low and close all row switches. */
+	WS2812DRV_StopPwmDualChannels();
+	HC595_AllOff();
+}
 
 static void WS2812DRV_ResetDmaPwmat(void)
 {
@@ -341,6 +348,7 @@ bit WS2812DRV_WaitDmaDone(void)
 		{
 			DisableGlobalInt();
 			WS2812DRV_ResetDmaPwmat();
+			WS2812DRV_BlankOutputs();
 			g_ws2812DmaBusy = 0;
 			EnableGlobalInt();
 
@@ -394,12 +402,12 @@ bit WS2812DRV_SendRowPair(uint8_t rowA, uint8_t rowB)
 	WS2812DRV_TriggerDualRowDma(g_ws2812DualRowPwmBuf, txLen);
 	if (WS2812DRV_WaitDmaDone() == 0)
 	{
-		WS2812DRV_StopPwmDualChannels();
+		WS2812DRV_BlankOutputs();
 
 		return 0;
 	}
 
-	WS2812DRV_StopPwmDualChannels();
+	WS2812DRV_BlankOutputs();
 
 	return 1;
 }
@@ -447,7 +455,7 @@ void WS2812DRV_RefreshStep(void)
 void WS2812DRV_OnDmaIsr(void)
 {
 	/* Pull data lines low right after transfer completes to reduce ghosting. */
-	WS2812DRV_StopPwmDualChannels();
+	WS2812DRV_BlankOutputs();
 
 	g_ws2812DmaBusy = 0;
 	DMA_PWMAT_STA = 0;
