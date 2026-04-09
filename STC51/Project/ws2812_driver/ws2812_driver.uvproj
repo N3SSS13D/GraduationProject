@@ -356,14 +356,19 @@
           <GroupName>mid</GroupName>
           <Files>
             <File>
+              <FileName>mid_task.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Sources\mid\mid_task.c</FilePath>
+            </File>
+            <File>
               <FileName>key_ctrl.c</FileName>
               <FileType>1</FileType>
               <FilePath>.\Sources\mid\key_ctrl.c</FilePath>
             </File>
             <File>
-              <FileName>mid_task.c</FileName>
+              <FileName>draw_drv.c</FileName>
               <FileType>1</FileType>
-              <FilePath>.\Sources\mid\mid_task.c</FilePath>
+              <FilePath>.\Sources\mid\draw_drv.c</FilePath>
             </File>
           </Files>
         </Group>

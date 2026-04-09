@@ -23,6 +23,7 @@ void WS2812DRV_TriggerDualRowDma(uint8_t xdata *txBuf, uint16_t num);
 bit WS2812DRV_WaitDmaDone(void);
 void WS2812DRV_StopPwmDualChannels(void);
 bit WS2812DRV_SendRowPair(uint8_t rowA, uint8_t rowB);
+void WS2812DRV_RefreshStep(void);
 void WS2812DRV_OnDmaIsr(void);
 bit WS2812DRV_IsDmaBusy(void);
 

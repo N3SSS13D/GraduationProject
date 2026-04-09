@@ -10,12 +10,20 @@
 #define WS2812DRV_DMA_PWMATIP               (0 << 2)
 #define WS2812DRV_DMA_PWMATPTY              2
 #define WS2812DRV_DMA_WAIT_LOOP_MAX         60000U
+#define WS2812DRV_BUF_ACTIVE                0U
+#define WS2812DRV_BUF_BACK                  1U
+#define WS2812DRV_LINE_DISCHARGE_US         3U
 
-static uint8_t xdata g_ws2812ImageBuf[WS2812DRV_ROW_NUM][WS2812DRV_COL_NUM][WS2812DRV_PIXEL_CHANNELS];
-static uint8_t xdata g_ws2812RowPwmBuf[WS2812DRV_ROW_NUM][WS2812DRV_PWM_NUM];
+static uint8_t xdata g_ws2812ImageBuf[2][WS2812DRV_ROW_NUM][WS2812DRV_COL_NUM][WS2812DRV_PIXEL_CHANNELS];
+static uint8_t xdata g_ws2812RowPwmBuf[2][WS2812DRV_ROW_NUM][WS2812DRV_PWM_NUM];
 static uint8_t xdata g_ws2812DualRowPwmBufRaw[WS2812DRV_PWM_NUM_DUAL + WS2812DRV_DMA_TAIL_GUARD_BYTES + 1];
 static uint8_t xdata *g_ws2812DualRowPwmBuf = 0;
 static bit g_ws2812DmaBusy = 0;
+static bit g_ws2812ImageDirty = 0;
+static bit g_ws2812PwmSwapPending = 0;
+static uint8_t g_ws2812ActivePwmBufIdx = WS2812DRV_BUF_ACTIVE;
+static uint8_t g_ws2812PendingPwmBufIdx = WS2812DRV_BUF_BACK;
+static uint8_t g_ws2812ScanRowIdx = 0;
 
 static void WS2812DRV_ResetDmaPwmat(void)
 {
@@ -88,7 +96,7 @@ static void WS2812DRV_PWMAConfig(void)
 	PWMA_ENO = eno;
 }
 
-static void WS2812DRV_EncodeRowToPwm(uint8_t row)
+static void WS2812DRV_EncodeRowToPwmBuffer(uint8_t bufIdx, uint8_t row)
 {
 	uint16_t i;
 	uint16_t pwmIdx;
@@ -99,7 +107,7 @@ static void WS2812DRV_EncodeRowToPwm(uint8_t row)
 
 	for (i = 0; i < WS2812DRV_PWM_NUM; i++)
 	{
-		g_ws2812RowPwmBuf[row][i] = 0;
+		g_ws2812RowPwmBuf[bufIdx][row][i] = 0;
 	}
 
 	pwmIdx = 1;
@@ -107,16 +115,16 @@ static void WS2812DRV_EncodeRowToPwm(uint8_t row)
 	{
 		for (colorIdx = 0; colorIdx < WS2812DRV_PIXEL_CHANNELS; colorIdx++)
 		{
-			dat = g_ws2812ImageBuf[row][col][colorIdx];
+			dat = g_ws2812ImageBuf[WS2812DRV_BUF_BACK][row][col][colorIdx];
 			for (bitIdx = 0; bitIdx < 8; bitIdx++)
 			{
 				if ((dat & 0x80) != 0)
 				{
-					g_ws2812RowPwmBuf[row][pwmIdx] = WS2812DRV_PWM_DUTY_BIT1;
+					g_ws2812RowPwmBuf[bufIdx][row][pwmIdx] = WS2812DRV_PWM_DUTY_BIT1;
 				}
 				else
 				{
-					g_ws2812RowPwmBuf[row][pwmIdx] = WS2812DRV_PWM_DUTY_BIT0;
+					g_ws2812RowPwmBuf[bufIdx][row][pwmIdx] = WS2812DRV_PWM_DUTY_BIT0;
 				}
 
 				dat <<= 1;
@@ -126,60 +134,7 @@ static void WS2812DRV_EncodeRowToPwm(uint8_t row)
 	}
 }
 
-void WS2812DRV_Init(void)
-{
-	EAXFR = 1;
-	WTST = 0;
-	CKCON = 0;
-
-	WS2812DRV_PWMAConfig();
-	WS2812DRV_InitDualRowDmaBuffer();
-	WS2812DRV_ClearImage();
-	WS2812DRV_EncodeAllRows();
-
-	g_ws2812DmaBusy = 0;
-}
-
-void WS2812DRV_ClearImage(void)
-{
-	uint8_t row;
-	uint8_t col;
-
-	for (row = 0; row < WS2812DRV_ROW_NUM; row++)
-	{
-		for (col = 0; col < WS2812DRV_COL_NUM; col++)
-		{
-			g_ws2812ImageBuf[row][col][0] = 0;
-			g_ws2812ImageBuf[row][col][1] = 0;
-			g_ws2812ImageBuf[row][col][2] = 0;
-		}
-	}
-}
-
-void WS2812DRV_SetPixelRgb(uint8_t row, uint8_t col, uint8_t r, uint8_t g, uint8_t b)
-{
-	if ((row >= WS2812DRV_ROW_NUM) || (col >= WS2812DRV_COL_NUM))
-	{
-		return;
-	}
-
-	/* WS2812 transmit order is GRB. */
-	g_ws2812ImageBuf[row][col][0] = g;
-	g_ws2812ImageBuf[row][col][1] = r;
-	g_ws2812ImageBuf[row][col][2] = b;
-}
-
-void WS2812DRV_EncodeAllRows(void)
-{
-	uint8_t row;
-
-	for (row = 0; row < WS2812DRV_ROW_NUM; row++)
-	{
-		WS2812DRV_EncodeRowToPwm(row);
-	}
-}
-
-uint16_t WS2812DRV_BuildDualRowPwmBuffer(uint8_t rowA, uint8_t rowB)
+static uint16_t WS2812DRV_BuildDualRowPwmBufferByBufIdx(uint8_t bufIdx, uint8_t rowA, uint8_t rowB)
 {
 	uint16_t idx;
 	uint16_t outIdx;
@@ -194,9 +149,9 @@ uint16_t WS2812DRV_BuildDualRowPwmBuffer(uint8_t rowA, uint8_t rowB)
 	outIdx = 0;
 	for (idx = 0; idx < WS2812DRV_PWM_NUM; idx++)
 	{
-		dualBuf[outIdx] = g_ws2812RowPwmBuf[rowA][idx];
+		dualBuf[outIdx] = g_ws2812RowPwmBuf[bufIdx][rowA][idx];
 		outIdx++;
-		dualBuf[outIdx] = g_ws2812RowPwmBuf[rowB][idx];
+		dualBuf[outIdx] = g_ws2812RowPwmBuf[bufIdx][rowB][idx];
 		outIdx++;
 	}
 
@@ -209,6 +164,116 @@ uint16_t WS2812DRV_BuildDualRowPwmBuffer(uint8_t rowA, uint8_t rowB)
 	return outIdx;
 }
 
+void WS2812DRV_Init(void)
+{
+	uint8_t row;
+
+	EAXFR = 1;
+	WTST = 0;
+	CKCON = 0;
+
+	WS2812DRV_PWMAConfig();
+	WS2812DRV_InitDualRowDmaBuffer();
+	WS2812DRV_ClearImage();
+
+	for (row = 0; row < WS2812DRV_ROW_NUM; row++)
+	{
+		WS2812DRV_EncodeRowToPwmBuffer(WS2812DRV_BUF_ACTIVE, row);
+		WS2812DRV_EncodeRowToPwmBuffer(WS2812DRV_BUF_BACK, row);
+	}
+
+	g_ws2812DmaBusy = 0;
+	g_ws2812ImageDirty = 0;
+	g_ws2812PwmSwapPending = 0;
+	g_ws2812ActivePwmBufIdx = WS2812DRV_BUF_ACTIVE;
+	g_ws2812PendingPwmBufIdx = WS2812DRV_BUF_BACK;
+	g_ws2812ScanRowIdx = 0;
+}
+
+void WS2812DRV_ClearImage(void)
+{
+	uint8_t row;
+	uint8_t col;
+	uint8_t colorIdx;
+	uint8_t oldVal;
+
+	for (row = 0; row < WS2812DRV_ROW_NUM; row++)
+	{
+		for (col = 0; col < WS2812DRV_COL_NUM; col++)
+		{
+			for (colorIdx = 0; colorIdx < WS2812DRV_PIXEL_CHANNELS; colorIdx++)
+			{
+				oldVal = g_ws2812ImageBuf[WS2812DRV_BUF_BACK][row][col][colorIdx];
+				if (oldVal != 0U)
+				{
+					g_ws2812ImageDirty = 1;
+				}
+				g_ws2812ImageBuf[WS2812DRV_BUF_BACK][row][col][colorIdx] = 0;
+			}
+		}
+	}
+}
+
+void WS2812DRV_SetPixelRgb(uint8_t row, uint8_t col, uint8_t r, uint8_t g, uint8_t b)
+{
+	if ((row >= WS2812DRV_ROW_NUM) || (col >= WS2812DRV_COL_NUM))
+	{
+		return;
+	}
+
+	/* WS2812 transmit order is GRB, and updates always target back image buffer. */
+	if (g_ws2812ImageBuf[WS2812DRV_BUF_BACK][row][col][0] != g)
+	{
+		g_ws2812ImageBuf[WS2812DRV_BUF_BACK][row][col][0] = g;
+		g_ws2812ImageDirty = 1;
+	}
+	if (g_ws2812ImageBuf[WS2812DRV_BUF_BACK][row][col][1] != r)
+	{
+		g_ws2812ImageBuf[WS2812DRV_BUF_BACK][row][col][1] = r;
+		g_ws2812ImageDirty = 1;
+	}
+	if (g_ws2812ImageBuf[WS2812DRV_BUF_BACK][row][col][2] != b)
+	{
+		g_ws2812ImageBuf[WS2812DRV_BUF_BACK][row][col][2] = b;
+		g_ws2812ImageDirty = 1;
+	}
+}
+
+void WS2812DRV_EncodeAllRows(void)
+{
+	uint8_t row;
+	uint8_t buildIdx;
+
+	/* Skip build when source frame has no changes. */
+	if (g_ws2812ImageDirty == 0)
+	{
+		return;
+	}
+
+	/* Keep only one pending frame to avoid writer/reader overlap. */
+	if (g_ws2812PwmSwapPending != 0)
+	{
+		return;
+	}
+
+	buildIdx = (uint8_t)(g_ws2812ActivePwmBufIdx ^ 0x01U);
+	for (row = 0; row < WS2812DRV_ROW_NUM; row++)
+	{
+		WS2812DRV_EncodeRowToPwmBuffer(buildIdx, row);
+	}
+
+	DisableGlobalInt();
+	g_ws2812PendingPwmBufIdx = buildIdx;
+	g_ws2812PwmSwapPending = 1;
+	g_ws2812ImageDirty = 0;
+	EnableGlobalInt();
+}
+
+uint16_t WS2812DRV_BuildDualRowPwmBuffer(uint8_t rowA, uint8_t rowB)
+{
+	return WS2812DRV_BuildDualRowPwmBufferByBufIdx(g_ws2812ActivePwmBufIdx, rowA, rowB);
+}
+
 uint8_t xdata *WS2812DRV_GetDualRowPwmBuffer(void)
 {
 	return g_ws2812DualRowPwmBuf;
@@ -216,6 +281,10 @@ uint8_t xdata *WS2812DRV_GetDualRowPwmBuffer(void)
 
 void WS2812DRV_SelectRows(uint8_t rowA, uint8_t rowB)
 {
+	/* Blank rows first to suppress transient conduction during row remap. */
+	HC595_AllOff();
+	delay_us(WS2812DRV_ROW_SWITCH_SETTLE_US);
+
 	HC595_SelectRows(rowA, rowB);
 	delay_us(WS2812DRV_ROW_SWITCH_SETTLE_US);
 }
@@ -317,6 +386,10 @@ bit WS2812DRV_SendRowPair(uint8_t rowA, uint8_t rowB)
 		return 0;
 	}
 
+	/* Keep both shared data lines low before switching rows. */
+	WS2812DRV_StopPwmDualChannels();
+	delay_us(WS2812DRV_LINE_DISCHARGE_US);
+
 	WS2812DRV_SelectRows(sendRowA, sendRowB);
 	WS2812DRV_TriggerDualRowDma(g_ws2812DualRowPwmBuf, txLen);
 	if (WS2812DRV_WaitDmaDone() == 0)
@@ -331,8 +404,51 @@ bit WS2812DRV_SendRowPair(uint8_t rowA, uint8_t rowB)
 	return 1;
 }
 
+void WS2812DRV_RefreshStep(void)
+{
+	uint8_t rowA;
+	uint8_t rowB;
+	uint16_t txLen;
+
+	if (g_ws2812DmaBusy != 0)
+	{
+		return;
+	}
+
+	if ((g_ws2812ScanRowIdx == 0U) && (g_ws2812PwmSwapPending != 0))
+	{
+		g_ws2812ActivePwmBufIdx = g_ws2812PendingPwmBufIdx;
+		g_ws2812PwmSwapPending = 0;
+	}
+
+	rowA = g_ws2812ScanRowIdx;
+	rowB = (uint8_t)(g_ws2812ScanRowIdx + 1U);
+
+	txLen = WS2812DRV_BuildDualRowPwmBufferByBufIdx(g_ws2812ActivePwmBufIdx, rowA, rowB);
+	if (txLen < 2U)
+	{
+		return;
+	}
+
+	/* Keep both shared data lines low before switching rows. */
+	WS2812DRV_StopPwmDualChannels();
+	delay_us(WS2812DRV_LINE_DISCHARGE_US);
+
+	WS2812DRV_SelectRows(rowA, rowB);
+	WS2812DRV_TriggerDualRowDma(g_ws2812DualRowPwmBuf, txLen);
+
+	g_ws2812ScanRowIdx = (uint8_t)(g_ws2812ScanRowIdx + 2U);
+	if (g_ws2812ScanRowIdx >= WS2812DRV_ROW_NUM)
+	{
+		g_ws2812ScanRowIdx = 0;
+	}
+}
+
 void WS2812DRV_OnDmaIsr(void)
 {
+	/* Pull data lines low right after transfer completes to reduce ghosting. */
+	WS2812DRV_StopPwmDualChannels();
+
 	g_ws2812DmaBusy = 0;
 	DMA_PWMAT_STA = 0;
 }

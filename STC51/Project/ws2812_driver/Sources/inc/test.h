@@ -7,5 +7,7 @@ void Test_TaskLoop(void);
 void Test_SetRowIntervalUs(unsigned long intervalUs);
 unsigned long Test_GetRowIntervalUs(void);
 unsigned int Test_GetLastPwmUs(void);
+unsigned char Test_SetDebugRow(unsigned char row);
+void Test_ClearDebugRow(void);
 
 #endif

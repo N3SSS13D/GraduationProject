@@ -29,16 +29,43 @@ void MidTask_Init(void)
 
 uint8_t MidTask_Register(uint16_t periodMs, MidTaskHook_t hook)
 {
-    if ((hook == NULL) || (periodMs == 0) || (g_midTaskCount >= MIDTASK_MAX_COUNT))
+    if (MidTask_RegisterWithId(periodMs, hook) == MIDTASK_INVALID_ID)
     {
         return 0;
     }
 
+    return 1;
+}
+
+uint8_t MidTask_RegisterWithId(uint16_t periodMs, MidTaskHook_t hook)
+{
+    uint8_t taskId;
+
+    if ((hook == NULL) || (periodMs == 0) || (g_midTaskCount >= MIDTASK_MAX_COUNT))
+    {
+        return MIDTASK_INVALID_ID;
+    }
+
+    taskId = g_midTaskCount;
     g_midTasks[g_midTaskCount].run = 0;
     g_midTasks[g_midTaskCount].tickCount = periodMs;
     g_midTasks[g_midTaskCount].period = periodMs;
     g_midTasks[g_midTaskCount].hook = hook;
     g_midTaskCount++;
+
+    return taskId;
+}
+
+uint8_t MidTask_SetPeriod(uint8_t taskId, uint16_t periodMs)
+{
+    if ((taskId >= g_midTaskCount) || (periodMs == 0U))
+    {
+        return 0;
+    }
+
+    g_midTasks[taskId].period = periodMs;
+    g_midTasks[taskId].tickCount = periodMs;
+    g_midTasks[taskId].run = 0;
 
     return 1;
 }
