@@ -108,11 +108,25 @@ GraduationProject/
 3. STC ISP 下载
 4. 串口发送 PLAY 命令验证显示、速度和按键模式切换
 
+### 7.1 快速验证建议
+
+- 先发送静态图案命令确认链路：`PLAY CT=0 FX=0 IMG=2 BR=180`
+- 再发送静态字模命令确认 GI：`PLAY CT=1 FX=0 GI=2 BR=180`
+- 最后发送滚动序列命令确认 SQ/SPD：`PLAY CT=1 FX=5 SPD=1 SQ=0,1,2,3`
+
 ## 8. 参考文档
 
 - `Doc/ws2812_driver_current_implementation.md`
 - `Doc/usb_play_v2_guide.md`
 - `STC51/Project/ws2812_driver/problem.md`
 - `STC51/Project/ws2812_driver/problem_zh.md`
+
+## 9. 提交边界建议
+
+为避免污染仓库，建议默认不提交以下本地临时/环境文件：
+
+- Keil 本地视图状态：`*.uvgui.*`、`*.uvopt`
+- Python 运行缓存：`__pycache__/`、`*.pyc`
+- 临时导出图片（若非明确资源需求）：`Pic/` 下的中间产物
 
 
