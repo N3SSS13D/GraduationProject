@@ -4,6 +4,11 @@
 #include "ws2812_drv.h"
 
 #define DRAWDRV_IMAGE_SWITCH_TICKS       4U
+#define DRAWDRV_JLU_GLYPH_COUNT          TEST_SCROLL_GLYPH_COUNT
+#define DRAWDRV_JLU_GLYPH_WIDTH          TEST_SCROLL_GLYPH_WIDTH
+#define DRAWDRV_JLU_GLYPH_SPACING        TEST_SCROLL_GLYPH_SPACING
+#define DRAWDRV_JLU_GLYPH_ADVANCE        (DRAWDRV_JLU_GLYPH_WIDTH + DRAWDRV_JLU_GLYPH_SPACING)
+#define DRAWDRV_JLU_TEXT_WIDTH           (DRAWDRV_JLU_GLYPH_COUNT * DRAWDRV_JLU_GLYPH_ADVANCE)
 
 static DrawDrv_RenderConfig_t g_drawCfg;
 static bit g_drawFrameDirty = 0;
@@ -118,6 +123,48 @@ static uint8_t DrawDrv_GetScrollSourceCol(uint8_t col, uint8_t activeCols)
     return srcCol;
 }
 
+static uint8_t DrawDrv_GetJluTextPixel(uint8_t row, uint8_t col)
+{
+    uint8_t textRow;
+    uint8_t glyphIndex;
+    uint8_t glyphCol;
+    uint8_t offset;
+    uint16_t virtualCol;
+    uint16_t rowBits;
+    uint16_t bitMask;
+
+    if ((row >= TEST_IMAGE_ROWS) || (col >= TEST_IMAGE_COLS))
+    {
+        return (uint8_t)TEST_IMAGE_BG_RGB332;
+    }
+
+    offset = (uint8_t)(g_drawScrollOffset % DRAWDRV_JLU_TEXT_WIDTH);
+    virtualCol = (uint16_t)col + (uint16_t)offset;
+    if (virtualCol >= DRAWDRV_JLU_TEXT_WIDTH)
+    {
+        virtualCol = (uint16_t)(virtualCol - DRAWDRV_JLU_TEXT_WIDTH);
+    }
+
+    glyphIndex = (uint8_t)(virtualCol / DRAWDRV_JLU_GLYPH_ADVANCE);
+    glyphCol = (uint8_t)(virtualCol % DRAWDRV_JLU_GLYPH_ADVANCE);
+    if ((glyphIndex >= DRAWDRV_JLU_GLYPH_COUNT) || (glyphCol >= DRAWDRV_JLU_GLYPH_WIDTH))
+    {
+        return (uint8_t)TEST_IMAGE_BG_RGB332;
+    }
+
+    /* Physical LED rows are indexed bottom-to-top (0..15). */
+    textRow = (uint8_t)((TEST_IMAGE_ROWS - 1U) - row);
+    rowBits = g_testScrollGlyphRows[glyphIndex][textRow];
+    bitMask = (uint16_t)(0x8000U >> glyphCol);
+
+    if ((rowBits & bitMask) != 0U)
+    {
+        return 0xFFU;
+    }
+
+    return (uint8_t)TEST_IMAGE_BG_RGB332;
+}
+
 static void DrawDrv_ApplyColorConfig(uint8_t isFg, uint8_t *r, uint8_t *g, uint8_t *b)
 {
     uint16_t rr;
@@ -211,8 +258,16 @@ static void DrawDrv_RebuildFrame(void)
     {
         for (col = 0; col < activeCols; col++)
         {
-            srcCol = DrawDrv_GetScrollSourceCol(col, activeCols);
-            packed = DrawDrv_GetPatternPixel(g_drawFrameIndex, row, srcCol);
+            if (g_drawCfg.effect == DRAWDRV_EFFECT_TEXT_SCROLL_JLU)
+            {
+                packed = DrawDrv_GetJluTextPixel(row, col);
+            }
+            else
+            {
+                srcCol = DrawDrv_GetScrollSourceCol(col, activeCols);
+                packed = DrawDrv_GetPatternPixel(g_drawFrameIndex, row, srcCol);
+            }
+
             isBg = (uint8_t)(packed == (uint8_t)TEST_IMAGE_BG_RGB332);
 
             DrawDrv_DecodeRgb332(packed, &r, &g, &b);
@@ -250,8 +305,20 @@ void DrawDrv_Init(void)
 
 void DrawDrv_Task40ms(void)
 {
+    if (g_drawCfg.scrollStep == 0U)
+    {
+        g_drawCfg.scrollStep = 1U;
+    }
+
     if ((g_drawCfg.effect == DRAWDRV_EFFECT_SCROLL_LEFT) || (g_drawCfg.effect == DRAWDRV_EFFECT_SCROLL_RIGHT)
-        || (g_drawCfg.effect == DRAWDRV_EFFECT_BREATH) || (g_drawCfg.effect == DRAWDRV_EFFECT_GRADIENT))
+        || (g_drawCfg.effect == DRAWDRV_EFFECT_TEXT_SCROLL_JLU))
+    {
+        g_drawScrollOffset = (uint8_t)(g_drawScrollOffset + g_drawCfg.scrollStep);
+    }
+
+    if ((g_drawCfg.effect == DRAWDRV_EFFECT_SCROLL_LEFT) || (g_drawCfg.effect == DRAWDRV_EFFECT_SCROLL_RIGHT)
+        || (g_drawCfg.effect == DRAWDRV_EFFECT_BREATH) || (g_drawCfg.effect == DRAWDRV_EFFECT_GRADIENT)
+        || (g_drawCfg.effect == DRAWDRV_EFFECT_TEXT_SCROLL_JLU))
     {
         g_drawFrameDirty = 1;
     }
@@ -269,25 +336,22 @@ void DrawDrv_Task40ms(void)
 void DrawDrv_Task500ms(void)
 {
     uint8_t patternCount;
-    uint8_t autoAnimate;
+    uint8_t needAnimPhase;
+    uint8_t allowImageSwitch;
 
-    autoAnimate = (uint8_t)(g_drawCfg.effect != DRAWDRV_EFFECT_STATIC);
-    if (autoAnimate != 0U)
+    needAnimPhase = (uint8_t)(g_drawCfg.effect != DRAWDRV_EFFECT_STATIC);
+    if (needAnimPhase != 0U)
     {
         g_drawAnimPhase++;
     }
 
-    if (g_drawCfg.scrollStep == 0U)
+    allowImageSwitch = (uint8_t)(g_drawCfg.effect != DRAWDRV_EFFECT_STATIC);
+    if (g_drawCfg.effect == DRAWDRV_EFFECT_TEXT_SCROLL_JLU)
     {
-        g_drawCfg.scrollStep = 1U;
+        allowImageSwitch = 0U;
     }
 
-    if ((g_drawCfg.effect == DRAWDRV_EFFECT_SCROLL_LEFT) || (g_drawCfg.effect == DRAWDRV_EFFECT_SCROLL_RIGHT))
-    {
-        g_drawScrollOffset = (uint8_t)(g_drawScrollOffset + g_drawCfg.scrollStep);
-    }
-
-    if (autoAnimate != 0U)
+    if (allowImageSwitch != 0U)
     {
         g_drawImageTick++;
         if (g_drawImageTick >= DRAWDRV_IMAGE_SWITCH_TICKS)
@@ -303,7 +367,10 @@ void DrawDrv_Task500ms(void)
                 }
             }
         }
+    }
 
+    if (needAnimPhase != 0U)
+    {
         g_drawFrameDirty = 1;
     }
 }

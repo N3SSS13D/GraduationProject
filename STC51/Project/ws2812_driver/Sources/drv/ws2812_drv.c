@@ -29,7 +29,7 @@ static uint8_t g_ws2812ActiveCols = WS2812DRV_COL_NUM_8;
 
 static uint16_t WS2812DRV_GetActivePwmNum(void)
 {
-	return (uint16_t)((uint16_t)g_ws2812ActiveCols * 24U + 2U);
+	return (uint16_t)(WS2812DRV_ROW_RESET_PREFIX_SLOTS + (uint16_t)g_ws2812ActiveCols * 24U + 2U);
 }
 
 static void WS2812DRV_BlankOutputs(void)
@@ -129,7 +129,8 @@ static void WS2812DRV_EncodeRowToPwmBuffer(uint8_t bufIdx, uint8_t row)
 		g_ws2812RowPwmBuf[bufIdx][row][i] = 0;
 	}
 
-	pwmIdx = 1;
+	/* Reserve reset low window before each row payload to improve decoding stability. */
+	pwmIdx = WS2812DRV_ROW_RESET_PREFIX_SLOTS;
 	for (col = 0; col < activeCols; col++)
 	{
 		for (colorIdx = 0; colorIdx < WS2812DRV_PIXEL_CHANNELS; colorIdx++)

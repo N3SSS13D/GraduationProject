@@ -9,6 +9,8 @@ typedef struct
     MidTaskHook_t hook;
 } MidTaskComponent_t;
 
+#define MIDTASK_NULL_HOOK               ((MidTaskHook_t)0)
+
 static MidTaskComponent_t g_midTasks[MIDTASK_MAX_COUNT];
 static uint8_t g_midTaskCount = 0;
 
@@ -21,7 +23,7 @@ void MidTask_Init(void)
         g_midTasks[idx].run = 0;
         g_midTasks[idx].tickCount = 0;
         g_midTasks[idx].period = 0;
-        g_midTasks[idx].hook = NULL;
+        g_midTasks[idx].hook = MIDTASK_NULL_HOOK;
     }
 
     g_midTaskCount = 0;
@@ -41,7 +43,7 @@ uint8_t MidTask_RegisterWithId(uint16_t periodMs, MidTaskHook_t hook)
 {
     uint8_t taskId;
 
-    if ((hook == NULL) || (periodMs == 0) || (g_midTaskCount >= MIDTASK_MAX_COUNT))
+    if ((hook == MIDTASK_NULL_HOOK) || (periodMs == 0) || (g_midTaskCount >= MIDTASK_MAX_COUNT))
     {
         return MIDTASK_INVALID_ID;
     }

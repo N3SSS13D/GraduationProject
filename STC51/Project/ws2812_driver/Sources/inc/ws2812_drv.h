@@ -6,7 +6,8 @@
 #define WS2812DRV_COL_NUM_8                  8
 #define WS2812DRV_COL_NUM_16                 16
 #define WS2812DRV_PIXEL_CHANNELS             3
-#define WS2812DRV_PWM_NUM_MAX                (WS2812DRV_COL_NUM_MAX * 24 + 2)
+#define WS2812DRV_ROW_RESET_PREFIX_SLOTS     48
+#define WS2812DRV_PWM_NUM_MAX                (WS2812DRV_ROW_RESET_PREFIX_SLOTS + WS2812DRV_COL_NUM_MAX * 24 + 2)
 #define WS2812DRV_PWM_NUM_DUAL_MAX           (WS2812DRV_PWM_NUM_MAX * 2)
 
 #define WS2812DRV_PWM_DUTY_BIT0              12

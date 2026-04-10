@@ -21,8 +21,10 @@
 //<<AICUBE_USER_GLOBAL_DEFINE_BEGIN>>
 // 在此添加用户全局变量定义、用户宏定义以及函数声明  
 static volatile uint32_t g_timerTickMs = 0;
-static Timer0Hook1ms_t g_timer0Hook = NULL;
-static Timer0HookUs_t g_timer0UsHook = NULL;
+#define TIMER0_NULL_HOOK_1MS            ((Timer0Hook1ms_t)0)
+#define TIMER0_NULL_HOOK_US             ((Timer0HookUs_t)0)
+static Timer0Hook1ms_t g_timer0Hook = TIMER0_NULL_HOOK_1MS;
+static Timer0HookUs_t g_timer0UsHook = TIMER0_NULL_HOOK_US;
 static volatile uint32_t g_timer0RemainUs = 0;
 static volatile bit g_timer0IsRunning = 0;
 
