@@ -13,186 +13,297 @@
 //<<AICUBE_USER_INCLUDE_END>>
 
 //<<AICUBE_USER_GLOBAL_DEFINE_BEGIN>>
-static uint8_t USBLIB_ParseIntervalCommand(uint8_t *buf, uint8_t len, uint32_t *intervalUs)
+#define USBLIB_TEXT_SEQUENCE_MAX         32U
+
+typedef struct
 {
-    uint8_t i;
-    uint16_t value;
+    uint8_t isPlay;
+    uint8_t hasContent;
+    uint8_t hasEffect;
+    uint8_t hasDirection;
+    uint8_t hasSpeed;
+    uint8_t hasAnim;
+    uint8_t hasColorMode;
+    uint8_t hasGradient;
+    uint8_t hasBrightness;
+    uint8_t hasImage;
+    uint8_t hasGlyphIndex;
+    uint8_t hasTextSequence;
+    uint8_t hasFg;
+    uint8_t hasBg;
+    uint8_t content;
+    uint8_t effect;
+    uint8_t direction;
+    uint8_t speed;
+    uint8_t anim;
+    uint8_t colorMode;
+    uint8_t gradient;
+    uint8_t brightness;
+    uint8_t image;
+    uint8_t glyphIndex;
+    uint8_t textSequenceLen;
+    uint8_t textSequence[USBLIB_TEXT_SEQUENCE_MAX];
+    uint8_t fgR;
+    uint8_t fgG;
+    uint8_t fgB;
+    uint8_t bgR;
+    uint8_t bgG;
+    uint8_t bgB;
+} USBLIB_PlayCmd_t;
 
-    for (i = 0; (uint8_t)(i + 7) <= len; i++)
-    {
-        if ((buf[i] == 'T') && (buf[i + 1] == '=')
-            && (buf[i + 2] >= '0') && (buf[i + 2] <= '9')
-            && (buf[i + 3] >= '0') && (buf[i + 3] <= '9')
-            && (buf[i + 4] >= '0') && (buf[i + 4] <= '9')
-            && (buf[i + 5] >= '0') && (buf[i + 5] <= '9'))
-        {
-            value = (uint16_t)((buf[i + 2] - '0') * 1000 + (buf[i + 3] - '0') * 100
-                + (buf[i + 4] - '0') * 10 + (buf[i + 5] - '0'));
+static uint8_t USBLIB_ParseRgb24(uint8_t *buf, uint8_t off, uint8_t len, uint8_t *r, uint8_t *g, uint8_t *b);
+static uint8_t USBLIB_ParseColorCommand(uint8_t *buf, uint8_t len, uint8_t *isFg, uint8_t *r, uint8_t *g, uint8_t *b);
 
-            if ((uint8_t)(i + 8) <= len)
-            {
-                if ((buf[i + 6] == 'u') && (buf[i + 7] == 's'))
-                {
-                    *intervalUs = (uint32_t)value;
-                    return 1;
-                }
-                if ((buf[i + 6] == 'm') && (buf[i + 7] == 's'))
-                {
-                    *intervalUs = (uint32_t)value * 1000U;
-                    return 1;
-                }
-            }
-
-            if (buf[i + 6] == 's')
-            {
-                *intervalUs = (uint32_t)value * 1000000U;
-                return 1;
-            }
-        }
-    }
-
-    return 0;
-}
-
-static uint8_t USBLIB_ParseModeCommand(uint8_t *buf, uint8_t len, uint8_t *mode16x)
+static uint8_t USBLIB_ParseU8At(uint8_t *buf, uint8_t off, uint8_t len, uint8_t *value)
 {
-    uint8_t i;
-
-    for (i = 0; (uint8_t)(i + 6) <= len; i++)
-    {
-        if ((buf[i] == 'M') && (buf[i + 1] == '=')
-            && (buf[i + 2] == '0') && (buf[i + 3] == '0')
-            && (buf[i + 4] == '0') && (buf[i + 5] == '8'))
-        {
-            *mode16x = 8U;
-
-            return 1;
-        }
-
-        if ((buf[i] == 'M') && (buf[i + 1] == '=')
-            && (buf[i + 2] == '0') && (buf[i + 3] == '0')
-            && (buf[i + 4] == '1') && (buf[i + 5] == '6'))
-        {
-            *mode16x = 16U;
-
-            return 1;
-        }
-    }
-
-    for (i = 0; (uint8_t)(i + 9) <= len; i++)
-    {
-        if ((buf[i] == 'M') && (buf[i + 1] == 'O') && (buf[i + 2] == 'D') && (buf[i + 3] == 'E')
-            && (buf[i + 4] == '=') && (buf[i + 5] == '1') && (buf[i + 6] == '6')
-            && ((buf[i + 7] == 'X') || (buf[i + 7] == 'x')) && (buf[i + 8] == '8'))
-        {
-            *mode16x = 8U;
-
-            return 1;
-        }
-    }
-
-    for (i = 0; (uint8_t)(i + 10) <= len; i++)
-    {
-        if ((buf[i] == 'M') && (buf[i + 1] == 'O') && (buf[i + 2] == 'D') && (buf[i + 3] == 'E')
-            && (buf[i + 4] == '=') && (buf[i + 5] == '1') && (buf[i + 6] == '6')
-            && ((buf[i + 7] == 'X') || (buf[i + 7] == 'x'))
-            && (buf[i + 8] == '1') && (buf[i + 9] == '6'))
-        {
-            *mode16x = 16U;
-
-            return 1;
-        }
-    }
-
-    return 0;
-}
-
-static uint8_t USBLIB_ParseImageCommand(uint8_t *buf, uint8_t len, uint8_t *isNext, uint8_t *index)
-{
-    uint8_t i;
     uint8_t v;
 
-    for (i = 0; (uint8_t)(i + 8) <= len; i++)
+    if ((off >= len) || (buf[off] < '0') || (buf[off] > '9'))
     {
-        if ((buf[i] == 'I') && (buf[i + 1] == 'M') && (buf[i + 2] == 'G') && (buf[i + 3] == '=')
-            && (buf[i + 4] == 'N') && (buf[i + 5] == 'E') && (buf[i + 6] == 'X') && (buf[i + 7] == 'T'))
-        {
-            *isNext = 1;
-            *index = 0;
+        return 0;
+    }
 
+    v = (uint8_t)(buf[off] - '0');
+    if ((uint8_t)(off + 1U) < len)
+    {
+        if ((buf[(uint8_t)(off + 1U)] >= '0') && (buf[(uint8_t)(off + 1U)] <= '9'))
+        {
+            v = (uint8_t)(v * 10U + (uint8_t)(buf[(uint8_t)(off + 1U)] - '0'));
+            if ((uint8_t)(off + 2U) < len)
+            {
+                if ((buf[(uint8_t)(off + 2U)] >= '0') && (buf[(uint8_t)(off + 2U)] <= '9'))
+                {
+                    v = (uint8_t)(v * 10U + (uint8_t)(buf[(uint8_t)(off + 2U)] - '0'));
+                }
+            }
+        }
+    }
+
+    *value = v;
+    return 1;
+}
+
+static uint8_t USBLIB_HasPlayToken(uint8_t *buf, uint8_t len)
+{
+    uint8_t i;
+
+    for (i = 0; (uint8_t)(i + 4U) <= len; i++)
+    {
+        if ((buf[i] == 'P') && (buf[(uint8_t)(i + 1U)] == 'L')
+            && (buf[(uint8_t)(i + 2U)] == 'A') && (buf[(uint8_t)(i + 3U)] == 'Y'))
+        {
             return 1;
         }
     }
 
-    for (i = 0; (uint8_t)(i + 5) <= len; i++)
+    return 0;
+}
+
+static uint8_t USBLIB_ParseTextSequence(uint8_t *buf, uint8_t len, uint8_t *seq, uint8_t *seqLen)
+{
+    uint8_t i;
+    uint8_t j;
+    uint16_t value;
+    uint8_t count;
+    uint8_t hasDigit;
+
+    for (i = 0; (uint8_t)(i + 3U) <= len; i++)
     {
-        if ((buf[i] == 'I') && (buf[i + 1] == 'M') && (buf[i + 2] == 'G') && (buf[i + 3] == '='))
+        if ((buf[i] == 'S') && (buf[(uint8_t)(i + 1U)] == 'Q') && (buf[(uint8_t)(i + 2U)] == '='))
         {
-            if ((buf[i + 4] < '0') || (buf[i + 4] > '9'))
+            j = (uint8_t)(i + 3U);
+            count = 0U;
+
+            while ((j < len) && (count < USBLIB_TEXT_SEQUENCE_MAX))
             {
-                return 0;
+                value = 0U;
+                hasDigit = 0U;
+                while ((j < len) && (buf[j] >= '0') && (buf[j] <= '9'))
+                {
+                    value = (uint16_t)(value * 10U + (uint16_t)(buf[j] - '0'));
+                    if (value > 255U)
+                    {
+                        return 0U;
+                    }
+
+                    hasDigit = 1U;
+                    j++;
+                }
+
+                if (hasDigit == 0U)
+                {
+                    break;
+                }
+
+                seq[count] = (uint8_t)value;
+                count++;
+
+                if ((j < len) && (buf[j] == ','))
+                {
+                    j++;
+                    continue;
+                }
+
+                break;
             }
 
-            v = (uint8_t)(buf[i + 4] - '0');
-            if ((uint8_t)(i + 6) <= len)
+            if (count == 0U)
             {
-                if ((buf[i + 5] >= '0') && (buf[i + 5] <= '9'))
+                return 0U;
+            }
+
+            *seqLen = count;
+            return 1U;
+        }
+    }
+
+    return 0U;
+}
+
+static void USBLIB_ParsePlayCommand(uint8_t *buf, uint8_t len, USBLIB_PlayCmd_t *cmd)
+{
+    uint8_t i;
+    uint8_t tmp;
+
+    cmd->isPlay = USBLIB_HasPlayToken(buf, len);
+    if (cmd->isPlay == 0U)
+    {
+        return;
+    }
+
+    for (i = 0; (uint8_t)(i + 3U) <= len; i++)
+    {
+        if ((buf[i] == 'C') && (buf[(uint8_t)(i + 1U)] == 'T') && (buf[(uint8_t)(i + 2U)] == '='))
+        {
+            if ((USBLIB_ParseU8At(buf, (uint8_t)(i + 3U), len, &tmp) != 0U) && (tmp <= 1U))
+            {
+                cmd->hasContent = 1U;
+                cmd->content = tmp;
+            }
+        }
+
+        if ((uint8_t)(i + 4U) <= len)
+        {
+            if ((buf[i] == 'D') && (buf[(uint8_t)(i + 1U)] == 'I')
+                && (buf[(uint8_t)(i + 2U)] == 'R') && (buf[(uint8_t)(i + 3U)] == '='))
+            {
+                if ((USBLIB_ParseU8At(buf, (uint8_t)(i + 4U), len, &tmp) != 0U) && (tmp <= 3U))
                 {
-                    v = (uint8_t)(v * 10U + (uint8_t)(buf[i + 5] - '0'));
+                    cmd->hasDirection = 1U;
+                    cmd->direction = tmp;
                 }
             }
 
-            *isNext = 0;
-            *index = v;
+            if ((buf[i] == 'S') && (buf[(uint8_t)(i + 1U)] == 'P')
+                && (buf[(uint8_t)(i + 2U)] == 'D') && (buf[(uint8_t)(i + 3U)] == '='))
+            {
+                if (USBLIB_ParseU8At(buf, (uint8_t)(i + 4U), len, &tmp) != 0U)
+                {
+                    cmd->hasSpeed = 1U;
+                    cmd->speed = tmp;
+                }
+            }
 
-            return 1;
+            if ((buf[i] == 'A') && (buf[(uint8_t)(i + 1U)] == 'N')
+                && (buf[(uint8_t)(i + 2U)] == 'I') && (buf[(uint8_t)(i + 3U)] == '='))
+            {
+                if (USBLIB_ParseU8At(buf, (uint8_t)(i + 4U), len, &tmp) != 0U)
+                {
+                    cmd->hasAnim = 1U;
+                    cmd->anim = tmp;
+                }
+            }
+        }
+
+        if ((buf[i] == 'F') && (buf[(uint8_t)(i + 1U)] == 'X') && (buf[(uint8_t)(i + 2U)] == '='))
+        {
+            if ((USBLIB_ParseU8At(buf, (uint8_t)(i + 3U), len, &tmp) != 0U) && (tmp <= 8U))
+            {
+                cmd->hasEffect = 1U;
+                cmd->effect = tmp;
+            }
+        }
+
+        if ((buf[i] == 'C') && (buf[(uint8_t)(i + 1U)] == 'M') && (buf[(uint8_t)(i + 2U)] == '='))
+        {
+            if ((USBLIB_ParseU8At(buf, (uint8_t)(i + 3U), len, &tmp) != 0U) && (tmp <= 1U))
+            {
+                cmd->hasColorMode = 1U;
+                cmd->colorMode = tmp;
+            }
+        }
+
+        if ((buf[i] == 'G') && (buf[(uint8_t)(i + 1U)] == 'S') && (buf[(uint8_t)(i + 2U)] == '='))
+        {
+            if (USBLIB_ParseU8At(buf, (uint8_t)(i + 3U), len, &tmp) != 0U)
+            {
+                cmd->hasGradient = 1U;
+                cmd->gradient = tmp;
+            }
+        }
+
+        if ((buf[i] == 'B') && (buf[(uint8_t)(i + 1U)] == 'R') && (buf[(uint8_t)(i + 2U)] == '='))
+        {
+            if (USBLIB_ParseU8At(buf, (uint8_t)(i + 3U), len, &tmp) != 0U)
+            {
+                cmd->hasBrightness = 1U;
+                cmd->brightness = tmp;
+            }
+        }
+
+        if ((buf[i] == 'G') && (buf[(uint8_t)(i + 1U)] == 'I') && (buf[(uint8_t)(i + 2U)] == '='))
+        {
+            if (USBLIB_ParseU8At(buf, (uint8_t)(i + 3U), len, &tmp) != 0U)
+            {
+                cmd->hasGlyphIndex = 1U;
+                cmd->glyphIndex = tmp;
+            }
         }
     }
 
-    return 0;
-}
-
-static uint8_t USBLIB_ParseEffectCommand(uint8_t *buf, uint8_t len, uint8_t *effectId)
-{
-    uint8_t i;
-
-    for (i = 0; (uint8_t)(i + 4) <= len; i++)
+    for (i = 0; (uint8_t)(i + 4U) <= len; i++)
     {
-        if ((buf[i] == 'F') && (buf[i + 1] == 'X') && (buf[i + 2] == '=')
-            && (buf[i + 3] >= '0') && (buf[i + 3] <= '5'))
+        if ((buf[i] == 'I') && (buf[(uint8_t)(i + 1U)] == 'M')
+            && (buf[(uint8_t)(i + 2U)] == 'G') && (buf[(uint8_t)(i + 3U)] == '='))
         {
-            *effectId = (uint8_t)(buf[i + 3] - '0');
-
-            return 1;
+            if (USBLIB_ParseU8At(buf, (uint8_t)(i + 4U), len, &tmp) != 0U)
+            {
+                cmd->hasImage = 1U;
+                cmd->image = tmp;
+            }
         }
     }
 
-    return 0;
-}
-
-static uint8_t USBLIB_ParseGradientEnableCommand(uint8_t *buf, uint8_t len, uint8_t *enable)
-{
-    uint8_t i;
-
-    for (i = 0; (uint8_t)(i + 6) <= len; i++)
+    if (USBLIB_ParseTextSequence(buf, len, cmd->textSequence, &cmd->textSequenceLen) != 0U)
     {
-        if ((buf[i] == 'G') && (buf[i + 1] == 'R') && (buf[i + 2] == 'A') && (buf[i + 3] == 'D')
-            && (buf[i + 4] == '=') && (buf[i + 5] == '0'))
-        {
-            *enable = 0;
+        cmd->hasTextSequence = 1U;
+    }
 
-            return 1;
+    if (USBLIB_ParseColorCommand(buf, len, &tmp, &cmd->fgR, &cmd->fgG, &cmd->fgB) != 0U)
+    {
+        if (tmp != 0U)
+        {
+            cmd->hasFg = 1U;
         }
-        if ((buf[i] == 'G') && (buf[i + 1] == 'R') && (buf[i + 2] == 'A') && (buf[i + 3] == 'D')
-            && (buf[i + 4] == '=') && (buf[i + 5] == '1'))
+        else
         {
-            *enable = 1;
-
-            return 1;
+            cmd->hasBg = 1U;
+            cmd->bgR = cmd->fgR;
+            cmd->bgG = cmd->fgG;
+            cmd->bgB = cmd->fgB;
         }
     }
 
-    return 0;
+    for (i = 0; (uint8_t)(i + 10U) <= len; i++)
+    {
+        if ((buf[i] == 'B') && (buf[(uint8_t)(i + 1U)] == 'G') && (buf[(uint8_t)(i + 2U)] == '='))
+        {
+            if (USBLIB_ParseRgb24(buf, (uint8_t)(i + 3U), len, &cmd->bgR, &cmd->bgG, &cmd->bgB) != 0U)
+            {
+                cmd->hasBg = 1U;
+            }
+        }
+    }
 }
 
 static uint8_t USBLIB_HexNibble(uint8_t c, uint8_t *v)
@@ -298,145 +409,84 @@ void USBLIB_WaitConfiged(void)
 ////////////////////////////////////////
 void USBLIB_OUT_Callback(void)
 {
-    uint8_t hasInterval;
-    uint8_t hasMode;
-    uint8_t mode16x;
-    uint8_t hasImage;
-    uint8_t imageNext;
-    uint8_t imageIndex;
-    uint8_t hasEffect;
-    uint8_t effectId;
-    uint8_t hasGrad;
-    uint8_t gradEnable;
-    uint8_t hasColor;
-    uint8_t isFg;
-    uint8_t r;
-    uint8_t g;
-    uint8_t b;
-    uint32_t intervalUs;
-
-    /* Debug command summary:
-     * 1) T=dddd(us|ms|s)                   set row interval
-     * 2) M=0008 / M=0016                   set display mode
-     * 3) IMG=n / IMG=NEXT                  select or switch image
-        * 4) FX=0..5                           set render effect
-        *    FX=5: scroll text "JiLin University" glyph set
-     * 5) GRAD=0|1                          enable or disable gradient
-     * 6) FG=RRGGBB / BG=RRGGBB             set foreground/background color
+    USBLIB_PlayCmd_t playCmd = {0};
+    /* USB v2 command (legacy commands removed):
+     * PLAY CT=x   // content: 0=pattern image, 1=glyph text
+     *      DIR=x  // direction: 0=normal, 1=rotate180, 2=rotateCW90, 3=rotateCCW90
+     *      FX=x   // effect: 0=static,1=breath,2=gradient,3=scrollL,4=scrollR,5=jluScroll,6=fadeIn,7=fadeOut,8=colorCycle
+     *      SPD=x  // scroll step: 1..255 (larger is faster)
+     *      ANI=x  // animation step: 1..255 (larger is faster)
+     *      CM=x   // color mode: 0=solid, 1=gradient
+     *      GS=x   // gradient span alpha: 0..255
+     *      BR=x   // brightness: 0..255 (0=off,255=max)
+     *      IMG=x  // image index: 0..(TEST_IMAGE_COUNT-1)
+    *      GI=x   // static glyph index: 0..(TEST_SCROLL_GLYPH_COUNT-1)
+    *      SQ=a,b,c... // scroll glyph index sequence (e.g. SQ=0,1,2,3)
+     *      FG=RRGGBB // foreground color in RGB888 hex
+     *      BG=RRGGBB // background color in RGB888 hex
      */
 
-    hasImage = USBLIB_ParseImageCommand(UsbOutBuffer, OutNumber, &imageNext, &imageIndex);
-    if (hasImage != 0)
+    USBLIB_ParsePlayCommand(UsbOutBuffer, OutNumber, &playCmd);
+    if (playCmd.isPlay != 0U)
     {
-        if (imageNext != 0)
+        if (playCmd.hasContent != 0U)
         {
-            Test_NextImage();
-            printf("[USB] image=NEXT idx=%u\r\n", (unsigned int)Test_GetImageIndex());
+            (void)Test_SetContentType(playCmd.content);
         }
-        else
+        if (playCmd.hasDirection != 0U)
         {
-            (void)Test_SetImageIndex(imageIndex);
-            printf("[USB] image=%u\r\n", (unsigned int)Test_GetImageIndex());
+            (void)Test_SetDirection(playCmd.direction);
+        }
+        if (playCmd.hasEffect != 0U)
+        {
+            (void)Test_SetRenderEffect(playCmd.effect);
+        }
+        if (playCmd.hasSpeed != 0U)
+        {
+            Test_SetScrollStep(playCmd.speed);
+        }
+        if (playCmd.hasAnim != 0U)
+        {
+            Test_SetAnimStep(playCmd.anim);
+        }
+        if (playCmd.hasColorMode != 0U)
+        {
+            (void)Test_SetColorMode(playCmd.colorMode);
+        }
+        if (playCmd.hasGradient != 0U)
+        {
+            Test_SetGradientSpan(playCmd.gradient);
+        }
+        if (playCmd.hasBrightness != 0U)
+        {
+            Test_SetBrightness(playCmd.brightness);
+        }
+        if (playCmd.hasImage != 0U)
+        {
+            (void)Test_SetImageIndex(playCmd.image);
+        }
+        if (playCmd.hasGlyphIndex != 0U)
+        {
+            (void)Test_SetGlyphDisplayIndex(playCmd.glyphIndex);
+        }
+        if (playCmd.hasTextSequence != 0U)
+        {
+            (void)Test_SetScrollGlyphSequence(playCmd.textSequence, playCmd.textSequenceLen);
+        }
+        if (playCmd.hasFg != 0U)
+        {
+            Test_SetForegroundColor(playCmd.fgR, playCmd.fgG, playCmd.fgB);
+        }
+        if (playCmd.hasBg != 0U)
+        {
+            Test_SetBackgroundColor(playCmd.bgR, playCmd.bgG, playCmd.bgB);
         }
 
-        printf("[STATE] row_interval_us=%lu pwm_us=%u mode=16x%u\r\n",
-            (unsigned long)Test_GetRowIntervalUs(),
-            (unsigned int)Test_GetLastPwmUs(),
-            (unsigned int)Test_GetDisplayMode());
-
+        printf("[USB] play cfg applied\r\n");
         return;
     }
 
-    hasEffect = USBLIB_ParseEffectCommand(UsbOutBuffer, OutNumber, &effectId);
-    if (hasEffect != 0)
-    {
-        if (Test_SetRenderEffect(effectId) != 0)
-        {
-            printf("[USB] effect=%u\r\n", (unsigned int)effectId);
-        }
-        else
-        {
-            printf("[USB] effect err, use FX=0..5\r\n");
-        }
-
-        printf("[STATE] row_interval_us=%lu pwm_us=%u mode=16x%u\r\n",
-            (unsigned long)Test_GetRowIntervalUs(),
-            (unsigned int)Test_GetLastPwmUs(),
-            (unsigned int)Test_GetDisplayMode());
-
-        return;
-    }
-
-    hasGrad = USBLIB_ParseGradientEnableCommand(UsbOutBuffer, OutNumber, &gradEnable);
-    if (hasGrad != 0)
-    {
-        Test_SetRenderUseGradient(gradEnable);
-        printf("[USB] gradient=%u\r\n", (unsigned int)gradEnable);
-        printf("[STATE] row_interval_us=%lu pwm_us=%u mode=16x%u\r\n",
-            (unsigned long)Test_GetRowIntervalUs(),
-            (unsigned int)Test_GetLastPwmUs(),
-            (unsigned int)Test_GetDisplayMode());
-
-        return;
-    }
-
-    hasColor = USBLIB_ParseColorCommand(UsbOutBuffer, OutNumber, &isFg, &r, &g, &b);
-    if (hasColor != 0)
-    {
-        if (isFg != 0)
-        {
-            Test_SetForegroundColor(r, g, b);
-            printf("[USB] fg=%02X%02X%02X\r\n", (unsigned int)r, (unsigned int)g, (unsigned int)b);
-        }
-        else
-        {
-            Test_SetBackgroundColor(r, g, b);
-            printf("[USB] bg=%02X%02X%02X\r\n", (unsigned int)r, (unsigned int)g, (unsigned int)b);
-        }
-
-        printf("[STATE] row_interval_us=%lu pwm_us=%u mode=16x%u\r\n",
-            (unsigned long)Test_GetRowIntervalUs(),
-            (unsigned int)Test_GetLastPwmUs(),
-            (unsigned int)Test_GetDisplayMode());
-
-        return;
-    }
-
-    hasMode = USBLIB_ParseModeCommand(UsbOutBuffer, OutNumber, &mode16x);
-    if (hasMode != 0)
-    {
-        if (Test_SetDisplayMode(mode16x) != 0)
-        {
-            printf("[USB] display_mode=16x%u\r\n", (unsigned int)Test_GetDisplayMode());
-        }
-        else
-        {
-            printf("[USB] mode err, use M=0008/M=0016 or MODE=16X8/MODE=16X16\r\n");
-        }
-
-        printf("[STATE] row_interval_us=%lu pwm_us=%u mode=16x%u\r\n",
-            (unsigned long)Test_GetRowIntervalUs(),
-            (unsigned int)Test_GetLastPwmUs(),
-            (unsigned int)Test_GetDisplayMode());
-
-        return;
-    }
-
-    hasInterval = USBLIB_ParseIntervalCommand(UsbOutBuffer, OutNumber, &intervalUs);
-    if (hasInterval != 0)
-    {
-        Test_SetRowIntervalUs(intervalUs);
-        printf("[USB] row_interval_us=%lu\r\n", (unsigned long)Test_GetRowIntervalUs());
-    }
-    else
-    {
-        printf("[USB] cmd err, use T/M, IMG=n|IMG=NEXT, FX=0..5, GRAD=0|1, FG=RRGGBB, BG=RRGGBB\r\n");
-    }
-
-    printf("[STATE] row_interval_us=%lu pwm_us=%u mode=16x%u\r\n",
-        (unsigned long)Test_GetRowIntervalUs(),
-        (unsigned int)Test_GetLastPwmUs(),
-        (unsigned int)Test_GetDisplayMode());
+    printf("[USB] cmd err, use PLAY CT/DIR/FX/SPD/ANI/CM/GS/BR/IMG/GI/SQ/FG/BG\r\n");
 }
 
 //<<AICUBE_USER_FUNCTION_IMPLEMENT_BEGIN>>

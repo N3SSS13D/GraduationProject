@@ -3,6 +3,7 @@
 #include "draw_drv.h"
 #include "test_image.h"
 #include "mid_task.h"
+#include "key_ctrl.h"
 #include "ws2812_drv.h"
 
 #define TEST_SCHED_TICK_US               1000UL
@@ -11,11 +12,101 @@
 #define TEST_ROW_INTERVAL_US_MAX         1500UL
 #define TEST_DRAW_FRAME_TASK_PERIOD_MS   40U
 #define TEST_DRAW_ANIM_TASK_PERIOD_MS    500U
+#define TEST_KEY_TASK_PERIOD_MS          10U
 #define TEST_TIMER1_US_PRESCALE          39U
+#define TEST_PRESET_MODE_COUNT           4U
+
+#define TEST_PRESET_DIAMOND_FADE         0U
+#define TEST_PRESET_CROSS_GRADIENT       1U
+#define TEST_PRESET_PYTHON_STATIC        2U
+#define TEST_PRESET_JLU_SCROLL           3U
 
 static uint32_t g_testRowIntervalUs = TEST_ROW_INTERVAL_US_DEFAULT;
 static uint16_t g_testLastPwmUs = 0;
 static DrawDrv_RenderConfig_t g_testRenderCfg;
+static uint8_t g_testPresetMode = TEST_PRESET_JLU_SCROLL;
+
+static void Test_ApplyPresetMode(uint8_t presetMode)
+{
+    DrawDrv_GetRenderConfig(&g_testRenderCfg);
+
+    if (presetMode >= TEST_PRESET_MODE_COUNT)
+    {
+        presetMode = 0U;
+    }
+
+    if (presetMode == TEST_PRESET_DIAMOND_FADE)
+    {
+        g_testRenderCfg.contentType = DRAWDRV_CONTENT_PATTERN;
+        g_testRenderCfg.colorMode = DRAWDRV_COLOR_SOLID;
+        g_testRenderCfg.direction = DRAWDRV_DIR_NORMAL;
+        g_testRenderCfg.useGradient = 0U;
+        g_testRenderCfg.effect = DRAWDRV_EFFECT_BREATH;
+        g_testRenderCfg.scrollStep = 1U;
+        g_testRenderCfg.animStep = 2U;
+        g_testRenderCfg.fgR = 0xFF;
+        g_testRenderCfg.fgG = 0xC0;
+        g_testRenderCfg.fgB = 0x50;
+        g_testRenderCfg.bgR = 0x00;
+        g_testRenderCfg.bgG = 0x00;
+        g_testRenderCfg.bgB = 0x00;
+        DrawDrv_SetImageIndex(TEST_IMAGE_IDX_DIAMOND);
+    }
+    else if (presetMode == TEST_PRESET_CROSS_GRADIENT)
+    {
+        g_testRenderCfg.contentType = DRAWDRV_CONTENT_PATTERN;
+        g_testRenderCfg.colorMode = DRAWDRV_COLOR_GRADIENT;
+        g_testRenderCfg.direction = DRAWDRV_DIR_NORMAL;
+        g_testRenderCfg.useGradient = 1U;
+        g_testRenderCfg.gradientSpan = 180U;
+        g_testRenderCfg.effect = DRAWDRV_EFFECT_GRADIENT;
+        g_testRenderCfg.scrollStep = 1U;
+        g_testRenderCfg.animStep = 2U;
+        g_testRenderCfg.fgR = 0x70;
+        g_testRenderCfg.fgG = 0xE0;
+        g_testRenderCfg.fgB = 0xFF;
+        g_testRenderCfg.bgR = 0x00;
+        g_testRenderCfg.bgG = 0x00;
+        g_testRenderCfg.bgB = 0x00;
+        DrawDrv_SetImageIndex(TEST_IMAGE_IDX_CROSS);
+    }
+    else if (presetMode == TEST_PRESET_PYTHON_STATIC)
+    {
+        g_testRenderCfg.contentType = DRAWDRV_CONTENT_PATTERN;
+        g_testRenderCfg.colorMode = DRAWDRV_COLOR_SOLID;
+        g_testRenderCfg.direction = DRAWDRV_DIR_NORMAL;
+        g_testRenderCfg.useGradient = 0U;
+        g_testRenderCfg.effect = DRAWDRV_EFFECT_STATIC;
+        g_testRenderCfg.scrollStep = 1U;
+        g_testRenderCfg.animStep = 1U;
+        g_testRenderCfg.fgR = 0xFF;
+        g_testRenderCfg.fgG = 0xFF;
+        g_testRenderCfg.fgB = 0xFF;
+        g_testRenderCfg.bgR = 0x00;
+        g_testRenderCfg.bgG = 0x00;
+        g_testRenderCfg.bgB = 0x00;
+        DrawDrv_SetImageIndex(TEST_IMAGE_IDX_PYTHON_DEMO);
+    }
+    else
+    {
+        g_testRenderCfg.contentType = DRAWDRV_CONTENT_GLYPH;
+        g_testRenderCfg.colorMode = DRAWDRV_COLOR_SOLID;
+        g_testRenderCfg.direction = DRAWDRV_DIR_NORMAL;
+        g_testRenderCfg.useGradient = 0U;
+        g_testRenderCfg.effect = DRAWDRV_EFFECT_TEXT_SCROLL_JLU;
+        g_testRenderCfg.scrollStep = 1U;
+        g_testRenderCfg.animStep = 1U;
+        g_testRenderCfg.fgR = 0xFF;
+        g_testRenderCfg.fgG = 0xFF;
+        g_testRenderCfg.fgB = 0xFF;
+        g_testRenderCfg.bgR = 0x00;
+        g_testRenderCfg.bgG = 0x00;
+        g_testRenderCfg.bgB = 0x00;
+    }
+
+    g_testPresetMode = presetMode;
+    DrawDrv_SetRenderConfig(&g_testRenderCfg);
+}
 
 static void Test_OnSchedTickExpired(void)
 {
@@ -65,13 +156,17 @@ static void Test_LoadDefaultRenderConfig(void)
     g_testRenderCfg.bgR = 0x00;
     g_testRenderCfg.bgG = 0x00;
     g_testRenderCfg.bgB = 0x00;
+    g_testRenderCfg.brightness = 200U;
+    g_testRenderCfg.contentType = DRAWDRV_CONTENT_GLYPH;
+    g_testRenderCfg.colorMode = DRAWDRV_COLOR_SOLID;
+    g_testRenderCfg.direction = DRAWDRV_DIR_NORMAL;
     g_testRenderCfg.useGradient = 0;
     g_testRenderCfg.gradientSpan = 96U;
     g_testRenderCfg.scrollStep = 1U;
-    /* Default to text scroll mode so glyph replacement is visible immediately. */
+    g_testRenderCfg.animStep = 1U;
     g_testRenderCfg.effect = DRAWDRV_EFFECT_TEXT_SCROLL_JLU;
     DrawDrv_SetRenderConfig(&g_testRenderCfg);
-    DrawDrv_SetImageIndex(TEST_IMAGE_IDX_PYTHON_DEMO);
+    Test_ApplyPresetMode(g_testPresetMode);
 }
 
 void Test_Init(void)
@@ -83,7 +178,9 @@ void Test_Init(void)
     Test_LoadDefaultRenderConfig();
 
     MidTask_Init();
+    KeyCtrl_Init();
     /* Register animation task first so state update runs before frame rebuild when coincident. */
+    (void)MidTask_RegisterWithId(TEST_KEY_TASK_PERIOD_MS, KeyCtrl_Task10ms);
     (void)MidTask_RegisterWithId(TEST_DRAW_ANIM_TASK_PERIOD_MS, DrawDrv_Task500ms);
     (void)MidTask_RegisterWithId(TEST_DRAW_FRAME_TASK_PERIOD_MS, DrawDrv_Task40ms);
 
@@ -172,7 +269,7 @@ uint8_t Test_SetRenderEffect(uint8_t effectId)
 {
     DrawDrv_GetRenderConfig(&g_testRenderCfg);
 
-    if (effectId > (uint8_t)DRAWDRV_EFFECT_TEXT_SCROLL_JLU)
+    if (effectId > (uint8_t)DRAWDRV_EFFECT_COLOR_CYCLE)
     {
         return 0;
     }
@@ -181,6 +278,80 @@ uint8_t Test_SetRenderEffect(uint8_t effectId)
     DrawDrv_SetRenderConfig(&g_testRenderCfg);
 
     return 1;
+}
+
+uint8_t Test_SetContentType(uint8_t contentType)
+{
+    DrawDrv_GetRenderConfig(&g_testRenderCfg);
+    if (contentType > (uint8_t)DRAWDRV_CONTENT_GLYPH)
+    {
+        return 0;
+    }
+
+    g_testRenderCfg.contentType = (DrawDrv_ContentType_t)contentType;
+    DrawDrv_SetRenderConfig(&g_testRenderCfg);
+
+    return 1;
+}
+
+uint8_t Test_SetDirection(uint8_t direction)
+{
+    DrawDrv_GetRenderConfig(&g_testRenderCfg);
+    if (direction > (uint8_t)DRAWDRV_DIR_ROTATE_CCW_90)
+    {
+        return 0;
+    }
+
+    g_testRenderCfg.direction = (DrawDrv_Direction_t)direction;
+    DrawDrv_SetRenderConfig(&g_testRenderCfg);
+
+    return 1;
+}
+
+uint8_t Test_SetColorMode(uint8_t colorMode)
+{
+    DrawDrv_GetRenderConfig(&g_testRenderCfg);
+    if (colorMode > (uint8_t)DRAWDRV_COLOR_GRADIENT)
+    {
+        return 0;
+    }
+
+    g_testRenderCfg.colorMode = (DrawDrv_ColorMode_t)colorMode;
+    DrawDrv_SetRenderConfig(&g_testRenderCfg);
+
+    return 1;
+}
+
+void Test_SetScrollStep(uint8_t step)
+{
+    DrawDrv_GetRenderConfig(&g_testRenderCfg);
+    if (step == 0U)
+    {
+        step = 1U;
+    }
+    g_testRenderCfg.scrollStep = step;
+    DrawDrv_SetRenderConfig(&g_testRenderCfg);
+}
+
+void Test_SetAnimStep(uint8_t step)
+{
+    DrawDrv_GetRenderConfig(&g_testRenderCfg);
+    g_testRenderCfg.animStep = step;
+    DrawDrv_SetRenderConfig(&g_testRenderCfg);
+}
+
+void Test_SetGradientSpan(uint8_t span)
+{
+    DrawDrv_GetRenderConfig(&g_testRenderCfg);
+    g_testRenderCfg.gradientSpan = span;
+    DrawDrv_SetRenderConfig(&g_testRenderCfg);
+}
+
+void Test_SetBrightness(uint8_t brightness)
+{
+    DrawDrv_GetRenderConfig(&g_testRenderCfg);
+    g_testRenderCfg.brightness = brightness;
+    DrawDrv_SetRenderConfig(&g_testRenderCfg);
 }
 
 void Test_SetRenderUseGradient(uint8_t enable)
@@ -206,6 +377,34 @@ void Test_SetBackgroundColor(uint8_t r, uint8_t g, uint8_t b)
     g_testRenderCfg.bgG = g;
     g_testRenderCfg.bgB = b;
     DrawDrv_SetRenderConfig(&g_testRenderCfg);
+}
+
+uint8_t Test_SetGlyphDisplayIndex(uint8_t glyphIndex)
+{
+    return DrawDrv_SetTextDisplayGlyph(glyphIndex);
+}
+
+uint8_t Test_SetScrollGlyphSequence(const uint8_t *glyphList, uint8_t count)
+{
+    return DrawDrv_SetTextScrollSequence(glyphList, count);
+}
+
+void Test_NextPresetMode(void)
+{
+    uint8_t nextMode;
+
+    nextMode = (uint8_t)(g_testPresetMode + 1U);
+    if (nextMode >= TEST_PRESET_MODE_COUNT)
+    {
+        nextMode = 0U;
+    }
+
+    Test_ApplyPresetMode(nextMode);
+}
+
+uint8_t Test_GetPresetMode(void)
+{
+    return g_testPresetMode;
 }
 
 void PWMAT_DMA_ISR(void) interrupt DMA_PWMAT_VECTOR

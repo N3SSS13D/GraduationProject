@@ -39,6 +39,24 @@ void WS2812DRV_ClearImage(void);
  */
 void WS2812DRV_SetPixelRgb(uint8_t row, uint8_t col, uint8_t r, uint8_t g, uint8_t b);
 
+/* 开始一帧快速写入（关闭逐像素脏检查）。
+ * 参数: 无
+ * 返回: 无
+ */
+void WS2812DRV_BeginFrameWrite(void);
+
+/* 快速写单像素 RGB（无比较，适合整帧重建）。
+ * 参数: row 行号, col 列号, r 红色, g 绿色, b 蓝色
+ * 返回: 无
+ */
+void WS2812DRV_SetPixelRgbFast(uint8_t row, uint8_t col, uint8_t r, uint8_t g, uint8_t b);
+
+/* 结束一帧快速写入并标记图像脏。
+ * 参数: 无
+ * 返回: 无
+ */
+void WS2812DRV_EndFrameWrite(void);
+
 /* 将后缓冲图像编码为待刷新的 PWM 行缓冲。
  * 参数: 无
  * 返回: 无

@@ -8,8 +8,31 @@ typedef enum
 	DRAWDRV_EFFECT_GRADIENT = 2,
 	DRAWDRV_EFFECT_SCROLL_LEFT = 3,
 	DRAWDRV_EFFECT_SCROLL_RIGHT = 4,
-	DRAWDRV_EFFECT_TEXT_SCROLL_JLU = 5
+	DRAWDRV_EFFECT_TEXT_SCROLL_JLU = 5,
+	DRAWDRV_EFFECT_FADE_IN = 6,
+	DRAWDRV_EFFECT_FADE_OUT = 7,
+	DRAWDRV_EFFECT_COLOR_CYCLE = 8
 } DrawDrv_Effect_t;
+
+typedef enum
+{
+	DRAWDRV_CONTENT_PATTERN = 0,
+	DRAWDRV_CONTENT_GLYPH = 1
+} DrawDrv_ContentType_t;
+
+typedef enum
+{
+	DRAWDRV_COLOR_SOLID = 0,
+	DRAWDRV_COLOR_GRADIENT = 1
+} DrawDrv_ColorMode_t;
+
+typedef enum
+{
+	DRAWDRV_DIR_NORMAL = 0,
+	DRAWDRV_DIR_ROTATE_180 = 1,
+	DRAWDRV_DIR_ROTATE_CW_90 = 2,
+	DRAWDRV_DIR_ROTATE_CCW_90 = 3
+} DrawDrv_Direction_t;
 
 typedef struct
 {
@@ -19,9 +42,14 @@ typedef struct
 	uint8_t bgR;
 	uint8_t bgG;
 	uint8_t bgB;
+	uint8_t brightness;
+	DrawDrv_ContentType_t contentType;
+	DrawDrv_ColorMode_t colorMode;
+	DrawDrv_Direction_t direction;
 	uint8_t useGradient;
 	uint8_t gradientSpan;
 	uint8_t scrollStep;
+	uint8_t animStep;
 	DrawDrv_Effect_t effect;
 } DrawDrv_RenderConfig_t;
 
@@ -78,5 +106,18 @@ uint8_t DrawDrv_GetImageIndex(void);
  * 返回: 无
  */
 void DrawDrv_NextImage(void);
+
+/* 设置静态文字显示的字模索引（非滚动文字模式生效）。
+ * 参数: glyphIndex 字模索引
+ * 返回: 1 成功, 0 失败
+ */
+uint8_t DrawDrv_SetTextDisplayGlyph(uint8_t glyphIndex);
+
+/* 设置滚动字幕字模序列。
+ * 参数: glyphList 字模索引数组
+ * 参数: count 数组长度
+ * 返回: 1 成功, 0 失败
+ */
+uint8_t DrawDrv_SetTextScrollSequence(const uint8_t *glyphList, uint8_t count);
 
 #endif

@@ -1,90 +1,55 @@
-////<<AICUBE_USER_HEADER_REMARK_BEGIN>>
-//////////////////////////////////////////
-//// 在此添加用户文件头说明信息  
-//// 文件名称: exti.c
-//// 文件描述: 
-//// 文件版本: V1.0
-//// 修改记录:
-////   1. (2026-03-16) 创建文件
-//////////////////////////////////////////
-////<<AICUBE_USER_HEADER_REMARK_END>>
+//<<AICUBE_USER_HEADER_REMARK_BEGIN>>
+////////////////////////////////////////
+// File name: exti.c
+// File desc: External interrupt handlers for key switch
+// File ver : V1.1
+////////////////////////////////////////
+//<<AICUBE_USER_HEADER_REMARK_END>>
 
+#include "config.h"
 
-//#include "config.h"
+//<<AICUBE_USER_INCLUDE_BEGIN>>
+#include "key_ctrl.h"
+//<<AICUBE_USER_INCLUDE_END>>
 
+//<<AICUBE_USER_GLOBAL_DEFINE_BEGIN>>
+//<<AICUBE_USER_GLOBAL_DEFINE_END>>
 
-////<<AICUBE_USER_INCLUDE_BEGIN>>
-//// 在此添加用户头文件包含  
-//#include "key_ctrl.h"
-////<<AICUBE_USER_INCLUDE_END>>
+////////////////////////////////////////
+// EXTI0 init (P3.2 / low-active key)
+////////////////////////////////////////
+void EXTI0_Init(void)
+{
+	IT0 = 0;                            // low-level effective (active low key on P3.2)
+	INT0_SetIntPriority(0);
+	INT0_EnableInt();
+}
 
+////////////////////////////////////////
+// EXTI1 init (unused)
+////////////////////////////////////////
+void EXTI1_Init(void)
+{
+	INT1_DisableInt();
+}
 
-////<<AICUBE_USER_GLOBAL_DEFINE_BEGIN>>
-//// 在此添加用户全局变量定义、用户宏定义以及函数声明  
-////<<AICUBE_USER_GLOBAL_DEFINE_END>>
+////////////////////////////////////////
+// EXTI0 ISR
+////////////////////////////////////////
+void EXTI0_ISR(void) interrupt INT0_VECTOR
+{
+	KeyCtrl_Int0Isr();
+}
 
+////////////////////////////////////////
+// EXTI1 ISR
+////////////////////////////////////////
+void EXTI1_ISR(void) interrupt INT1_VECTOR
+{
+	KeyCtrl_Int1Isr();
+}
 
-
-//////////////////////////////////////////
-//// 外部中断INT0初始化函数
-//// 入口参数: 无
-//// 函数返回: 无
-//////////////////////////////////////////
-//void EXTI0_Init(void)
-//{
-//    INT0_FallingInt();                  //按键触发使用下降沿中断，避免抖动导致双沿重复触发
-//    INT0_SetIntPriority(0);             //设置中断为最低优先级
-//    INT0_EnableInt();                   //使能外部中断
-
-//    //<<AICUBE_USER_EXTI0_INITIAL_BEGIN>>
-//    // 在此添加用户初始化代码  
-//    //<<AICUBE_USER_EXTI0_INITIAL_END>>
-//}
-
-//////////////////////////////////////////
-//// 外部中断INT1初始化函数
-//// 入口参数: 无
-//// 函数返回: 无
-//////////////////////////////////////////
-//void EXTI1_Init(void)
-//{
-//    INT1_FallingInt();                  //按键触发使用下降沿中断，避免抖动导致双沿重复触发
-//    INT1_SetIntPriority(0);             //设置中断为最低优先级
-//    INT1_EnableInt();                   //使能外部中断
-
-//    //<<AICUBE_USER_EXTI1_INITIAL_BEGIN>>
-//    // 在此添加用户初始化代码  
-//    //<<AICUBE_USER_EXTI1_INITIAL_END>>
-//}
-
-
-//////////////////////////////////////////
-//// 外部中断INT0中断服务程序
-//// 入口参数: 无
-//// 函数返回: 无
-//////////////////////////////////////////
-//void EXTI0_ISR(void) interrupt INT0_VECTOR
-//{
-//    //<<AICUBE_USER_EXTI0_ISR_CODE1_BEGIN>>
-//    KeyCtrl_Int0Isr();
-//    //<<AICUBE_USER_EXTI0_ISR_CODE1_END>>
-//}
-
-//////////////////////////////////////////
-//// 外部中断INT1中断服务程序
-//// 入口参数: 无
-//// 函数返回: 无
-//////////////////////////////////////////
-//void EXTI1_ISR(void) interrupt INT1_VECTOR
-//{
-//    //<<AICUBE_USER_EXTI1_ISR_CODE1_BEGIN>>
-//    KeyCtrl_Int1Isr();
-//    //<<AICUBE_USER_EXTI1_ISR_CODE1_END>>
-//}
-
-
-////<<AICUBE+++_USER_FUNCTION_IMPLEMENT_BEGIN>>
-//// 在此添加用户函数实现代码  
-////<<AICUBE_USER_FUNCTION_IMPLEMENT_END>>
+//<<AICUBE_USER_FUNCTION_IMPLEMENT_BEGIN>>
+//<<AICUBE_USER_FUNCTION_IMPLEMENT_END>>
 
 

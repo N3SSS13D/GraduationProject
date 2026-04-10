@@ -8,14 +8,71 @@
 #define DRAWDRV_JLU_GLYPH_WIDTH          TEST_SCROLL_GLYPH_WIDTH
 #define DRAWDRV_JLU_GLYPH_SPACING        TEST_SCROLL_GLYPH_SPACING
 #define DRAWDRV_JLU_GLYPH_ADVANCE        (DRAWDRV_JLU_GLYPH_WIDTH + DRAWDRV_JLU_GLYPH_SPACING)
-#define DRAWDRV_JLU_TEXT_WIDTH           (DRAWDRV_JLU_GLYPH_COUNT * DRAWDRV_JLU_GLYPH_ADVANCE)
+#define DRAWDRV_TEXT_SEQUENCE_MAX        32U
 
 static DrawDrv_RenderConfig_t g_drawCfg;
 static bit g_drawFrameDirty = 0;
 static uint8_t g_drawFrameIndex = 0;
 static uint8_t g_drawAnimPhase = 0;
-static uint8_t g_drawScrollOffset = 0;
+static uint16_t g_drawScrollOffset = 0;
 static uint8_t g_drawImageTick = 0;
+static uint8_t g_drawRgbLutR[256];
+static uint8_t g_drawRgbLutG[256];
+static uint8_t g_drawRgbLutB[256];
+static uint8_t g_drawTextSequence[DRAWDRV_TEXT_SEQUENCE_MAX];
+static uint8_t g_drawTextSequenceLen = 0U;
+static uint8_t g_drawTextDisplayGlyph = 0U;
+
+static uint8_t DrawDrv_GetTextSequenceGlyphCount(void)
+{
+    if (g_drawTextSequenceLen == 0U)
+    {
+        return DRAWDRV_JLU_GLYPH_COUNT;
+    }
+
+    return g_drawTextSequenceLen;
+}
+
+static uint8_t DrawDrv_GetTextSequenceGlyph(uint8_t seqIndex)
+{
+    uint8_t idx;
+
+    if (g_drawTextSequenceLen == 0U)
+    {
+        if (DRAWDRV_JLU_GLYPH_COUNT == 0U)
+        {
+            return 0U;
+        }
+
+        return (uint8_t)(seqIndex % DRAWDRV_JLU_GLYPH_COUNT);
+    }
+
+    idx = (uint8_t)(seqIndex % g_drawTextSequenceLen);
+    return g_drawTextSequence[idx];
+}
+
+static uint16_t DrawDrv_GetTextVirtualWidth(void)
+{
+    return (uint16_t)DrawDrv_GetTextSequenceGlyphCount() * DRAWDRV_JLU_GLYPH_ADVANCE;
+}
+
+static void DrawDrv_SetDefaultTextSequence(void)
+{
+    uint8_t idx;
+
+    g_drawTextSequenceLen = DRAWDRV_JLU_GLYPH_COUNT;
+    if (g_drawTextSequenceLen > DRAWDRV_TEXT_SEQUENCE_MAX)
+    {
+        g_drawTextSequenceLen = DRAWDRV_TEXT_SEQUENCE_MAX;
+    }
+
+    for (idx = 0U; idx < g_drawTextSequenceLen; idx++)
+    {
+        g_drawTextSequence[idx] = idx;
+    }
+
+    g_drawTextDisplayGlyph = 0U;
+}
 
 static uint8_t DrawDrv_Mod255(uint16_t value)
 {
@@ -35,25 +92,56 @@ static void DrawDrv_SetDefaultConfig(void)
     g_drawCfg.bgR = 0x00;
     g_drawCfg.bgG = 0x00;
     g_drawCfg.bgB = 0x00;
+    g_drawCfg.brightness = 255U;
+    g_drawCfg.contentType = DRAWDRV_CONTENT_PATTERN;
+    g_drawCfg.colorMode = DRAWDRV_COLOR_SOLID;
+    g_drawCfg.direction = DRAWDRV_DIR_NORMAL;
     g_drawCfg.useGradient = 0;
     g_drawCfg.gradientSpan = 96U;
     g_drawCfg.scrollStep = 1U;
+    g_drawCfg.animStep = 1U;
     g_drawCfg.effect = DRAWDRV_EFFECT_GRADIENT;
 }
 
-static void DrawDrv_DecodeRgb332(uint8_t packed, uint8_t *r, uint8_t *g, uint8_t *b)
+static void DrawDrv_ApplyBrightness(uint8_t *r, uint8_t *g, uint8_t *b)
 {
+    uint8_t brightness;
+
+    brightness = g_drawCfg.brightness;
+    if (brightness >= 255U)
+    {
+        return;
+    }
+
+    *r = (uint8_t)((uint16_t)(*r) * (uint16_t)brightness / 255U);
+    *g = (uint8_t)((uint16_t)(*g) * (uint16_t)brightness / 255U);
+    *b = (uint8_t)((uint16_t)(*b) * (uint16_t)brightness / 255U);
+}
+
+static void DrawDrv_InitRgbLut(void)
+{
+    uint16_t idx;
     uint8_t r3;
     uint8_t g3;
     uint8_t b2;
 
-    r3 = (uint8_t)((packed >> 5) & 0x07U);
-    g3 = (uint8_t)((packed >> 2) & 0x07U);
-    b2 = (uint8_t)(packed & 0x03U);
+    for (idx = 0; idx < 256U; idx++)
+    {
+        r3 = (uint8_t)(((uint8_t)idx >> 5) & 0x07U);
+        g3 = (uint8_t)(((uint8_t)idx >> 2) & 0x07U);
+        b2 = (uint8_t)((uint8_t)idx & 0x03U);
 
-    *r = (uint8_t)((uint16_t)r3 * 255U / 7U);
-    *g = (uint8_t)((uint16_t)g3 * 255U / 7U);
-    *b = (uint8_t)((uint16_t)b2 * 255U / 3U);
+        g_drawRgbLutR[idx] = (uint8_t)((uint16_t)r3 * 255U / 7U);
+        g_drawRgbLutG[idx] = (uint8_t)((uint16_t)g3 * 255U / 7U);
+        g_drawRgbLutB[idx] = (uint8_t)((uint16_t)b2 * 255U / 3U);
+    }
+}
+
+static void DrawDrv_DecodeRgb332(uint8_t packed, uint8_t *r, uint8_t *g, uint8_t *b)
+{
+    *r = g_drawRgbLutR[packed];
+    *g = g_drawRgbLutG[packed];
+    *b = g_drawRgbLutB[packed];
 }
 
 static uint8_t DrawDrv_GetPatternCount(void)
@@ -87,7 +175,7 @@ static uint8_t DrawDrv_GetPatternPixel(uint8_t imageIndex, uint8_t row, uint8_t 
 
 static uint8_t DrawDrv_GetScrollSourceCol(uint8_t col, uint8_t activeCols)
 {
-    uint8_t offset;
+    uint16_t offset;
     uint8_t srcCol;
 
     if (activeCols == 0U)
@@ -123,12 +211,41 @@ static uint8_t DrawDrv_GetScrollSourceCol(uint8_t col, uint8_t activeCols)
     return srcCol;
 }
 
+static void DrawDrv_MapByDirection(uint8_t row, uint8_t col, uint8_t *srcRow, uint8_t *srcCol)
+{
+    switch (g_drawCfg.direction)
+    {
+        case DRAWDRV_DIR_ROTATE_180:
+            *srcRow = (uint8_t)((TEST_IMAGE_ROWS - 1U) - row);
+            *srcCol = (uint8_t)((TEST_IMAGE_COLS - 1U) - col);
+            break;
+
+        case DRAWDRV_DIR_ROTATE_CW_90:
+            *srcRow = (uint8_t)((TEST_IMAGE_ROWS - 1U) - col);
+            *srcCol = row;
+            break;
+
+        case DRAWDRV_DIR_ROTATE_CCW_90:
+            *srcRow = col;
+            *srcCol = (uint8_t)((TEST_IMAGE_COLS - 1U) - row);
+            break;
+
+        case DRAWDRV_DIR_NORMAL:
+        default:
+            *srcRow = row;
+            *srcCol = col;
+            break;
+    }
+}
+
 static uint8_t DrawDrv_GetJluTextPixel(uint8_t row, uint8_t col)
 {
     uint8_t textRow;
     uint8_t glyphIndex;
     uint8_t glyphCol;
     uint8_t offset;
+    uint8_t glyphCount;
+    uint16_t textWidth;
     uint16_t virtualCol;
     uint16_t rowBits;
     uint16_t bitMask;
@@ -138,15 +255,41 @@ static uint8_t DrawDrv_GetJluTextPixel(uint8_t row, uint8_t col)
         return (uint8_t)TEST_IMAGE_BG_RGB332;
     }
 
-    offset = (uint8_t)(g_drawScrollOffset % DRAWDRV_JLU_TEXT_WIDTH);
-    virtualCol = (uint16_t)col + (uint16_t)offset;
-    if (virtualCol >= DRAWDRV_JLU_TEXT_WIDTH)
+    if ((g_drawCfg.effect == DRAWDRV_EFFECT_TEXT_SCROLL_JLU)
+        || (g_drawCfg.effect == DRAWDRV_EFFECT_SCROLL_LEFT)
+        || (g_drawCfg.effect == DRAWDRV_EFFECT_SCROLL_RIGHT))
     {
-        virtualCol = (uint16_t)(virtualCol - DRAWDRV_JLU_TEXT_WIDTH);
+        textWidth = DrawDrv_GetTextVirtualWidth();
+        if (textWidth == 0U)
+        {
+            return (uint8_t)TEST_IMAGE_BG_RGB332;
+        }
+
+        offset = (uint16_t)(g_drawScrollOffset % textWidth);
+
+        virtualCol = (uint16_t)col + (uint16_t)offset;
+        if (virtualCol >= textWidth)
+        {
+            virtualCol = (uint16_t)(virtualCol - textWidth);
+        }
+
+        glyphCount = DrawDrv_GetTextSequenceGlyphCount();
+        if (glyphCount == 0U)
+        {
+            return (uint8_t)TEST_IMAGE_BG_RGB332;
+        }
+
+        glyphIndex = DrawDrv_GetTextSequenceGlyph((uint8_t)(virtualCol / DRAWDRV_JLU_GLYPH_ADVANCE));
+        glyphCol = (uint8_t)(virtualCol % DRAWDRV_JLU_GLYPH_ADVANCE);
+    }
+    else
+    {
+        offset = 0U;
+        (void)offset;
+        glyphIndex = g_drawTextDisplayGlyph;
+        glyphCol = col;
     }
 
-    glyphIndex = (uint8_t)(virtualCol / DRAWDRV_JLU_GLYPH_ADVANCE);
-    glyphCol = (uint8_t)(virtualCol % DRAWDRV_JLU_GLYPH_ADVANCE);
     if ((glyphIndex >= DRAWDRV_JLU_GLYPH_COUNT) || (glyphCol >= DRAWDRV_JLU_GLYPH_WIDTH))
     {
         return (uint8_t)TEST_IMAGE_BG_RGB332;
@@ -234,6 +377,52 @@ static void DrawDrv_ApplyBreath(uint8_t *r, uint8_t *g, uint8_t *b)
     *b = (uint8_t)((uint16_t)(*b) * scale / 255U);
 }
 
+static void DrawDrv_ApplyFade(uint8_t fadeIn, uint8_t *r, uint8_t *g, uint8_t *b)
+{
+    uint8_t phase;
+    uint8_t scale;
+
+    phase = (uint8_t)(g_drawAnimPhase & 0x1FU);
+    if (fadeIn != 0U)
+    {
+        scale = (uint8_t)(phase * 8U);
+    }
+    else
+    {
+        scale = (uint8_t)(255U - phase * 8U);
+    }
+
+    *r = (uint8_t)((uint16_t)(*r) * scale / 255U);
+    *g = (uint8_t)((uint16_t)(*g) * scale / 255U);
+    *b = (uint8_t)((uint16_t)(*b) * scale / 255U);
+}
+
+static void DrawDrv_ApplyColorCycle(uint8_t *r, uint8_t *g, uint8_t *b)
+{
+    uint8_t phase;
+    uint8_t tr;
+    uint8_t tg;
+    uint8_t tb;
+
+    phase = (uint8_t)((g_drawAnimPhase >> 2) % 3U);
+    tr = *r;
+    tg = *g;
+    tb = *b;
+
+    if (phase == 1U)
+    {
+        *r = tg;
+        *g = tb;
+        *b = tr;
+    }
+    else if (phase == 2U)
+    {
+        *r = tb;
+        *g = tr;
+        *b = tg;
+    }
+}
+
 static void DrawDrv_RebuildFrame(void)
 {
     uint8_t row;
@@ -245,6 +434,8 @@ static void DrawDrv_RebuildFrame(void)
     uint8_t r;
     uint8_t g;
     uint8_t b;
+    uint8_t mappedRow;
+    uint8_t mappedCol;
 
     activeCols = WS2812DRV_GetActiveCols();
     if (activeCols > TEST_IMAGE_COLS)
@@ -253,19 +444,28 @@ static void DrawDrv_RebuildFrame(void)
     }
 
     WS2812DRV_ClearImage();
+    WS2812DRV_BeginFrameWrite();
 
     for (row = 0; row < WS2812DRV_ROW_NUM; row++)
     {
         for (col = 0; col < activeCols; col++)
         {
-            if (g_drawCfg.effect == DRAWDRV_EFFECT_TEXT_SCROLL_JLU)
+            DrawDrv_MapByDirection(row, col, &mappedRow, &mappedCol);
+
+            if (g_drawCfg.contentType == DRAWDRV_CONTENT_GLYPH)
             {
-                packed = DrawDrv_GetJluTextPixel(row, col);
+                packed = DrawDrv_GetJluTextPixel(mappedRow, mappedCol);
             }
             else
             {
-                srcCol = DrawDrv_GetScrollSourceCol(col, activeCols);
-                packed = DrawDrv_GetPatternPixel(g_drawFrameIndex, row, srcCol);
+                srcCol = mappedCol;
+                if ((g_drawCfg.effect == DRAWDRV_EFFECT_SCROLL_LEFT)
+                    || (g_drawCfg.effect == DRAWDRV_EFFECT_SCROLL_RIGHT))
+                {
+                    srcCol = DrawDrv_GetScrollSourceCol(mappedCol, activeCols);
+                }
+
+                packed = DrawDrv_GetPatternPixel(g_drawFrameIndex, mappedRow, srcCol);
             }
 
             isBg = (uint8_t)(packed == (uint8_t)TEST_IMAGE_BG_RGB332);
@@ -274,7 +474,9 @@ static void DrawDrv_RebuildFrame(void)
             DrawDrv_ApplyColorConfig((uint8_t)(isBg == 0U), &r, &g, &b);
 
             /* Background keeps plain color, no gradient/breath/scroll enhancement. */
-            if ((isBg == 0U) && ((g_drawCfg.useGradient != 0U) || (g_drawCfg.effect == DRAWDRV_EFFECT_GRADIENT)))
+            if ((isBg == 0U) && ((g_drawCfg.useGradient != 0U)
+                || (g_drawCfg.colorMode == DRAWDRV_COLOR_GRADIENT)
+                || (g_drawCfg.effect == DRAWDRV_EFFECT_GRADIENT)))
             {
                 DrawDrv_ApplyGradient(row, col, &r, &g, &b);
             }
@@ -284,15 +486,36 @@ static void DrawDrv_RebuildFrame(void)
                 DrawDrv_ApplyBreath(&r, &g, &b);
             }
 
-            WS2812DRV_SetPixelRgb(row, col, r, g, b);
+            if ((isBg == 0U) && (g_drawCfg.effect == DRAWDRV_EFFECT_FADE_IN))
+            {
+                DrawDrv_ApplyFade(1U, &r, &g, &b);
+            }
+
+            if ((isBg == 0U) && (g_drawCfg.effect == DRAWDRV_EFFECT_FADE_OUT))
+            {
+                DrawDrv_ApplyFade(0U, &r, &g, &b);
+            }
+
+            if ((isBg == 0U) && (g_drawCfg.effect == DRAWDRV_EFFECT_COLOR_CYCLE))
+            {
+                DrawDrv_ApplyColorCycle(&r, &g, &b);
+            }
+
+            DrawDrv_ApplyBrightness(&r, &g, &b);
+
+            WS2812DRV_SetPixelRgbFast(row, col, r, g, b);
         }
     }
+
+    WS2812DRV_EndFrameWrite();
 
     WS2812DRV_EncodeAllRows();
 }
 void DrawDrv_Init(void)
 {
+    DrawDrv_InitRgbLut();
     DrawDrv_SetDefaultConfig();
+    DrawDrv_SetDefaultTextSequence();
     g_drawFrameDirty = 1;
     g_drawFrameIndex = 0;
     g_drawAnimPhase = 0;
@@ -305,19 +528,38 @@ void DrawDrv_Init(void)
 
 void DrawDrv_Task40ms(void)
 {
+    uint8_t animCnt;
+
     if (g_drawCfg.scrollStep == 0U)
     {
         g_drawCfg.scrollStep = 1U;
     }
 
+    if (g_drawCfg.animStep == 0U)
+    {
+        g_drawCfg.animStep = 1U;
+    }
+
     if ((g_drawCfg.effect == DRAWDRV_EFFECT_SCROLL_LEFT) || (g_drawCfg.effect == DRAWDRV_EFFECT_SCROLL_RIGHT)
         || (g_drawCfg.effect == DRAWDRV_EFFECT_TEXT_SCROLL_JLU))
     {
-        g_drawScrollOffset = (uint8_t)(g_drawScrollOffset + g_drawCfg.scrollStep);
+        g_drawScrollOffset = (uint16_t)(g_drawScrollOffset + g_drawCfg.scrollStep);
+    }
+
+    if ((g_drawCfg.effect == DRAWDRV_EFFECT_BREATH) || (g_drawCfg.effect == DRAWDRV_EFFECT_GRADIENT)
+        || (g_drawCfg.effect == DRAWDRV_EFFECT_FADE_IN) || (g_drawCfg.effect == DRAWDRV_EFFECT_FADE_OUT)
+        || (g_drawCfg.effect == DRAWDRV_EFFECT_COLOR_CYCLE))
+    {
+        for (animCnt = 0; animCnt < g_drawCfg.animStep; animCnt++)
+        {
+            g_drawAnimPhase++;
+        }
     }
 
     if ((g_drawCfg.effect == DRAWDRV_EFFECT_SCROLL_LEFT) || (g_drawCfg.effect == DRAWDRV_EFFECT_SCROLL_RIGHT)
         || (g_drawCfg.effect == DRAWDRV_EFFECT_BREATH) || (g_drawCfg.effect == DRAWDRV_EFFECT_GRADIENT)
+        || (g_drawCfg.effect == DRAWDRV_EFFECT_FADE_IN) || (g_drawCfg.effect == DRAWDRV_EFFECT_FADE_OUT)
+        || (g_drawCfg.effect == DRAWDRV_EFFECT_COLOR_CYCLE)
         || (g_drawCfg.effect == DRAWDRV_EFFECT_TEXT_SCROLL_JLU))
     {
         g_drawFrameDirty = 1;
@@ -336,14 +578,7 @@ void DrawDrv_Task40ms(void)
 void DrawDrv_Task500ms(void)
 {
     uint8_t patternCount;
-    uint8_t needAnimPhase;
     uint8_t allowImageSwitch;
-
-    needAnimPhase = (uint8_t)(g_drawCfg.effect != DRAWDRV_EFFECT_STATIC);
-    if (needAnimPhase != 0U)
-    {
-        g_drawAnimPhase++;
-    }
 
     allowImageSwitch = (uint8_t)(g_drawCfg.effect != DRAWDRV_EFFECT_STATIC);
     if (g_drawCfg.effect == DRAWDRV_EFFECT_TEXT_SCROLL_JLU)
@@ -367,11 +602,6 @@ void DrawDrv_Task500ms(void)
                 }
             }
         }
-    }
-
-    if (needAnimPhase != 0U)
-    {
-        g_drawFrameDirty = 1;
     }
 }
 
@@ -426,4 +656,51 @@ uint8_t DrawDrv_GetImageIndex(void)
 void DrawDrv_NextImage(void)
 {
     DrawDrv_SetImageIndex((uint8_t)(g_drawFrameIndex + 1U));
+}
+
+uint8_t DrawDrv_SetTextDisplayGlyph(uint8_t glyphIndex)
+{
+    if (glyphIndex >= DRAWDRV_JLU_GLYPH_COUNT)
+    {
+        return 0U;
+    }
+
+    g_drawTextDisplayGlyph = glyphIndex;
+    g_drawFrameDirty = 1;
+
+    return 1U;
+}
+
+uint8_t DrawDrv_SetTextScrollSequence(const uint8_t *glyphList, uint8_t count)
+{
+    uint8_t idx;
+    uint8_t validCount;
+
+    if ((glyphList == 0) || (count == 0U))
+    {
+        DrawDrv_SetDefaultTextSequence();
+        g_drawFrameDirty = 1;
+        return 1U;
+    }
+
+    validCount = 0U;
+    for (idx = 0U; (idx < count) && (idx < DRAWDRV_TEXT_SEQUENCE_MAX); idx++)
+    {
+        if (glyphList[idx] < DRAWDRV_JLU_GLYPH_COUNT)
+        {
+            g_drawTextSequence[validCount] = glyphList[idx];
+            validCount++;
+        }
+    }
+
+    if (validCount == 0U)
+    {
+        return 0U;
+    }
+
+    g_drawTextSequenceLen = validCount;
+    g_drawScrollOffset = 0U;
+    g_drawFrameDirty = 1;
+
+    return 1U;
 }

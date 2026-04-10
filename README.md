@@ -1,105 +1,118 @@
-# WS2812 驱动毕业设计项目
+# WS2812 Graduation Project
 
-## 项目简介
+## 1. 项目概述
 
-本项目基于 STC AI8051U，实现 WS2812 显示驱动与 USB 控制链路。
+本项目基于 STC AI8051U（8051 架构），实现 16x16/16x8 WS2812 点阵显示、USB 命令控制、按键模式切换与动画渲染。
 
-当前分支（`way2`）已完成一轮模块化重构：
+当前分支 `way2` 的核心方向：
 
-- `ws2812_drv` 负责图像缓冲、行编码、双通道 PWM+DMA 发送与 DMA 异常恢复。
-- `test.c` 保留为轻量测试调度层，负责固定图案构建和 Timer0 扫描节拍。
-- 已针对“PWM 双通道偶发错乱”完成多层防护并沉淀问题文档。
+- 渲染层与发送层解耦（`draw_drv` + `ws2812_drv`）
+- USB 控制统一为 `PLAY` 参数模型
+- 支持静态图案、静态字模、滚动字幕、渐变/呼吸/淡入淡出等效果
+- 保持行扫描链路时序稳定并持续做性能优化
 
-## 当前硬件方案
+## 2. 硬件与链路
 
 - MCU: STC AI8051U
-- WS2812 输出: PWMA + DMA
-- 行选硬件: 两颗级联 74HC595，控制 16 路 PMOS 高侧
-- 行通道复用: 偶数行走 CH1/P10，奇数行走 CH2/P12
-- 通信: USB CDC OUT 命令解析
+- LED: WS2812（矩阵扫描）
+- PWM 输出: PWMA CH1/CH2
+- 发送: PWMAT DMA
+- 行选: 74HC595 + PMOS 高侧
+- 控制输入: USB CDC、P3.2(INT0) 低电平按键
 
-## 当前代码结构（与工程一致）
+## 3. 代码结构
 
-```
+```text
 GraduationProject/
-├── README.md
-├── Doc/
-│   ├── ws2812_driver_current_implementation.md
-│   └── ...
-└── STC51/
-    └── Project/
-        └── ws2812_driver/
-            ├── Sources/
-            │   ├── app/
-            │   │   └── test.c
-            │   ├── drv/
-                        │   │   ├── ws2812_drv.c
-            │   │   └── hc595_drv.c
-            │   ├── inc/
-            │   │   ├── test.h
-                        │   │   ├── ws2812_drv.h
-            │   │   ├── timer.h
-            │   │   └── ...
-            │   ├── main.c
-            │   ├── timer.c
-            │   ├── exti.c
-            │   └── usblib.c
-            ├── Objects/
-            ├── Listings/
-                        ├── problem.md
-                        ├── problem_zh.md
-            └── ws2812_driver.uvproj
+|-- README.md
+|-- Doc/
+|   |-- usb_play_v2_guide.md
+|   `-- ws2812_driver_current_implementation.md
+`-- STC51/
+    `-- Project/
+        `-- ws2812_driver/
+            |-- Sources/
+            |   |-- app/
+            |   |   `-- test.c              # 应用层参数封装、预设模式
+            |   |-- drv/
+            |   |   |-- ws2812_drv.c        # 图像/行PWM编码/DMA发送
+            |   |   `-- hc595_drv.c         # 行选驱动
+            |   |-- mid/
+            |   |   |-- draw_drv.c          # 渲染重建与动画步进
+            |   |   `-- key_ctrl.c          # 按键去抖与模式切换
+            |   |-- inc/
+            |   |   |-- test_image.h        # 图案+字模统一资源头文件
+            |   |   |-- draw_drv.h
+            |   |   |-- test.h
+            |   |   `-- ws2812_drv.h
+            |   |-- usblib.c                # PLAY 命令解析与下发
+            |   |-- exti.c
+            |   `-- main.c
+            `-- ws2812_driver.uvproj
 ```
 
-## 主要实现状态
+## 4. 功能说明
 
-已实现：
-- `ws2812_drv` 统一驱动接口：
-    - 图像缓冲管理（清空/写像素）
-    - 全行 PWM 缓冲编码
-    - 双行交织发送缓冲生成
-    - PWMAT DMA 触发、等待、超时恢复
-    - DMA ISR 状态释放接口
-- `test.c` 调度链路：
-    - 固定 16x8 梯形图案构建
-    - Timer0 one-shot 触发行对扫描
-    - 行对发送委托到 `WS2812DRV_SendRowPair`
-    - `PWMAT_DMA_ISR` 转发到 `WS2812DRV_OnDmaIsr`
-- 74HC595 行选原子化（移位 + 锁存期间关中断）
-- USB 最小控制闭环（行间隔设置 + 状态回显）
-- 通道错乱问题复盘文档（中英文）
+### 4.1 显示内容
 
-说明：
-- 当前应用入口仍是 `Sources/app/test.c`，但底层发送能力已下沉到 `Sources/drv/ws2812_drv.c`。
-- `README` 只维护当前可运行实现，详细说明见 `Doc/ws2812_driver_current_implementation.md`。
-- 每次关键问题与修复会同步追加到 `.github/prompts/ws2812-led-system-dev*.prompt.md` 的迭代总结段。
+- 图案显示：内置 diamond/cross/python_demo
+- 字模显示：支持静态字模索引显示与滚动字模序列
+- 方向旋转：0/180/CW90/CCW90
 
-## 控制指令速查
+### 4.2 动效与颜色
 
-- 换行间隔：`T=ddddus` / `T=ddddms` / `T=dddds`
+- 静态、呼吸、渐变、左滚、右滚、JLU 文字滚动、淡入、淡出、颜色循环
+- 前景/背景 RGB888
+- 亮度控制（0..255）
+- 滚动步进按“像素/帧”定义，最小 1 px/frame
 
-命令执行后会打印 `[STATE]` 状态行，包含 `row_interval_us` 与 `pwm_us`。
+### 4.3 交互控制
 
-## 构建与运行
+- USB `PLAY` 命令统一参数入口
+- P3.2(INT0) 低电平按键，循环切换 4 组预设模式
 
-1. 使用 Keil 打开 `STC51/Project/ws2812_driver/ws2812_driver.uvproj`
-2. 编译目标并生成固件
-3. 通过 STC ISP 工具下载
-4. 连接 USB CDC，发送控制命令验证行为
+## 5. USB 命令
 
-## 参考文档
+项目已使用 PLAY v2 模型，详细参数与样例见：
 
-- 当前实现总结: `Doc/ws2812_driver_current_implementation.md`
-- 问题复盘（英文）: `STC51/Project/ws2812_driver/problem.md`
-- 问题复盘（中文）: `STC51/Project/ws2812_driver/problem_zh.md`
-- 迭代 Prompt（中文）: `.github/prompts/ws2812-led-system-dev.zh-CN.prompt.md`
-- 迭代 Prompt（英文）: `.github/prompts/ws2812-led-system-dev.prompt.md`
-- 芯片与库资料: `STC51/Tools/`
+- `Doc/usb_play_v2_guide.md`
 
-## 备注
+关键参数：
 
-当前工程处于“驱动能力沉淀 + 接口复用”阶段，后续将继续：
+- `CT` 内容类型、`FX` 效果、`DIR` 方向
+- `SPD` 滚动速度（像素/帧，最小 1）
+- `BR` 亮度
+- `GI` 静态字模索引
+- `SQ` 滚动字模序列
 
-- 基于 `ws2812_drv` 增加新图案与业务模块，不破坏发送链路。
-- 在保持时序确定性的前提下优化测试覆盖与状态可观测性。
+## 6. 本轮性能优化
+
+本版本新增了图像重建与编码路径的加速策略：
+
+1. 快速帧写入路径
+   - 新增 `WS2812DRV_BeginFrameWrite/SetPixelRgbFast/EndFrameWrite`
+   - 整帧重建时跳过逐像素比较，减少 CPU 分支与重复 dirty 判断
+
+2. 行编码位展开查表
+   - 新增 8-bit -> 8 PWM 占空序列 LUT
+   - 替代每 bit 的移位判断，降低编码 CPU 占用
+
+3. M2M DMA 参与缓冲清零（带回退）
+   - 优先尝试 M2M DMA 对后图像缓冲做块清零
+   - 若 M2M 异常/超时，自动回退到 CPU 清零路径
+
+## 7. 构建与验证
+
+1. Keil 打开：`STC51/Project/ws2812_driver/ws2812_driver.uvproj`
+2. Build 生成固件
+3. STC ISP 下载
+4. 串口发送 PLAY 命令验证显示、速度和按键模式切换
+
+## 8. 参考文档
+
+- `Doc/ws2812_driver_current_implementation.md`
+- `Doc/usb_play_v2_guide.md`
+- `STC51/Project/ws2812_driver/problem.md`
+- `STC51/Project/ws2812_driver/problem_zh.md`
+
 
