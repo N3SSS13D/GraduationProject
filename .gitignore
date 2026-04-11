@@ -82,3 +82,9 @@ $RECYCLE.BIN/
 STC51/Project/ws2812_driver/ws2812_driver.uvgui.XiaoHai
 STC51/Project/ws2812_driver/ws2812_driver.uvopt
 STC51/Project/ws2812_driver/ws2812_driver.uvproj
+
+# Python cache and local generated assets
+**/__pycache__/
+*.pyc
+Pic/jd-xhh.jpg
+Pic/jd-xhh-16-16.jpg
