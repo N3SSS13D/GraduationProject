@@ -32,7 +32,14 @@ static uint8_t g_ws2812ActivePwmBufIdx = WS2812DRV_BUF_ACTIVE;
 static uint8_t g_ws2812PendingPwmBufIdx = WS2812DRV_BUF_BACK;
 static uint8_t g_ws2812ScanRowIdx = 0;
 static WS2812DRV_DisplayMode_t g_ws2812DisplayMode = WS2812DRV_MODE_16X8;
+static WS2812DRV_ScanMode_t g_ws2812ScanMode = WS2812DRV_SCAN_NORMAL_PAIR;
 static uint8_t g_ws2812ActiveCols = WS2812DRV_COL_NUM_8;
+static uint8_t g_ws2812LastScanRowA = 0U;
+static uint8_t g_ws2812LastScanRowB = 1U;
+static uint16_t g_ws2812LastScanTxLen = 0U;
+
+extern void Test_DebugMarkRowSwitchStart(void);
+extern void Test_DebugMarkPwmSendDone(void);
 
 static bit WS2812DRV_M2MCopy(uint8_t xdata *dst, const uint8_t xdata *src, uint16_t len)
 {
@@ -257,6 +264,7 @@ static uint16_t WS2812DRV_BuildDualRowPwmBufferByBufIdx(uint8_t bufIdx, uint8_t 
 	uint16_t outIdx;
 	uint8_t xdata *dualBuf;
     uint16_t activePwmNum;
+	uint8_t tailIdx;
 
 	if ((rowA >= WS2812DRV_ROW_NUM) || (rowB >= WS2812DRV_ROW_NUM))
 	{
@@ -274,10 +282,84 @@ static uint16_t WS2812DRV_BuildDualRowPwmBufferByBufIdx(uint8_t bufIdx, uint8_t 
 		outIdx++;
 	}
 
-	/* Append one CH1/CH2 zero pair as DMA tail guard. */
+	/* Append reset-low tail to latch data and allow LEDs to turn off in time. */
+	for (tailIdx = 0U; tailIdx < WS2812DRV_RESET_TAIL_SLOTS; tailIdx++)
+	{
+		dualBuf[outIdx] = 0U;
+		outIdx++;
+		dualBuf[outIdx] = 0U;
+		outIdx++;
+	}
+
+	/* Keep one extra CH1/CH2 guard pair for DMA boundary robustness. */
 	dualBuf[outIdx] = 0;
 	outIdx++;
 	dualBuf[outIdx] = 0;
+	outIdx++;
+
+	return outIdx;
+}
+
+static uint16_t WS2812DRV_BuildDualRowLegacyBufferByBufIdx(uint8_t bufIdx, uint8_t rowOff, uint8_t rowOn)
+{
+	uint16_t idx;
+	uint16_t outIdx;
+	uint8_t xdata *dualBuf;
+	uint16_t activePwmNum;
+	bit dataOnCh0;
+	uint8_t offPwm;
+	uint8_t tailIdx;
+
+	if ((rowOff >= WS2812DRV_ROW_NUM) || (rowOn >= WS2812DRV_ROW_NUM))
+	{
+		return 0;
+	}
+
+	activePwmNum = WS2812DRV_GetActivePwmNum();
+	dualBuf = g_ws2812DualRowPwmBuf;
+	dataOnCh0 = (bit)((rowOn & 0x01U) == 0U);
+	outIdx = 0;
+	for (idx = 0; idx < activePwmNum; idx++)
+	{
+		/* For off row, send WS2812 bit-0 code in payload region; keep reset regions low level. */
+		offPwm = WS2812DRV_PWM_DUTY_BIT0;
+		if ((idx < WS2812DRV_ROW_RESET_PREFIX_SLOTS) || (idx >= (activePwmNum - 2U)))
+		{
+			offPwm = 0U;
+		}
+
+		/* Legacy shift mode: keep channel binding fixed by row parity; only data payload changes. */
+		if (dataOnCh0 != 0)
+		{
+			/* rowOn is even: CH0 carries rowOn data, CH2 carries rowOff-off code. */
+			dualBuf[outIdx] = g_ws2812RowPwmBuf[bufIdx][rowOn][idx];
+			outIdx++;
+			dualBuf[outIdx] = offPwm;
+			outIdx++;
+		}
+		else
+		{
+			/* rowOn is odd: CH2 carries rowOn data, CH0 carries rowOff-off code. */
+			dualBuf[outIdx] = offPwm;
+			outIdx++;
+			dualBuf[outIdx] = g_ws2812RowPwmBuf[bufIdx][rowOn][idx];
+			outIdx++;
+		}
+	}
+
+	/* Append reset-low tail to latch data and allow LEDs to turn off in time. */
+	for (tailIdx = 0U; tailIdx < WS2812DRV_RESET_TAIL_SLOTS; tailIdx++)
+	{
+		dualBuf[outIdx] = 0U;
+		outIdx++;
+		dualBuf[outIdx] = 0U;
+		outIdx++;
+	}
+
+	/* Keep one extra CH0/CH2 guard pair for DMA boundary robustness. */
+	dualBuf[outIdx] = 0U;
+	outIdx++;
+	dualBuf[outIdx] = 0U;
 	outIdx++;
 
 	return outIdx;
@@ -308,6 +390,10 @@ void WS2812DRV_Init(void)
 	g_ws2812ActivePwmBufIdx = WS2812DRV_BUF_ACTIVE;
 	g_ws2812PendingPwmBufIdx = WS2812DRV_BUF_BACK;
 	g_ws2812ScanRowIdx = 0;
+	g_ws2812ScanMode = WS2812DRV_SCAN_NORMAL_PAIR;
+	g_ws2812LastScanRowA = 0U;
+	g_ws2812LastScanRowB = 1U;
+	g_ws2812LastScanTxLen = 0U;
 }
 
 void WS2812DRV_ClearImage(void)
@@ -440,6 +526,9 @@ uint8_t xdata *WS2812DRV_GetDualRowPwmBuffer(void)
 
 void WS2812DRV_SelectRows(uint8_t rowA, uint8_t rowB)
 {
+	/* Debug timestamp at exact row-switch start. */
+	Test_DebugMarkRowSwitchStart();
+
 	/* New policy: full blank before each row-select update. */
 	WS2812DRV_BlankOutputs();
 	delay_us(WS2812DRV_LINE_DISCHARGE_US);
@@ -575,19 +664,44 @@ void WS2812DRV_RefreshStep(void)
 		g_ws2812PwmSwapPending = 0;
 	}
 
-	rowA = g_ws2812ScanRowIdx;
-	rowB = (uint8_t)(g_ws2812ScanRowIdx + 1U);
+	if (g_ws2812ScanMode == WS2812DRV_SCAN_LEGACY_SHIFT)
+	{
+		rowA = g_ws2812ScanRowIdx;
+		rowB = (uint8_t)(g_ws2812ScanRowIdx + 1U);
+		if (rowB >= WS2812DRV_ROW_NUM)
+		{
+			rowB = 0U;
+		}
 
-	txLen = WS2812DRV_BuildDualRowPwmBufferByBufIdx(g_ws2812ActivePwmBufIdx, rowA, rowB);
+		txLen = WS2812DRV_BuildDualRowLegacyBufferByBufIdx(g_ws2812ActivePwmBufIdx, rowA, rowB);
+	}
+	else
+	{
+		rowA = g_ws2812ScanRowIdx;
+		rowB = (uint8_t)(g_ws2812ScanRowIdx + 1U);
+		txLen = WS2812DRV_BuildDualRowPwmBufferByBufIdx(g_ws2812ActivePwmBufIdx, rowA, rowB);
+	}
+
 	if (txLen < 2U)
 	{
 		return;
 	}
 
 	WS2812DRV_SelectRows(rowA, rowB);
+	g_ws2812LastScanRowA = rowA;
+	g_ws2812LastScanRowB = rowB;
+	g_ws2812LastScanTxLen = txLen;
 	WS2812DRV_TriggerDualRowDma(g_ws2812DualRowPwmBuf, txLen);
 
-	g_ws2812ScanRowIdx = (uint8_t)(g_ws2812ScanRowIdx + 2U);
+	if (g_ws2812ScanMode == WS2812DRV_SCAN_LEGACY_SHIFT)
+	{
+		g_ws2812ScanRowIdx++;
+	}
+	else
+	{
+		g_ws2812ScanRowIdx = (uint8_t)(g_ws2812ScanRowIdx + 2U);
+	}
+
 	if (g_ws2812ScanRowIdx >= WS2812DRV_ROW_NUM)
 	{
 		g_ws2812ScanRowIdx = 0;
@@ -596,6 +710,9 @@ void WS2812DRV_RefreshStep(void)
 
 void WS2812DRV_OnDmaIsr(void)
 {
+	/* Debug timestamp at PWM+DMA transfer completion. */
+	Test_DebugMarkPwmSendDone();
+
 	g_ws2812DmaBusy = 0;
 	DMA_PWMAT_STA = 0;
 }
@@ -642,4 +759,53 @@ WS2812DRV_DisplayMode_t WS2812DRV_GetDisplayMode(void)
 uint8_t WS2812DRV_GetActiveCols(void)
 {
 	return g_ws2812ActiveCols;
+}
+
+uint8_t WS2812DRV_SetScanMode(WS2812DRV_ScanMode_t mode)
+{
+	if ((mode != WS2812DRV_SCAN_NORMAL_PAIR) && (mode != WS2812DRV_SCAN_LEGACY_SHIFT))
+	{
+		return 0U;
+	}
+
+	DisableGlobalInt();
+	g_ws2812ScanMode = mode;
+	g_ws2812ScanRowIdx = 0U;
+	EnableGlobalInt();
+
+	return 1U;
+}
+
+WS2812DRV_ScanMode_t WS2812DRV_GetScanMode(void)
+{
+	return g_ws2812ScanMode;
+}
+
+WS2812DRV_ScanMode_t WS2812DRV_ToggleScanMode(void)
+{
+	if (g_ws2812ScanMode == WS2812DRV_SCAN_NORMAL_PAIR)
+	{
+		(void)WS2812DRV_SetScanMode(WS2812DRV_SCAN_LEGACY_SHIFT);
+	}
+	else
+	{
+		(void)WS2812DRV_SetScanMode(WS2812DRV_SCAN_NORMAL_PAIR);
+	}
+
+	return g_ws2812ScanMode;
+}
+
+uint8_t WS2812DRV_GetLastScanRowA(void)
+{
+	return g_ws2812LastScanRowA;
+}
+
+uint8_t WS2812DRV_GetLastScanRowB(void)
+{
+	return g_ws2812LastScanRowB;
+}
+
+uint16_t WS2812DRV_GetLastScanTxLen(void)
+{
+	return g_ws2812LastScanTxLen;
 }

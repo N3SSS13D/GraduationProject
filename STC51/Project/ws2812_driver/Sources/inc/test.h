@@ -5,6 +5,10 @@ void Test_Init(void);
 void Test_TaskLoop(void);
 
 void Test_SetRowIntervalUs(unsigned long intervalUs);
+void Test_SetNormalRowIntervalUs(unsigned long intervalUs);
+void Test_SetLegacyRowIntervalUs(unsigned long intervalUs);
+void Test_SetNormalRowIntervalMs(unsigned int intervalMs);
+void Test_SetLegacyRowIntervalMs(unsigned int intervalMs);
 unsigned long Test_GetRowIntervalUs(void);
 unsigned int Test_GetLastPwmUs(void);
 unsigned char Test_SetDisplayMode(unsigned char mode16x);
@@ -29,5 +33,11 @@ unsigned char Test_SetGlyphDisplayIndex(unsigned char glyphIndex);
 unsigned char Test_SetScrollGlyphSequence(const unsigned char *glyphList, unsigned char count);
 void Test_NextPresetMode(void);
 unsigned char Test_GetPresetMode(void);
+unsigned char Test_ToggleScanMode(void);
+unsigned char Test_GetScanMode(void);
+void Test_SetDebugMode(unsigned char enable);
+unsigned char Test_GetDebugMode(void);
+void Test_DebugMarkRowSwitchStart(void);
+void Test_DebugMarkPwmSendDone(void);
 
 #endif

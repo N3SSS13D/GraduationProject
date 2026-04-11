@@ -26,11 +26,13 @@ void EXTI0_Init(void)
 }
 
 ////////////////////////////////////////
-// EXTI1 init (unused)
+// EXTI1 init (P3.3 / low-active key)
 ////////////////////////////////////////
 void EXTI1_Init(void)
 {
-	INT1_DisableInt();
+	IT1 = 0;                            // low-level effective (active low key on P3.3)
+	INT1_SetIntPriority(0);
+	INT1_EnableInt();
 }
 
 ////////////////////////////////////////

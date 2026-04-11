@@ -31,6 +31,9 @@ typedef struct
     uint8_t hasTextSequence;
     uint8_t hasFg;
     uint8_t hasBg;
+    uint8_t hasDebug;
+    uint8_t hasNormalIntervalMs;
+    uint8_t hasLegacyIntervalMs;
     uint8_t content;
     uint8_t effect;
     uint8_t direction;
@@ -49,10 +52,38 @@ typedef struct
     uint8_t bgR;
     uint8_t bgG;
     uint8_t bgB;
+    uint8_t debugEnable;
+    uint16_t normalIntervalMs;
+    uint16_t legacyIntervalMs;
 } USBLIB_PlayCmd_t;
 
 static uint8_t USBLIB_ParseRgb24(uint8_t *buf, uint8_t off, uint8_t len, uint8_t *r, uint8_t *g, uint8_t *b);
 static uint8_t USBLIB_ParseColorCommand(uint8_t *buf, uint8_t len, uint8_t *isFg, uint8_t *r, uint8_t *g, uint8_t *b);
+
+static uint8_t USBLIB_ParseU16At(uint8_t *buf, uint8_t off, uint8_t len, uint16_t *value)
+{
+    uint16_t v;
+
+    if ((off >= len) || (buf[off] < '0') || (buf[off] > '9'))
+    {
+        return 0;
+    }
+
+    v = (uint16_t)(buf[off] - '0');
+    off++;
+    while ((off < len) && (buf[off] >= '0') && (buf[off] <= '9'))
+    {
+        v = (uint16_t)(v * 10U + (uint16_t)(buf[off] - '0'));
+        if (v > 60000U)
+        {
+            return 0;
+        }
+        off++;
+    }
+
+    *value = v;
+    return 1;
+}
 
 static uint8_t USBLIB_ParseU8At(uint8_t *buf, uint8_t off, uint8_t len, uint8_t *value)
 {
@@ -164,6 +195,7 @@ static void USBLIB_ParsePlayCommand(uint8_t *buf, uint8_t len, USBLIB_PlayCmd_t 
 {
     uint8_t i;
     uint8_t tmp;
+    uint16_t tmp16;
 
     cmd->isPlay = USBLIB_HasPlayToken(buf, len);
     if (cmd->isPlay == 0U)
@@ -257,6 +289,36 @@ static void USBLIB_ParsePlayCommand(uint8_t *buf, uint8_t len, USBLIB_PlayCmd_t 
             {
                 cmd->hasGlyphIndex = 1U;
                 cmd->glyphIndex = tmp;
+            }
+        }
+
+        if ((buf[i] == 'D') && (buf[(uint8_t)(i + 1U)] == 'B') && (buf[(uint8_t)(i + 2U)] == 'G')
+            && ((uint8_t)(i + 4U) <= len) && (buf[(uint8_t)(i + 3U)] == '='))
+        {
+            if ((USBLIB_ParseU8At(buf, (uint8_t)(i + 4U), len, &tmp) != 0U) && (tmp <= 1U))
+            {
+                cmd->hasDebug = 1U;
+                cmd->debugEnable = tmp;
+            }
+        }
+
+        if ((buf[i] == 'N') && (buf[(uint8_t)(i + 1U)] == 'M') && (buf[(uint8_t)(i + 2U)] == 'S')
+            && ((uint8_t)(i + 4U) <= len) && (buf[(uint8_t)(i + 3U)] == '='))
+        {
+            if (USBLIB_ParseU16At(buf, (uint8_t)(i + 4U), len, &tmp16) != 0U)
+            {
+                cmd->hasNormalIntervalMs = 1U;
+                cmd->normalIntervalMs = tmp16;
+            }
+        }
+
+        if ((buf[i] == 'L') && (buf[(uint8_t)(i + 1U)] == 'M') && (buf[(uint8_t)(i + 2U)] == 'S')
+            && ((uint8_t)(i + 4U) <= len) && (buf[(uint8_t)(i + 3U)] == '='))
+        {
+            if (USBLIB_ParseU16At(buf, (uint8_t)(i + 4U), len, &tmp16) != 0U)
+            {
+                cmd->hasLegacyIntervalMs = 1U;
+                cmd->legacyIntervalMs = tmp16;
             }
         }
     }
@@ -424,6 +486,9 @@ void USBLIB_OUT_Callback(void)
     *      SQ=a,b,c... // scroll glyph index sequence (e.g. SQ=0,1,2,3)
      *      FG=RRGGBB // foreground color in RGB888 hex
      *      BG=RRGGBB // background color in RGB888 hex
+    *      DBG=x // debug mode: 0=off, 1=on
+    *      NMS=x // normal scan interval in ms
+    *      LMS=x // legacy scan interval in ms
      */
 
     USBLIB_ParsePlayCommand(UsbOutBuffer, OutNumber, &playCmd);
@@ -481,12 +546,24 @@ void USBLIB_OUT_Callback(void)
         {
             Test_SetBackgroundColor(playCmd.bgR, playCmd.bgG, playCmd.bgB);
         }
+        if (playCmd.hasDebug != 0U)
+        {
+            Test_SetDebugMode(playCmd.debugEnable);
+        }
+        if (playCmd.hasNormalIntervalMs != 0U)
+        {
+            Test_SetNormalRowIntervalMs(playCmd.normalIntervalMs);
+        }
+        if (playCmd.hasLegacyIntervalMs != 0U)
+        {
+            Test_SetLegacyRowIntervalMs(playCmd.legacyIntervalMs);
+        }
 
         printf("[USB] play cfg applied\r\n");
         return;
     }
 
-    printf("[USB] cmd err, use PLAY CT/DIR/FX/SPD/ANI/CM/GS/BR/IMG/GI/SQ/FG/BG\r\n");
+    printf("[USB] cmd err, use PLAY CT/DIR/FX/SPD/ANI/CM/GS/BR/IMG/GI/SQ/FG/BG/DBG/NMS/LMS\r\n");
 }
 
 //<<AICUBE_USER_FUNCTION_IMPLEMENT_BEGIN>>

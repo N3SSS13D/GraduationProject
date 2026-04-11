@@ -285,7 +285,6 @@ static uint8_t DrawDrv_GetJluTextPixel(uint8_t row, uint8_t col)
     else
     {
         offset = 0U;
-        (void)offset;
         glyphIndex = g_drawTextDisplayGlyph;
         glyphCol = col;
     }
@@ -526,7 +525,7 @@ void DrawDrv_Init(void)
     g_drawFrameDirty = 0;
 }
 
-void DrawDrv_Task40ms(void)
+void DrawDrv_Task32ms(void)
 {
     uint8_t animCnt;
 

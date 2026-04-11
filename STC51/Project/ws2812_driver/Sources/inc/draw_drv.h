@@ -59,11 +59,11 @@ typedef struct
  */
 void DrawDrv_Init(void);
 
-/* 40ms 绘图任务（25fps）。
+/* 32ms 绘图任务（约31fps）。
  * 参数: 无
  * 返回: 无
  */
-void DrawDrv_Task40ms(void);
+void DrawDrv_Task32ms(void);
 
 /* 500ms 动画状态更新任务。
  * 参数: 无

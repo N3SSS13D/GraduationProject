@@ -63,3 +63,35 @@
 ### Trade-off note
 - Strong software blanking can suppress ghosting but may reduce brightness.
 - Final recommendation: prioritize the hardware resistor fix, and use software blanking only as timing coordination.
+
+## Missing reset-low tail after payload
+
+### Phenomenon
+- After row-scan payload transmission, some LEDs do not turn off immediately, showing residual glow/tailing.
+
+### Root cause
+1. DMA payload tail previously had only a very short zero guard.
+2. WS2812 needs a continuous low period (typically >50us) to latch/reset reliably.
+
+### Fix applied
+1. Added a fixed reset-low tail at end of each dual-row DMA packet:
+  - `WS2812DRV_RESET_TAIL_SLOTS = 64`
+2. Appended CH0/CH2 zero pairs for the full tail window.
+3. Kept one extra zero guard pair for DMA boundary robustness.
+
+### Code locations
+- `Sources/inc/ws2812_drv.h`: new reset-tail slot macro and tail buffer size expansion.
+- `Sources/drv/ws2812_drv.c`: tail append logic in both normal and legacy dual-row packet builders.
+
+## Legacy 700us flicker under real load
+
+### Phenomenon
+- Normal mode at 2ms is stable, but legacy mode at 700us can still flicker in practice.
+
+### Root cause
+1. Legacy per-step payload is longer (current-row data + off-row off-code + reset tail).
+2. Timer interval margin is too small versus actual transfer time, causing jitter when refresh attempts hit DMA busy windows.
+
+### Fix applied
+1. Added minimum-safe interval clamp for legacy mode in `Sources/app/test.c`.
+2. Clamp floor is computed dynamically from active columns and reset-tail length, plus a safety margin.

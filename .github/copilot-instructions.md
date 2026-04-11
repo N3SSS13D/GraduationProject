@@ -42,3 +42,7 @@
 - After each code change, add appropriate explanatory comments for structure and behavior in modified code (follow existing comment style, keep comments concise, and avoid redundant comments)
 - After each completed coding task, provide a Markdown-formatted summary report that includes: change overview, affected files, key logic updates, and verification status
 - When adding custom functions, only use existing/valid APIs and ensure each custom function is declared in the corresponding header file before use
+
+## WS2812 Driver Documentation Sync
+- When changing WS2812 scan/output timing behavior, update both docs in `Doc/项目文档/` and problem review docs in `STC51/Project/ws2812_driver/` in the same task.
+- If scan mode logic changes, explicitly document: channel mapping rule, off-row waveform type, reset tail behavior, and interval safety constraints.

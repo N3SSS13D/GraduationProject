@@ -74,6 +74,7 @@ void SYS_Init(void)
     PORT3_Init();                       //P3口初始化
     PORT4_Init();                       //P4口初始化
     EXTI0_Init();                       //P3.2按键中断初始化（低电平按键按下触发）
+    EXTI1_Init();                      //P3.3按键中断初始化（低电平按键按下触发）
     TIMER0_Init();                      //定时器0初始化
     // PWMA_Init();                        //高级PWMA初始化
     delay_ms(1);

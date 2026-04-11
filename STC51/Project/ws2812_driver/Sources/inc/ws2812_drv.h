@@ -9,17 +9,24 @@
 #define WS2812DRV_ROW_RESET_PREFIX_SLOTS     48
 #define WS2812DRV_PWM_NUM_MAX                (WS2812DRV_ROW_RESET_PREFIX_SLOTS + WS2812DRV_COL_NUM_MAX * 24 + 2)
 #define WS2812DRV_PWM_NUM_DUAL_MAX           (WS2812DRV_PWM_NUM_MAX * 2)
+#define WS2812DRV_RESET_TAIL_SLOTS           32
 
 #define WS2812DRV_PWM_DUTY_BIT0              12
 #define WS2812DRV_PWM_DUTY_BIT1              36
 #define WS2812DRV_ROW_SWITCH_SETTLE_US       3
-#define WS2812DRV_DMA_TAIL_GUARD_BYTES       2
+#define WS2812DRV_DMA_TAIL_GUARD_BYTES       (WS2812DRV_RESET_TAIL_SLOTS * 2 + 2)
 
 typedef enum
 {
 	WS2812DRV_MODE_16X8 = 0,
 	WS2812DRV_MODE_16X16 = 1
 } WS2812DRV_DisplayMode_t;
+
+typedef enum
+{
+	WS2812DRV_SCAN_NORMAL_PAIR = 0,
+	WS2812DRV_SCAN_LEGACY_SHIFT = 1
+} WS2812DRV_ScanMode_t;
 
 /* 初始化 WS2812 驱动。
  * 参数: 无
@@ -140,5 +147,41 @@ WS2812DRV_DisplayMode_t WS2812DRV_GetDisplayMode(void);
  * 返回: 有效列数（8 或 16）
  */
 uint8_t WS2812DRV_GetActiveCols(void);
+
+/* 设置扫描模式。
+ * 参数: mode 扫描模式
+ * 返回: 1 成功, 0 失败
+ */
+uint8_t WS2812DRV_SetScanMode(WS2812DRV_ScanMode_t mode);
+
+/* 获取当前扫描模式。
+ * 参数: 无
+ * 返回: 当前扫描模式
+ */
+WS2812DRV_ScanMode_t WS2812DRV_GetScanMode(void);
+
+/* 切换扫描模式（正常双行/旧方案滑窗）。
+ * 参数: 无
+ * 返回: 切换后的扫描模式
+ */
+WS2812DRV_ScanMode_t WS2812DRV_ToggleScanMode(void);
+
+/* 获取最近一次扫描输出行A。
+ * 参数: 无
+ * 返回: 行号A
+ */
+uint8_t WS2812DRV_GetLastScanRowA(void);
+
+/* 获取最近一次扫描输出行B。
+ * 参数: 无
+ * 返回: 行号B
+ */
+uint8_t WS2812DRV_GetLastScanRowB(void);
+
+/* 获取最近一次扫描DMA发送长度。
+ * 参数: 无
+ * 返回: DMA发送长度
+ */
+uint16_t WS2812DRV_GetLastScanTxLen(void);
 
 #endif
