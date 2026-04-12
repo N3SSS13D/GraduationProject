@@ -27,7 +27,10 @@ GraduationProject/
 |-- README.md
 |-- Doc/
 |   |-- usb_play_v2_guide.md
-|   `-- ws2812_driver_current_implementation.md
+|   |-- ws2812_driver_current_implementation.md
+|   `-- xiaozhi_esp32_porting_summary.md
+|-- External/
+|   `-- xiaozhi-esp32/          # 小智 AI 参考快照（不保留原 Git 元数据）
 `-- STC51/
     `-- Project/
         `-- ws2812_driver/
@@ -117,6 +120,7 @@ GraduationProject/
 ## 8. 参考文档
 
 - `Doc/ws2812_driver_current_implementation.md`
+- `Doc/项目文档/xiaozhi_esp32_porting_summary.md`
 - `Doc/usb_play_v2_guide.md`
 - `STC51/Project/ws2812_driver/problem.md`
 - `STC51/Project/ws2812_driver/problem_zh.md`

@@ -69,3 +69,16 @@ model: "GPT-5 (copilot)"
 	- 增加 DMA 超时恢复；
 	- 固定偶数行->CH1、奇数行->CH2 映射。
 - 结构演进：将图像缓冲和 PWM+DMA 发送能力下沉到 `ws2812_drv`，`test.c` 仅保留调度与测试图案。
+
+### 2026-04-12
+
+- 问题：需要将 `xiaozhi-esp32` 中已完成的小智 AI / MCP / 调试圆点能力整理进毕业设计仓库，作为后续 8051 接口层与显示联动开发参考。
+- 结论：
+	- 已将 `xiaozhi-esp32` 快照导入 `External/xiaozhi-esp32/`。
+	- 快照包含 `GP_Port/` 下的 LED 矩阵协议、AI8051U 接口设计、调试圆点显示、MCP 工具与桥接测试脚本。
+	- 官方 `wss://api.xiaozhi.me/mcp/?token=...` 桥接端实测会主动发 `initialize`，因此测试脚本必须支持 server 模式。
+	- 调试圆点当前定位为屏幕右侧 `1/3` 区域的中点，可作为后续 STC 侧显示目标布局参考。
+- 后续建议：
+	- 将 `voice_color_result` 结构映射为 STC 侧 WS2812 动作参数；
+	- 在 `Sources/app/` 增加 AI 输入适配层；
+	- 在 `Sources/drv/` 或 `Sources/mid/` 增加颜色/动画动作接口。
