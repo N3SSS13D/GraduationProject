@@ -1,136 +1,112 @@
-# WS2812 Graduation Project
+# GraduationProject
 
-## 1. 项目概述
+## 项目概述
 
-本项目基于 STC AI8051U（8051 架构），实现 16x16/16x8 WS2812 点阵显示、USB 命令控制、按键模式切换与动画渲染。
+本仓库用于毕业设计开发，当前聚焦两条技术主线：
 
-当前分支 `way2` 的核心方向：
+1. `STC51/Project/ws2812_driver/`
+   - 基于 STC AI8051U 的 WS2812 复用扫描显示系统。
+   - 当前已形成稳定的 PWM + DMA、74HC595 行选、PMOS 高侧切换和 USB 调试链路。
+2. `External/xiaozhi-esp32/`
+   - 引入的小智 AI 参考快照。
+   - 当前已补充 `GP_Port/` 目录，用于承载 ESP32 <-> AI8051U 的 I2C 协议、驱动骨架、联调脚本和阶段 prompt。
 
-- 渲染层与发送层解耦（`draw_drv` + `ws2812_drv`）
-- USB 控制统一为 `PLAY` 参数模型
-- 支持静态图案、静态字模、滚动字幕、渐变/呼吸/淡入淡出等效果
-- 保持行扫描链路时序稳定并持续做性能优化
+下一阶段的核心目标是打通：
 
-## 2. 硬件与链路
+`小智 AI 语音输入 -> ESP32 动作映射 -> I2C 自定义协议 -> AI8051U 接收执行 -> WS2812 LED 显示`
 
-- MCU: STC AI8051U
-- LED: WS2812（矩阵扫描）
-- PWM 输出: PWMA CH1/CH2
-- 发送: PWMAT DMA
-- 行选: 74HC595 + PMOS 高侧
-- 控制输入: USB CDC、P3.2(INT0) 低电平按键
-
-## 3. 代码结构
+## 仓库结构
 
 ```text
 GraduationProject/
 |-- README.md
 |-- Doc/
-|   |-- usb_play_v2_guide.md
-|   |-- ws2812_driver_current_implementation.md
-|   `-- xiaozhi_esp32_porting_summary.md
+|   `-- 项目文档/
+|       |-- project_status_summary_2026-04-12.md
+|       |-- usb_play_v2_guide.md
+|       |-- ws2812_driver_current_implementation.md
+|       `-- xiaozhi_esp32_porting_summary.md
 |-- External/
-|   `-- xiaozhi-esp32/          # 小智 AI 参考快照（不保留原 Git 元数据）
-`-- STC51/
-    `-- Project/
-        `-- ws2812_driver/
-            |-- Sources/
-            |   |-- app/
-            |   |   `-- test.c              # 应用层参数封装、预设模式
-            |   |-- drv/
-            |   |   |-- ws2812_drv.c        # 图像/行PWM编码/DMA发送
-            |   |   `-- hc595_drv.c         # 行选驱动
-            |   |-- mid/
-            |   |   |-- draw_drv.c          # 渲染重建与动画步进
-            |   |   `-- key_ctrl.c          # 按键去抖与模式切换
-            |   |-- inc/
-            |   |   |-- test_image.h        # 图案+字模统一资源头文件
-            |   |   |-- draw_drv.h
-            |   |   |-- test.h
-            |   |   `-- ws2812_drv.h
-            |   |-- usblib.c                # PLAY 命令解析与下发
-            |   |-- exti.c
-            |   `-- main.c
-            `-- ws2812_driver.uvproj
+|   `-- xiaozhi-esp32/
+|       |-- main/                      # 小智应用、板级与设备抽象
+|       `-- GP_Port/                   # 本项目扩展的协议、驱动骨架、联调资产
+|-- STC51/
+|   `-- Project/
+|       `-- ws2812_driver/
+|           |-- Sources/
+|           |   |-- app/               # 扫描调度与应用层流程
+|           |   |-- mid/               # 渲染、动画、按键控制
+|           |   |-- drv/               # WS2812/74HC595 驱动
+|           |   |-- inc/               # 共享头文件与配置
+|           |   |-- timer.c            # 定时器与节拍控制
+|           |   |-- usblib.c           # USB 命令入口
+|           |   `-- main.c             # MCU 入口与初始化
+|           `-- ws2812_driver.uvproj
+`-- .github/
+    `-- prompts/                       # 项目开发 prompt 集合
 ```
 
-## 4. 功能说明
+## 已实现能力
 
-### 4.1 显示内容
+### STC51 / WS2812 侧
 
-- 图案显示：内置 diamond/cross/python_demo
-- 字模显示：支持静态字模索引显示与滚动字模序列
-- 方向旋转：0/180/CW90/CCW90
+- 已完成 PWM + DMA 双通道输出链路整理。
+- 已完成 74HC595 + PMOS 行扫描控制与复位尾波处理。
+- 已完成 Timer0 one-shot 扫描节拍调度，减少关键路径中的软延时。
+- 已支持 `normal_pair` 与 `legacy_shift` 两类扫描/发送模式。
+- 已支持 USB 调试命令：颜色、图案、间隔、渲染模式切换。
+- 已支持 16x64 / 16x8 有效列模式，以及对应的运行时 DMA 长度重建。
 
-### 4.2 动效与颜色
+### XiaoZhi / GP_Port 侧
 
-- 静态、呼吸、渐变、左滚、右滚、JLU 文字滚动、淡入、淡出、颜色循环
-- 前景/背景 RGB888
-- 亮度控制（0..255）
-- 滚动步进按“像素/帧”定义，最小 1 px/frame
+- 已引入 `xiaozhi-esp32` 参考快照用于语音交互与 MCP 架构参考。
+- 已补充共享协议头 `gp_led_matrix_protocol.h`。
+- 已补充 ESP32 侧矩阵驱动骨架 `gp_led_matrix_esp32.h/.cc`。
+- 已补充 AI8051U 接口设计头 `gp_led_matrix_ai8051u.h`。
+- 已补充 MCP 调试工具、调试圆点显示链路和官方 MCP 桥接测试脚本。
 
-### 4.3 交互控制
+## 当前文档入口
 
-- USB `PLAY` 命令统一参数入口
-- P3.2(INT0) 低电平按键，循环切换 4 组预设模式
+- 当前项目总览与阶段计划：`Doc/项目文档/project_status_summary_2026-04-12.md`
+- WS2812 驱动实现说明：`Doc/项目文档/ws2812_driver_current_implementation.md`
+- 小智移植与联调总结：`Doc/项目文档/xiaozhi_esp32_porting_summary.md`
+- Prompt 索引：`.github/prompts/README.md`
 
-## 5. USB 命令
+## 下一阶段计划
 
-项目已使用 PLAY v2 模型，详细参数与样例见：
+1. 固化语音动作对象
+   - 对齐颜色、亮度、动画、文本等高层参数，统一为 ESP32 到 AI8051U 可复用的动作模型。
+2. 冻结 I2C 自定义协议
+   - 完善命令字、分包、校验、ACK、错误码、状态回读和心跳机制。
+3. 打通 ESP32 主机发送路径
+   - 在 `GP_Port/gp_led_matrix_esp32` 中接入真实 I2C 发送与状态映射。
+4. 落地 AI8051U 从机执行路径
+   - 在 STC51 工程中实现收包、解析、缓存和 WS2812 动作执行。
+5. 完成语音控灯联调验证
+   - 验证语音输入、协议传输、异常恢复和显示刷新稳定性。
 
-- `Doc/usb_play_v2_guide.md`
+## 构建与验证
 
-关键参数：
+### STC51 工程
 
-- `CT` 内容类型、`FX` 效果、`DIR` 方向
-- `SPD` 滚动速度（像素/帧，最小 1）
-- `BR` 亮度
-- `GI` 静态字模索引
-- `SQ` 滚动字模序列
+1. 使用 Keil 打开 `STC51/Project/ws2812_driver/ws2812_driver.uvproj`。
+2. 编译并通过 STC ISP 下载固件。
+3. 使用串口或 USB 命令验证颜色、间隔、图案和渲染模式切换。
 
-## 6. 本轮性能优化
+### ESP32 参考工程
 
-本版本新增了图像重建与编码路径的加速策略：
+1. 使用 ESP-IDF 插件打开 `External/xiaozhi-esp32/`。
+2. 选择目标板并执行构建验证。
+3. 在 `GP_Port/` 范围内推进协议、驱动和联调脚本开发。
 
-1. 快速帧写入路径
-   - 新增 `WS2812DRV_BeginFrameWrite/SetPixelRgbFast/EndFrameWrite`
-   - 整帧重建时跳过逐像素比较，减少 CPU 分支与重复 dirty 判断
+## 提交边界建议
 
-2. 行编码位展开查表
-   - 新增 8-bit -> 8 PWM 占空序列 LUT
-   - 替代每 bit 的移位判断，降低编码 CPU 占用
+默认不提交以下本地环境或临时产物：
 
-3. M2M DMA 参与缓冲清零（带回退）
-   - 优先尝试 M2M DMA 对后图像缓冲做块清零
-   - 若 M2M 异常/超时，自动回退到 CPU 清零路径
-
-## 7. 构建与验证
-
-1. Keil 打开：`STC51/Project/ws2812_driver/ws2812_driver.uvproj`
-2. Build 生成固件
-3. STC ISP 下载
-4. 串口发送 PLAY 命令验证显示、速度和按键模式切换
-
-### 7.1 快速验证建议
-
-- 先发送静态图案命令确认链路：`PLAY CT=0 FX=0 IMG=2 BR=180`
-- 再发送静态字模命令确认 GI：`PLAY CT=1 FX=0 GI=2 BR=180`
-- 最后发送滚动序列命令确认 SQ/SPD：`PLAY CT=1 FX=5 SPD=1 SQ=0,1,2,3`
-
-## 8. 参考文档
-
-- `Doc/ws2812_driver_current_implementation.md`
-- `Doc/项目文档/xiaozhi_esp32_porting_summary.md`
-- `Doc/usb_play_v2_guide.md`
-- `STC51/Project/ws2812_driver/problem.md`
-- `STC51/Project/ws2812_driver/problem_zh.md`
-
-## 9. 提交边界建议
-
-为避免污染仓库，建议默认不提交以下本地临时/环境文件：
-
-- Keil 本地视图状态：`*.uvgui.*`、`*.uvopt`
-- Python 运行缓存：`__pycache__/`、`*.pyc`
-- 临时导出图片（若非明确资源需求）：`Pic/` 下的中间产物
+- `*.uvgui.*`
+- `*.uvopt`
+- `__pycache__/`
+- `*.pyc`
+- 未明确需要纳入版本控制的临时导出图片或日志
 
 

@@ -20,6 +20,19 @@ All hardware running v1 can be upgraded to v2 by manually flashing the firmware.
 
 The stable version of v1 is 1.9.2. You can switch to v1 by running `git checkout v1`. The v1 branch will be maintained until February 2026.
 
+## GraduationProject Snapshot Context
+
+Inside this repository, `External/xiaozhi-esp32/` is used as a reference snapshot for the graduation project rather than as a replacement for the upstream project.
+
+The project-specific extension assets live in `GP_Port/`, including:
+
+- `gp_led_matrix_protocol.h` for the shared ESP32 <-> AI8051U protocol
+- `gp_led_matrix_esp32.h/.cc` for the ESP32-side matrix driver skeleton
+- `gp_led_matrix_ai8051u.h` for the AI8051U interface boundary
+- MCP debug tooling, debug-dot integration, and staged prompts for bridge development
+
+The next milestone is an end-to-end path from XiaoZhi voice results to WS2812 LED actions over a custom I2C protocol.
+
 ### Features Implemented
 
 - Wi-Fi / ML307 Cat.1 4G

@@ -15,11 +15,12 @@ model: "GPT-5 (copilot)"
 - 与扫描刷新兼容的时序策略
 - 可选双缓冲集成
 
-分层目录结构（落位要求）：
+当前结构（落位要求）：
 - App：`Sources/app/`（场景与业务编排）
-- Mdl/Mid：`Sources/fml/`（硬件无关动画算法）
-- Drv：`Sources/lib/` 与 `Sources/output/`（像素输出与扫描驱动）
-- HAL：`Sources/hal/`（仅硬件访问）
+- Mid：`Sources/mid/`（硬件无关动画算法）
+- Drv：`Sources/drv/`（像素输出与扫描驱动）
+- Shared：`Sources/inc/`
+- 外设入口：`Sources/*.c`、`Sources/lib/`
 
 本 prompt 不做：
 - 非必要情况下改写底层时序关键驱动
@@ -32,7 +33,11 @@ model: "GPT-5 (copilot)"
 3. 效果行为需支持分辨率配置（默认 16x16）。
 4. CPU 与内存开销需适配 8051 资源约束。
 5. 补充简明触发与使用说明。
-6. 动画算法优先放在 Mdl/Mid，硬件访问保留在 Drv/HAL。
+6. 动画算法优先放在 `mid/`，硬件访问保留在 `drv/` 与底层外设入口。
+
+当前阶段重点：
+- 新效果最好同时考虑后续通过 AI 语音触发的动作模型，避免参数设计只适用于本地测试。
+- 若效果会被小智侧复用，优先使用颜色、亮度、节奏等易于 I2C 协议传输的参数表达。
 
 输出格式：
 - "Assumptions"

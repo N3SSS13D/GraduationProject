@@ -20,11 +20,12 @@ model: "GPT-5 (copilot)"
 - 扫描调度挂钩（不实现完整动画）
 - 驱动层分辨率映射
 
-分层目录结构（落位要求）：
+当前结构（落位要求）：
 - App：`Sources/app/`（禁止放置驱动实现）
-- Mdl/Mid：`Sources/fml/`（仅硬件无关工具/协议）
-- Drv：`Sources/lib/`，显示/输出驱动可使用 `Sources/output/`
-- HAL：`Sources/hal/`（MCU 寄存器/厂家库访问）
+- Mid：`Sources/mid/`（仅硬件无关状态和算法）
+- Drv：`Sources/drv/`
+- Shared：`Sources/inc/`
+- 外设入口：`Sources/*.c`、`Sources/lib/`
 
 本 prompt 不做：
 - 复杂动画库设计
@@ -37,7 +38,11 @@ model: "GPT-5 (copilot)"
 3. 保持时序关键路径确定性。
 4. 优先定长缓冲与编译期配置。
 5. 默认 16x8 兼容，并支持可配置分辨率。
-6. 保持 Drv -> HAL 单向依赖，避免在 Drv 文件中混入应用业务逻辑。
+6. 保持 `drv -> 外设入口/厂家库` 单向依赖，避免在驱动文件中混入应用业务逻辑。
+
+当前阶段重点：
+- 驱动层改动需要兼容后续 AI8051U 通过 I2C 接收动作并复用现有 WS2812 刷新路径。
+- 若本次功能会影响协议负载或显示动作接口，需要同时评估 `GP_Port` 协议兼容性。
 
 输出格式：
 - "Assumptions"

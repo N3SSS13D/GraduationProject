@@ -15,11 +15,12 @@ Scope (effects layer):
 - timing policy compatible with scan refresh
 - optional double-buffer integration
 
-Layered directory structure (placement requirement):
+Current structure to use:
 - App: `Sources/app/` for scene/app orchestration
-- Mdl/Mid: `Sources/fml/` for hardware-independent effect math
-- Drv: `Sources/lib/` and `Sources/output/` for pixel push/scan output drivers
-- HAL: `Sources/hal/` for hardware access only
+- Mid: `Sources/mid/` for hardware-independent effect logic
+- Drv: `Sources/drv/` for pixel push and scan output drivers
+- Shared: `Sources/inc/`
+- Peripheral glue: `Sources/*.c` and `Sources/lib/`
 
 Do not do in this prompt:
 - Rewriting low-level timing-critical driver internals unless required for correctness
@@ -32,7 +33,11 @@ Execution requirements:
 3. Support resolution-aware effect behavior (default 16x16).
 4. Keep CPU and memory cost suitable for 8051 constraints.
 5. Add concise usage notes for triggering the effect.
-6. Place effect algorithms in Mdl/Mid and keep hardware operations in Drv/HAL.
+6. Place effect algorithms in `mid/` and keep hardware operations in `drv/` and the low-level glue layer.
+
+Current phase emphasis:
+- Prefer effect parameters that can later be carried over the XiaoZhi-to-AI8051U I2C bridge.
+- Avoid effect designs that depend on direct high-rate AI message timing.
 
 Output format:
 - "Assumptions"

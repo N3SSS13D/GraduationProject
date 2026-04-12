@@ -13,22 +13,27 @@ Review priorities (highest first):
 3. Power-switch sequencing risks (74HC595 + PMOS)
 4. Buffer bounds and memory safety issues
 5. Concurrency/scheduling issues in mini-OS cooperative tasks
-6. Layering violations and wrong file placement across App/Mdl-Mid/Drv/HAL
+6. Layering violations and wrong file placement across `app/mid/drv/peripheral glue`
 7. Missing tests or validation gaps
 
 Layered directory mapping to validate:
 - App: `Sources/app/`
-- Mdl/Mid: `Sources/fml/`
-- Drv: `Sources/lib/` and `Sources/output/`
-- HAL: `Sources/hal/`
+- Mid: `Sources/mid/`
+- Drv: `Sources/drv/`
+- Shared: `Sources/inc/`
+- Peripheral glue: `Sources/*.c` and `Sources/lib/`
 
 Execution requirements:
 1. Read only the relevant files first; avoid broad unrelated commentary.
 2. Report findings first, ordered by severity.
 3. For each finding include: impact, evidence, and a concrete fix suggestion.
 4. If no findings, explicitly state that and list residual risks.
-5. Explicitly check dependency direction: App -> Mdl/Mid/Drv -> HAL.
+5. Explicitly check dependency direction: `app -> mid -> drv -> peripheral glue/vendor support`.
 6. Keep summary brief after findings.
+
+If the review target touches `External/xiaozhi-esp32/GP_Port/`, also verify:
+- protocol compatibility between the XiaoZhi bridge layer and the STC-side action layer,
+- semantic consistency across `voice_color_result`, protocol fields, and LED action parameters.
 
 Output format:
 - "Findings" (severity-ordered)

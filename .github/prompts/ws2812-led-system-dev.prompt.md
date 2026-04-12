@@ -19,15 +19,17 @@ Source context to inspect first:
 - Main driver sources: [STC51/Project/ws2812_driver/Sources](../../STC51/Project/ws2812_driver/Sources)
 - Existing low-level project: [STC51/Project/PWMA-DMA/AI8051U-PWMA-DMA-24灯环-1通道.c](../../STC51/Project/PWMA-DMA/AI8051U-PWMA-DMA/WS2812B-PWMA-DMA-24灯环-1通道.c)
 
-Layered directory structure (must follow):
-- App layer (business logic): `Sources/app/`
-- Mdl/Mid layer (hardware-independent algorithms/protocols): `Sources/fml/`
-- Drv layer (device-specific drivers): `Sources/lib/` and `Sources/output/` when output-driver split already exists
-- HAL layer (MCU register/vendor-lib access): `Sources/hal/`
+Current structure to follow first:
+- App layer: `Sources/app/`
+- Mid layer: `Sources/mid/`
+- Driver layer: `Sources/drv/`
+- Shared headers and config: `Sources/inc/`
+- Peripheral glue and vendor support: `Sources/*.c` and `Sources/lib/`
 
 Placement rule:
-- Put new/changed files in the matching layer directory.
-- If current codebase naming differs, keep compatibility and add the minimal mapping note in documentation instead of broad folder migration.
+- Reuse the current repository layout rather than forcing a broad folder migration.
+- Place business orchestration in `app/`, reusable state/effect logic in `mid/`, and timing/hardware code in `drv/`.
+- If the task touches XiaoZhi integration, inspect `External/xiaozhi-esp32/GP_Port/` first for reusable protocol and interface assets.
 
 Execution requirements:
 1. Analyze existing code and summarize what can be reused.
@@ -35,15 +37,20 @@ Execution requirements:
 3. Implement code changes directly in the workspace using existing style and naming conventions.
 4. Preserve backward compatibility with default resolution 16x16, while allowing configurable resolutions.
 5. If task scheduling is needed, implement a lightweight cooperative mini-OS style scheduler (non-preemptive) suitable for 8051 constraints.
-6. If the requested feature mentions XiaoZhi AI control, add a clean input interface layer that translates AI commands to display actions.
+6. If the feature touches XiaoZhi AI control, prefer mapping `voice_color_result` or an equivalent action object into display actions while staying compatible with `GP_Port/gp_led_matrix_protocol.h`.
 7. Add or update concise technical documentation for integration and usage.
 
 Constraints:
 - Keep timing-critical paths deterministic.
 - Avoid dynamic memory allocation unless there is a clear reason.
 - Prefer fixed-size buffers and explicit bounds checks.
-- Enforce strict layer boundaries: App can call Mdl/Mid and Drv APIs, Drv can call HAL, HAL must not depend on App/Mdl.
+- Keep dependency direction explicit: `app -> mid -> drv -> peripheral glue/vendor support`.
 - Do not rewrite unrelated modules.
+
+Current repository stage:
+- The STC side already has a stable PWM + DMA scan/output path, 74HC595/PMOS row switching, and USB debug commands.
+- `External/xiaozhi-esp32/GP_Port/` already contains a shared protocol header, an ESP32 matrix-driver skeleton, an AI8051U interface design, MCP debug tooling, and endpoint validation assets.
+- The next milestone is an end-to-end bridge from XiaoZhi AI to WS2812 actions over a custom I2C protocol.
 
 Output format:
 - "Assumptions"
@@ -69,3 +76,11 @@ If the request is ambiguous, ask only the minimum clarifying questions needed to
 	- add DMA timeout + recovery,
 	- keep fixed even-row->CH1 and odd-row->CH2 mapping.
 - Architecture update: image buffering and PWM+DMA pipeline moved into `ws2812_drv`; `test.c` now focuses on scheduling and fixed test pattern generation.
+
+### 2026-04-12
+
+- Issue: XiaoZhi AI assets and MCP-based debug tooling have been imported into this repository as references for the graduation-project bridge.
+- Current conclusion:
+	- `External/xiaozhi-esp32/GP_Port/` now contains protocol notes, an ESP32 driver skeleton, an AI8051U interface header, debug-dot tooling, and endpoint validation scripts.
+	- The official MCP bridge actively sends `initialize`, so test tools must behave as an MCP server.
+	- The next practical target is to map XiaoZhi voice output into AI8051U-executable WS2812 actions over I2C.

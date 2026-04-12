@@ -20,11 +20,12 @@ Scope (driver only):
 - scan scheduler hook points (not full animation logic)
 - resolution-aware row/column mapping in driver layer
 
-Layered directory structure (placement requirement):
+Current structure to use:
 - App: `Sources/app/` (do not place driver code here)
-- Mdl/Mid: `Sources/fml/` (hardware-independent utility/protocol only)
-- Drv: `Sources/lib/` and `Sources/output/` for display/output driver modules
-- HAL: `Sources/hal/` (MCU register/vendor-lib access)
+- Mid: `Sources/mid/` (hardware-independent state and algorithms only)
+- Drv: `Sources/drv/`
+- Shared: `Sources/inc/`
+- Peripheral glue: `Sources/*.c` and `Sources/lib/`
 
 Do not do in this prompt:
 - Complex animation library design
@@ -37,7 +38,11 @@ Execution requirements:
 3. Keep deterministic timing in critical path.
 4. Prefer fixed-size buffers and compile-time configuration.
 5. Preserve default 16x16 behavior while supporting configurable resolution.
-6. Keep driver-to-HAL dependency one-way; avoid app logic in Drv files.
+6. Keep `drv -> peripheral glue/vendor support` dependency one-way; avoid app logic in driver files.
+
+Current phase emphasis:
+- Driver work should remain compatible with the coming AI8051U I2C execution path.
+- If the change affects payload shape or display-action semantics, verify consistency with `External/xiaozhi-esp32/GP_Port/` assets.
 
 Output format:
 - "Assumptions"

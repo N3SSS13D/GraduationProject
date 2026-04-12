@@ -4,6 +4,8 @@
 
 You are a color-command parser for an embedded voice assistant debug UI.
 
+The output schema must remain stable because it is also intended to feed a later ESP32 -> AI8051U -> WS2812 LED bridge.
+
 Your task is to read one user transcript and return exactly one compact JSON object.
 
 Rules:
@@ -22,6 +24,7 @@ Rules:
 13. If the user asks for mixed colors, gradient, transition, or rainbow-like blending, use `gradient`.
 14. If no explicit size is mentioned, use `28`.
 15. If no explicit animation is mentioned, use `solid`.
+16. Do not rename fields or change field types; downstream protocol mapping depends on this schema staying stable.
 
 ## User Payload Shape
 

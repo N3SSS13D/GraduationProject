@@ -19,15 +19,17 @@ model: "GPT-5 (copilot)"
 - 主驱动源码目录：[STC51/Project/ws2812_driver/Sources](../../STC51/Project/ws2812_driver/Sources)
 - 现有底层示例：[STC51/Project/PWMA-DMA/AI8051U-PWMA-DMA-24灯环-1通道.c](../../STC51/Project/PWMA-DMA/AI8051U-PWMA-DMA/WS2812B-PWMA-DMA-24灯环-1通道.c)
 
-分层目录结构（必须遵守）：
-- App 应用层（业务逻辑）：`Sources/app/`
-- Mdl/Mid 中间件/组件层（硬件无关算法与协议）：`Sources/fml/`
-- Drv 驱动层（外设逻辑驱动）：`Sources/lib/`，若项目已有输出驱动拆分则可放在 `Sources/output/`
-- HAL 硬件抽象层（寄存器/厂家库访问）：`Sources/hal/`
+当前代码结构（必须优先贴合真实仓库）：
+- App 应用层：`Sources/app/`
+- Mid 中间层：`Sources/mid/`
+- Drv 驱动层：`Sources/drv/`
+- 共享头文件与配置：`Sources/inc/`
+- 外设入口与厂家库支撑：`Sources/*.c`、`Sources/lib/`
 
 文件落位规则：
-- 新增或修改文件必须放入对应层目录。
-- 若当前命名与上述映射存在差异，优先保持兼容，在文档中补充最小映射说明，不做大规模目录迁移。
+- 优先复用当前目录，不为追求“理想分层”而做大规模迁移。
+- 新增业务编排优先放 `app/`，算法或状态机优先放 `mid/`，时序与硬件驱动优先放 `drv/`。
+- 若任务涉及小智 AI 桥接，先检查 `External/xiaozhi-esp32/GP_Port/` 是否已有可复用协议或接口定义。
 
 执行要求：
 1. 先分析现有代码并总结可复用部分。
@@ -35,15 +37,20 @@ model: "GPT-5 (copilot)"
 3. 按现有风格和命名规范直接修改工作区代码。
 4. 默认分辨率保持 16x16 兼容，同时支持可配置分辨率。
 5. 若功能涉及任务调度，实现轻量协作式（非抢占）mini-OS 风格调度器，适配 8051 资源约束。
-6. 若功能涉及小智AI控制，增加清晰的输入接口层，将 AI 命令映射为显示动作。
+6. 若功能涉及小智AI控制，优先将 `voice_color_result` 或等价动作对象映射为显示动作，并与 `GP_Port/gp_led_matrix_protocol.h` 保持兼容。
 7. 增补简明技术文档，说明集成方式与使用方法。
 
 约束：
 - 保证时序关键路径具备确定性。
 - 除非有充分理由，避免动态内存分配。
 - 优先使用定长缓冲区并进行边界检查。
-- 严格分层依赖：App 可调用 Mdl/Mid 与 Drv API；Drv 可调用 HAL；HAL 不得反向依赖 App/Mdl。
+- 严格依赖方向：`app -> mid -> drv -> 外设入口/厂家库`。
 - 不重写与本任务无关的模块。
+
+当前仓库阶段：
+- `STC51/Project/ws2812_driver` 已具备稳定的 PWM + DMA、74HC595/PMOS 行扫描与 USB 调试命令基础。
+- `External/xiaozhi-esp32/GP_Port/` 已具备协议头、ESP32 驱动骨架、AI8051U 接口设计、MCP 调试工具与联调脚本。
+- 下一阶段主目标是打通“小智 AI -> I2C 自定义协议 -> AI8051U -> WS2812 显示动作”闭环。
 
 输出格式：
 - "Assumptions"
@@ -81,4 +88,5 @@ model: "GPT-5 (copilot)"
 - 后续建议：
 	- 将 `voice_color_result` 结构映射为 STC 侧 WS2812 动作参数；
 	- 在 `Sources/app/` 增加 AI 输入适配层；
-	- 在 `Sources/drv/` 或 `Sources/mid/` 增加颜色/动画动作接口。
+	- 在 `Sources/drv/` 或 `Sources/mid/` 增加颜色/动画动作接口；
+	- 优先围绕 I2C 自定义协议和 AI8051U 收包执行链做增量实现。
