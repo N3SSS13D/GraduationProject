@@ -1,13 +1,5 @@
-#ifndef GP_LED_MATRIX_PROTOCOL_H_
-#define GP_LED_MATRIX_PROTOCOL_H_
-
-#ifdef __cplusplus
-#include <cstddef>
-#include <cstdint>
-#else
-#include <stddef.h>
-#include <stdint.h>
-#endif
+#ifndef __GP_LED_MATRIX_PROTOCOL_H__
+#define __GP_LED_MATRIX_PROTOCOL_H__
 
 #define GP_MATRIX_PROTOCOL_MAGIC0 0x47U
 #define GP_MATRIX_PROTOCOL_MAGIC1 0x50U
@@ -111,36 +103,7 @@ typedef enum GpMatrixStatusCode {
     kGpMatrixStatusInternalError = 0x7f,
 } GpMatrixStatusCode;
 
-typedef struct GpMatrixPacketHeader {
-    uint8_t magic0;
-    uint8_t magic1;
-    uint8_t version;
-    uint8_t command;
-    uint8_t sequence;
-    uint8_t flags;
-    uint16_t payload_length;
-} GpMatrixPacketHeader;
-
-typedef struct GpMatrixFrameStartPayload {
-    uint8_t format;
-    uint8_t width;
-    uint8_t height;
-    uint16_t total_bytes;
-} GpMatrixFrameStartPayload;
-
-typedef struct GpMatrixFrameChunkPrefix {
-    uint8_t offset;
-    uint8_t size;
-} GpMatrixFrameChunkPrefix;
-
-typedef struct GpMatrixScrollStartPayload {
-    uint8_t glyph_count;
-    uint8_t glyph_width;
-    uint8_t glyph_spacing;
-    uint16_t total_bytes;
-} GpMatrixScrollStartPayload;
-
-typedef struct GpMatrixActionPayload {
+typedef struct {
     uint8_t source;
     uint8_t content;
     uint8_t effect;
@@ -161,14 +124,6 @@ typedef struct GpMatrixActionPayload {
     uint8_t flags;
 } GpMatrixActionPayload;
 
-static inline uint8_t GpMatrixComputeChecksum(const uint8_t* data, size_t length) {
-    uint8_t checksum = 0;
-    size_t index;
-
-    for (index = 0; index < length; ++index) {
-        checksum ^= data[index];
-    }
-    return checksum;
-}
+uint8_t GpMatrixComputeChecksum(const uint8_t *packetBytes, uint16_t byteCount);
 
 #endif

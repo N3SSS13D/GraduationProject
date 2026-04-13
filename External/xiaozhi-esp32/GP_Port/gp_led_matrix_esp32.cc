@@ -1,10 +1,13 @@
 #include "gp_led_matrix_esp32.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 
 #include <esp_log.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 #include "application.h"
 
@@ -20,36 +23,146 @@ constexpr uint8_t kColorBlue = 0x03;
 constexpr uint8_t kColorCyan = 0x1F;
 constexpr uint8_t kColorPurple = 0xC3;
 constexpr uint8_t kColorWhite = 0xFF;
+constexpr uint32_t kGpMatrixI2cSpeedHz = 100000;
+constexpr uint32_t kStartupLinkTestIntervalMs = 1000;
+constexpr uint32_t kReplyPollIntervalMs = 8;
+constexpr uint32_t kReplyPollRetries = 4;
+constexpr size_t kStatusReplyPayloadBytes = 4;
+
+GpMatrixActionPayload BuildSolidAction(uint8_t brightness, uint8_t red, uint8_t green, uint8_t blue) {
+    GpMatrixActionPayload action = {};
+
+    action.source = kGpMatrixActionSourceLocal;
+    action.content = kGpMatrixActionContentSolid;
+    action.effect = kGpMatrixEffectStatic;
+    action.direction = kGpMatrixDirectionNormal;
+    action.color_mode = kGpMatrixColorModeSolid;
+    action.brightness = brightness;
+    action.primary_r = red;
+    action.primary_g = green;
+    action.primary_b = blue;
+    action.scroll_step = 1;
+    action.anim_step = 1;
+
+    return action;
+}
+
+GpMatrixActionPayload BuildReleaseAction() {
+    GpMatrixActionPayload action = {};
+
+    action.source = kGpMatrixActionSourceLocal;
+    action.flags = GP_MATRIX_ACTION_FLAG_REMOTE_RELEASE;
+
+    return action;
+}
 }
 
 GpLedMatrixEsp32::GpLedMatrixEsp32(i2c_master_bus_handle_t i2c_bus, uint8_t address, uint8_t brightness)
-    : I2cDevice(i2c_bus, address), brightness_(brightness), sequence_(0) {
-    SetBrightness(brightness_);
+    : I2cDevice(i2c_bus, address, kGpMatrixI2cSpeedHz),
+      brightness_(brightness),
+      sequence_(0),
+      success_count_(0),
+      failure_count_(0),
+      verified_count_(0),
+      no_reply_count_(0),
+      remote_override_active_(false),
+      has_last_action_(false),
+      has_last_state_(false),
+      last_state_(kDeviceStateUnknown) {
 }
 
 void GpLedMatrixEsp32::OnStateChanged() {
-    auto state = Application::GetInstance().GetDeviceState();
-    auto frame = BuildFrameForState(state);
-    SendState(state, frame);
+    /* Keep the last explicit matrix image until a new image update is requested. */
+}
+
+void GpLedMatrixEsp32::RunStartupLinkTest() {
+    const GpMatrixActionPayload actions[] = {
+        BuildSolidAction(brightness_, 0xFF, 0x00, 0x00),
+        BuildSolidAction(brightness_, 0x00, 0xFF, 0x00),
+        BuildSolidAction(brightness_, 0x00, 0x00, 0xFF),
+    };
+    const TickType_t delay_ticks = pdMS_TO_TICKS(kStartupLinkTestIntervalMs);
+
+    NotifyLinkStatus(false, "AI8051U TEST\nrgb self-check");
+    for (const auto& action : actions) {
+        if (!ShowAction(action)) {
+            ESP_LOGW(TAG, "Startup link test action failed");
+            NotifyLinkStatus(false, "AI8051U FAIL\nstartup self-check");
+            break;
+        }
+        vTaskDelay(delay_ticks);
+    }
+
+    if (!ShowAction(BuildReleaseAction())) {
+        ESP_LOGW(TAG, "Startup link test release failed");
+        NotifyLinkStatus(false, "AI8051U FAIL\nrelease self-check");
+        return;
+    }
+
+    NotifyLinkStatus(true, "AI8051U OK\nstartup self-check");
 }
 
 void GpLedMatrixEsp32::SetBrightness(uint8_t brightness) {
     std::lock_guard<std::mutex> lock(mutex_);
     brightness_ = brightness;
-    uint8_t payload[1] = {brightness_};
-    SendCommand(kGpMatrixCommandSetBrightness, payload, sizeof(payload));
+}
+
+void GpLedMatrixEsp32::SetLinkStatusCallback(LinkStatusCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    link_status_callback_ = std::move(callback);
+}
+
+bool GpLedMatrixEsp32::ShowAction(const GpMatrixActionPayload& action) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (has_last_action_ && ActionEquals(last_action_, action)) {
+        return true;
+    }
+
+    uint8_t payload[GP_MATRIX_ACTION_PAYLOAD_BYTES] = {
+        action.source,
+        action.content,
+        action.effect,
+        action.direction,
+        action.color_mode,
+        action.brightness,
+        action.primary_r,
+        action.primary_g,
+        action.primary_b,
+        action.secondary_r,
+        action.secondary_g,
+        action.secondary_b,
+        action.pattern_id,
+        action.glyph_id,
+        action.scroll_step,
+        action.anim_step,
+        action.gradient_span,
+        action.flags,
+    };
+    const bool sent = SendCommand(kGpMatrixCommandSetAction, payload, sizeof(payload), true);
+
+    if (sent) {
+        has_last_action_ = true;
+        last_action_ = action;
+        remote_override_active_ = ((action.flags & GP_MATRIX_ACTION_FLAG_REMOTE_RELEASE) == 0U);
+        if (!remote_override_active_) {
+            has_last_state_ = false;
+        }
+    }
+
+    return sent;
 }
 
 bool GpLedMatrixEsp32::ShowRgb332Frame(const uint8_t* frame, size_t length, GpMatrixMode mode) {
     std::lock_guard<std::mutex> lock(mutex_);
-    GpMatrixFrameStartPayload start_payload = {
+    uint8_t start_payload[GP_MATRIX_FRAME_START_PAYLOAD_BYTES] = {
         GP_MATRIX_PAYLOAD_FORMAT_RGB332,
         GP_MATRIX_WIDTH,
         GP_MATRIX_HEIGHT,
-        static_cast<uint16_t>(length)
+        static_cast<uint8_t>(length & 0xffU),
+        static_cast<uint8_t>((length >> 8) & 0xffU),
     };
-    if (!SendCommand(kGpMatrixCommandFrameStart,
-            reinterpret_cast<const uint8_t*>(&start_payload), sizeof(start_payload))) {
+    if (!SendCommand(kGpMatrixCommandFrameStart, start_payload, sizeof(start_payload))) {
         return false;
     }
 
@@ -71,14 +184,14 @@ bool GpLedMatrixEsp32::ShowRgb332Frame(const uint8_t* frame, size_t length, GpMa
 bool GpLedMatrixEsp32::ShowGlyphRows(const uint16_t* rows, size_t row_count, uint8_t glyph_count, uint8_t glyph_width, uint8_t glyph_spacing) {
     std::lock_guard<std::mutex> lock(mutex_);
     const auto total_bytes = static_cast<uint16_t>(row_count * sizeof(uint16_t));
-    GpMatrixScrollStartPayload start_payload = {
+    uint8_t start_payload[GP_MATRIX_SCROLL_START_PAYLOAD_BYTES] = {
         glyph_count,
         glyph_width,
         glyph_spacing,
-        total_bytes
+        static_cast<uint8_t>(total_bytes & 0xffU),
+        static_cast<uint8_t>((total_bytes >> 8) & 0xffU),
     };
-    if (!SendCommand(kGpMatrixCommandScrollGlyphStart,
-            reinterpret_cast<const uint8_t*>(&start_payload), sizeof(start_payload))) {
+    if (!SendCommand(kGpMatrixCommandScrollGlyphStart, start_payload, sizeof(start_payload))) {
         return false;
     }
 
@@ -98,29 +211,263 @@ bool GpLedMatrixEsp32::ShowGlyphRows(const uint16_t* rows, size_t row_count, uin
 }
 
 bool GpLedMatrixEsp32::SendCommand(uint8_t command, const uint8_t* payload, size_t payload_length, bool ack_required) {
-    GpMatrixPacketHeader header = {
-        GP_MATRIX_PROTOCOL_MAGIC0,
-        GP_MATRIX_PROTOCOL_MAGIC1,
-        GP_MATRIX_PROTOCOL_VERSION,
-        command,
-        sequence_++,
-        static_cast<uint8_t>(ack_required ? GP_MATRIX_PROTOCOL_FLAG_ACK_REQUIRED : 0),
-        static_cast<uint16_t>(payload_length)
-    };
+    std::vector<uint8_t> buffer(GP_MATRIX_PACKET_HEADER_SIZE + payload_length + 1);
+    GpMatrixStatusCode reply_status;
+    bool reply_valid;
+    uint8_t sequence;
 
-    std::vector<uint8_t> buffer(sizeof(header) + payload_length + 1);
-    std::memcpy(buffer.data(), &header, sizeof(header));
+    buffer[0] = GP_MATRIX_PROTOCOL_MAGIC0;
+    buffer[1] = GP_MATRIX_PROTOCOL_MAGIC1;
+    buffer[2] = GP_MATRIX_PROTOCOL_VERSION;
+    buffer[3] = command;
+    buffer[4] = sequence_++;
+    buffer[5] = static_cast<uint8_t>(ack_required ? GP_MATRIX_PROTOCOL_FLAG_ACK_REQUIRED : 0U);
+    buffer[6] = static_cast<uint8_t>(payload_length & 0xffU);
+    buffer[7] = static_cast<uint8_t>((payload_length >> 8) & 0xffU);
+    sequence = buffer[4];
+
     if (payload_length > 0 && payload != nullptr) {
-        std::memcpy(buffer.data() + sizeof(header), payload, payload_length);
+        std::memcpy(buffer.data() + GP_MATRIX_PACKET_HEADER_SIZE, payload, payload_length);
     }
     buffer.back() = GpMatrixComputeChecksum(buffer.data(), buffer.size() - 1);
+    last_payload_summary_ = BuildPayloadSummary(command, payload, payload_length);
 
     auto err = i2c_master_transmit(i2c_device_, buffer.data(), buffer.size(), 100);
     if (err != ESP_OK) {
+        failure_count_++;
         ESP_LOGW(TAG, "I2C command 0x%02x failed: %s", command, esp_err_to_name(err));
+        NotifyLinkStatus(false, BuildStatusText(false, command, sequence, payload_length, err, kGpMatrixStatusInternalError, false));
         return false;
     }
+
+    success_count_++;
+    if (!ack_required) {
+        return true;
+    }
+
+    reply_valid = ReadReply(sequence, command, reply_status);
+    if (!reply_valid) {
+        no_reply_count_++;
+        failure_count_++;
+        NotifyLinkStatus(false, BuildStatusText(false, command, sequence, payload_length, ESP_ERR_TIMEOUT, kGpMatrixStatusInternalError, false));
+        return false;
+    }
+
+    verified_count_++;
+    if (reply_status != kGpMatrixStatusOk) {
+        failure_count_++;
+        NotifyLinkStatus(false, BuildStatusText(false, command, sequence, payload_length, ESP_FAIL, reply_status, true));
+        return false;
+    }
+
+    NotifyLinkStatus(true, BuildStatusText(true, command, sequence, payload_length, ESP_OK, reply_status, true));
     return true;
+}
+
+bool GpLedMatrixEsp32::ReadReply(uint8_t expected_sequence, uint8_t expected_command, GpMatrixStatusCode& reply_status) {
+    std::array<uint8_t, GP_MATRIX_PACKET_HEADER_SIZE + kStatusReplyPayloadBytes + 1> reply = {};
+
+    reply_status = kGpMatrixStatusInternalError;
+    for (uint32_t attempt = 0; attempt < kReplyPollRetries; ++attempt) {
+        const esp_err_t err = i2c_master_receive(i2c_device_, reply.data(), reply.size(), 100);
+        if (err == ESP_OK) {
+            if ((reply[0] != GP_MATRIX_PROTOCOL_MAGIC0)
+                || (reply[1] != GP_MATRIX_PROTOCOL_MAGIC1)
+                || (reply[2] != GP_MATRIX_PROTOCOL_VERSION)) {
+                continue;
+            }
+            if ((reply[3] != kGpMatrixCommandStatus) && (reply[3] != kGpMatrixCommandError)) {
+                continue;
+            }
+            if (reply[4] != expected_sequence) {
+                continue;
+            }
+            if ((reply[6] != kStatusReplyPayloadBytes) || (reply[7] != 0U)) {
+                continue;
+            }
+            if (GpMatrixComputeChecksum(reply.data(), reply.size() - 1U) != reply.back()) {
+                continue;
+            }
+            if (reply[9] != expected_command) {
+                continue;
+            }
+
+            reply_status = static_cast<GpMatrixStatusCode>(reply[8]);
+            return true;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(kReplyPollIntervalMs));
+    }
+
+    return false;
+}
+
+bool GpLedMatrixEsp32::ActionEquals(const GpMatrixActionPayload& left, const GpMatrixActionPayload& right) {
+    return std::memcmp(&left, &right, sizeof(GpMatrixActionPayload)) == 0;
+}
+
+const char* GpLedMatrixEsp32::EffectShortName(uint8_t effect) {
+    switch (effect) {
+    case kGpMatrixEffectStatic:
+        return "static";
+    case kGpMatrixEffectBreath:
+        return "breath";
+    case kGpMatrixEffectGradient:
+        return "grad";
+    case kGpMatrixEffectScrollLeft:
+        return "left";
+    case kGpMatrixEffectScrollRight:
+        return "right";
+    case kGpMatrixEffectColorCycle:
+        return "cycle";
+    case kGpMatrixEffectTextScroll:
+        return "scroll";
+    default:
+        return "fx";
+    }
+}
+
+const char* GpLedMatrixEsp32::StateShortName(DeviceState state) {
+    switch (state) {
+    case kDeviceStateIdle:
+        return "idle";
+    case kDeviceStateConnecting:
+        return "conn";
+    case kDeviceStateListening:
+        return "listen";
+    case kDeviceStateSpeaking:
+        return "speak";
+    case kDeviceStateActivating:
+        return "activ";
+    case kDeviceStateStarting:
+        return "start";
+    default:
+        return "state";
+    }
+}
+
+std::string GpLedMatrixEsp32::BuildPayloadSummary(uint8_t command, const uint8_t* payload, size_t payload_length) const {
+    char buffer[96] = {0};
+
+    if ((command == kGpMatrixCommandSetAction) && (payload != nullptr) && (payload_length == GP_MATRIX_ACTION_PAYLOAD_BYTES)) {
+        const char* content_name = "pattern";
+        if (payload[1] == kGpMatrixActionContentSolid) {
+            content_name = "solid";
+        } else if (payload[1] == kGpMatrixActionContentGlyph) {
+            content_name = "glyph";
+        }
+
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "%s %s #%02X%02X%02X",
+                      content_name,
+                      EffectShortName(payload[2]),
+                      static_cast<unsigned int>(payload[6]),
+                      static_cast<unsigned int>(payload[7]),
+                      static_cast<unsigned int>(payload[8]));
+        return buffer;
+    }
+
+    if ((command == kGpMatrixCommandStateHint) && (payload != nullptr) && (payload_length >= 1U)) {
+        std::snprintf(buffer, sizeof(buffer), "state %s", StateShortName(static_cast<DeviceState>(payload[0])));
+        return buffer;
+    }
+
+    if ((command == kGpMatrixCommandSetBrightness) && (payload != nullptr) && (payload_length == 1U)) {
+        std::snprintf(buffer, sizeof(buffer), "brightness 0x%02X", static_cast<unsigned int>(payload[0]));
+        return buffer;
+    }
+
+    if ((command == kGpMatrixCommandFrameStart) && (payload != nullptr) && (payload_length == GP_MATRIX_FRAME_START_PAYLOAD_BYTES)) {
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "frame %ux%u %uB",
+                      static_cast<unsigned int>(payload[1]),
+                      static_cast<unsigned int>(payload[2]),
+                      static_cast<unsigned int>(payload[3] | (payload[4] << 8)));
+        return buffer;
+    }
+
+    std::snprintf(buffer, sizeof(buffer), "%s len=%u", CommandShortName(command), static_cast<unsigned int>(payload_length));
+    return buffer;
+}
+
+std::string GpLedMatrixEsp32::BuildStatusText(bool online,
+                                              uint8_t command,
+                                              uint8_t sequence,
+                                              size_t payload_length,
+                                              esp_err_t err,
+                                              GpMatrixStatusCode reply_status,
+                                              bool reply_valid) const {
+    char buffer[96] = {0};
+
+    if (online) {
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "AI8051U ONLINE\n%s s%02u l%02u rp%02u\n%s",
+                      CommandShortName(command),
+                      static_cast<unsigned int>(sequence),
+                      static_cast<unsigned int>(payload_length),
+                      static_cast<unsigned int>(reply_status),
+                      last_payload_summary_.c_str());
+    } else {
+        if (reply_valid) {
+            std::snprintf(buffer,
+                          sizeof(buffer),
+                          "AI8051U ERROR\n%s s%02u rp%02u\n%s",
+                          CommandShortName(command),
+                          static_cast<unsigned int>(sequence),
+                          static_cast<unsigned int>(reply_status),
+                          last_payload_summary_.c_str());
+        } else {
+            std::snprintf(buffer,
+                          sizeof(buffer),
+                          "AI8051U NO-REPLY\n%s s%02u %s\n%s",
+                          CommandShortName(command),
+                          static_cast<unsigned int>(sequence),
+                          esp_err_to_name(err),
+                          last_payload_summary_.c_str());
+        }
+    }
+
+    return buffer;
+}
+
+void GpLedMatrixEsp32::NotifyLinkStatus(bool online, const std::string& status_text) {
+    if (link_status_callback_) {
+        link_status_callback_(online, status_text);
+    }
+}
+
+const char* GpLedMatrixEsp32::CommandShortName(uint8_t command) {
+    switch (command) {
+    case kGpMatrixCommandPing:
+        return "ping";
+    case kGpMatrixCommandSetBrightness:
+        return "bri";
+    case kGpMatrixCommandSetMode:
+        return "mode";
+    case kGpMatrixCommandStateHint:
+        return "state";
+    case kGpMatrixCommandSetAction:
+        return "act";
+    case kGpMatrixCommandFrameStart:
+        return "fstr";
+    case kGpMatrixCommandFrameChunk:
+        return "fchk";
+    case kGpMatrixCommandFrameCommit:
+        return "fcom";
+    case kGpMatrixCommandScrollGlyphStart:
+        return "gstr";
+    case kGpMatrixCommandScrollGlyphChunk:
+        return "gchk";
+    case kGpMatrixCommandScrollGlyphCommit:
+        return "gcom";
+    case kGpMatrixCommandHeartbeat:
+        return "beat";
+    default:
+        return "cmd";
+    }
 }
 
 bool GpLedMatrixEsp32::SendState(DeviceState state, const Rgb332Frame& frame, GpMatrixMode mode) {
@@ -128,7 +475,13 @@ bool GpLedMatrixEsp32::SendState(DeviceState state, const Rgb332Frame& frame, Gp
     if (!SendCommand(kGpMatrixCommandStateHint, payload, sizeof(payload))) {
         return false;
     }
-    return ShowRgb332Frame(frame.data(), frame.size(), mode);
+    if (!ShowRgb332Frame(frame.data(), frame.size(), mode)) {
+        return false;
+    }
+
+    has_last_state_ = true;
+    last_state_ = state;
+    return true;
 }
 
 GpLedMatrixEsp32::Rgb332Frame GpLedMatrixEsp32::BuildFrameForState(DeviceState state) const {

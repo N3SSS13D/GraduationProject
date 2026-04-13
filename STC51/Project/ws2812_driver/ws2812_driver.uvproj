@@ -347,6 +347,11 @@
               <FileType>1</FileType>
               <FilePath>.\Sources\drv\hc595_drv.c</FilePath>
             </File>
+            <File>
+              <FileName>gp_led_matrix_ai8051u.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Sources\drv\gp_led_matrix_ai8051u.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
@@ -369,6 +374,11 @@
               <FileName>draw_drv.c</FileName>
               <FileType>1</FileType>
               <FilePath>.\Sources\mid\draw_drv.c</FilePath>
+            </File>
+            <File>
+              <FileName>gp_led_action.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Sources\mid\gp_led_action.c</FilePath>
             </File>
           </Files>
         </Group>

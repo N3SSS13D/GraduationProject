@@ -16,22 +16,29 @@
 
 ### 本次实现的落点
 
-- 目标板型固定为 `main/boards/lichuang-dev`。
-- 新增 `gp_led_matrix_protocol.h` 作为 ESP32 与 AI8051U 共享的协议头。
-- 新增 `gp_led_matrix_esp32.h/.cc` 作为 ESP32 侧矩阵驱动骨架，并在目标板上通过 `GetLed()` 接入。
-- 新增 `gp_led_matrix_ai8051u.h` 作为 AI8051U 侧接口层头文件骨架。
+- 当前活跃板型固定为 `main/boards/lichuang-dev`。
+- `lichuang-dev` 已使用 `GPIO1/GPIO2` 作为矩阵链路复用 I2C 总线。
+- 共享协议头统一使用地址 `0x31`。
+- 新增 `gp_led_matrix_esp32.h/.cc` 作为 ESP32 侧矩阵驱动，并在目标板上通过 `GetLed()` 接入。
+- AI8051U 侧已落地 `gp_led_matrix_ai8051u.c/.h`，负责从机接收、协议解析和 WS2812 动作分发。
 
 ### 已实现内容
 
-1. ESP32 侧状态驱动矩阵骨架已经接入构建系统。
-2. 目标板已经声明矩阵 I2C 地址和默认亮度。
-3. 设备状态会被映射成简单的 RGB332 帧图案并通过 I2C 协议分包发送。
+1. ESP32 侧状态驱动矩阵链路已经接入活跃板型构建系统。
+2. 目标板已经声明矩阵 I2C 地址、默认亮度和实际连线引脚。
+3. 设备侧可将语音结果与调试圆点状态映射为矩阵动作对象并通过 I2C 协议发送。
+4. 当前链路遵循“仅显式图像更新时通信”，不会因待机/聆听等状态自动覆盖上一幅图像。
+5. AI8051U 侧已显式切换 I2C 到 `P2.3/P2.4`，并在中断中收包、发包。
+6. AI8051U 在未被远程占用时，默认显示渐变流动图案。
+7. 小智语音侧已支持将颜色结果映射为纯色满屏或图案预设调用，预设包括 `diamond`、`cross`、`python_demo`、`scroll_subtitle`。
+8. ESP32 主机侧已实现 `ACK_REQUIRED` 命令的同步读回校验与链路状态摘要显示。
 
 ### 未完成内容
 
-1. AI8051U 侧 `.c` 实现尚未落地，目前提供的是接口边界和设计文档。
-2. 现阶段矩阵图案为代码生成图案，尚未直接复用 `test_image.h` 的静态资产。
-3. 协议未加入读回 ACK、错误恢复和心跳联调代码，仅完成帧结构与下行发送骨架。
+1. 尚未加入链路断开后的自动心跳超时恢复，当前回退依赖显式释放动作或重新切回本地图案路径。
+2. 现阶段矩阵图案仍以代码生成和现有 `test_image.h` 索引为主，未建立更高层素材管理。
+3. 当前滚动字幕仍依赖 AI8051U 侧内置字模序列，尚未支持自由文本下发。
+4. 仍需补充更完整的实机联调记录与异常场景验证。
 
 ### 关键约束
 
@@ -61,6 +68,6 @@ This directory holds the staged implementation assets for a 16x16 LED matrix lin
 
 ### Remaining work
 
-1. Add the AI8051U `.c` implementation.
+1. Add ESP32-side readback validation for `ACK_REQUIRED` commands.
 2. Replace generated demo patterns with asset-backed frames where needed.
-3. Add ACK handling, error recovery, and heartbeat validation.
+3. Add heartbeat timeout recovery and explicit reconnection policy.

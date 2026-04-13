@@ -4,6 +4,8 @@
 #include "test_image.h"
 #include "mid_task.h"
 #include "key_ctrl.h"
+#include "gp_led_action.h"
+#include "gp_led_matrix_ai8051u.h"
 #include "ws2812_drv.h"
 
 #define TEST_SCHED_TICK_US               1000UL
@@ -34,8 +36,8 @@ static uint32_t g_testRowIntervalUs = TEST_ROW_INTERVAL_US_DEFAULT_NORMAL;
 static uint32_t g_testRowIntervalUsNormal = TEST_ROW_INTERVAL_US_DEFAULT_NORMAL;
 static uint32_t g_testRowIntervalUsLegacy = TEST_ROW_INTERVAL_US_DEFAULT_LEGACY;
 static uint16_t g_testLastPwmUs = 0;
-static DrawDrv_RenderConfig_t g_testRenderCfg;
-static uint8_t g_testPresetMode = TEST_PRESET_JLU_SCROLL;
+static DrawDrv_RenderConfig_t xdata g_testRenderCfg;
+static uint8_t g_testPresetMode = TEST_PRESET_CROSS_GRADIENT;
 static volatile uint16_t g_testDbgStartUs = 0U;
 static volatile uint16_t g_testDbgLastUs = 0U;
 static volatile uint16_t g_testDbgMinUs = 0xFFFFU;
@@ -47,13 +49,16 @@ static volatile uint8_t g_testDebugMode = 0U;
 static volatile uint16_t g_testDbgRowSeq = 0U;
 static volatile uint16_t g_testTimer1CycleCount = 0U;
 static volatile uint16_t g_testTimer1CycleTarget = 1U;
-static DrawDrv_RenderConfig_t g_testDebugSavedCfg;
+static DrawDrv_RenderConfig_t xdata g_testDebugSavedCfg;
 static uint8_t g_testDebugSavedImage = 0U;
 static uint8_t g_testDebugVisualApplied = 0U;
+static GpLedMatrixAi8051uContext xdata g_testAiMatrixCtx;
 
 static uint32_t Test_GetIntervalByScanMode(void);
 static uint32_t Test_ClampLegacyRowIntervalUs(uint32_t intervalUs);
 static void Test_Timer1ApplyRefreshInterval(uint32_t intervalUs);
+static void Test_KeyTaskProxy(void);
+static void Test_DrawFrameTaskProxy(void);
 
 static uint32_t Test_ClampLegacyRowIntervalUs(uint32_t intervalUs)
 {
@@ -88,8 +93,32 @@ static void Test_DrawAnimTaskProxy(void)
     {
         return;
     }
+    if (GpLedAction_ShouldBypassDrawScheduler() != 0U)
+    {
+        return;
+    }
 
     DrawDrv_Task500ms();
+}
+
+static void Test_DrawFrameTaskProxy(void)
+{
+    if (GpLedAction_ShouldBypassDrawScheduler() != 0U)
+    {
+        return;
+    }
+
+    DrawDrv_Task32ms();
+}
+
+static void Test_KeyTaskProxy(void)
+{
+    if (GpLedAction_IsRemoteModeActive() != 0U)
+    {
+        return;
+    }
+
+    KeyCtrl_Task10ms();
 }
 
 static void Test_ApplyDebugStaticDisplay(void)
@@ -506,15 +535,16 @@ void Test_Init(void)
     WS2812DRV_Init();
     (void)WS2812DRV_SetDisplayMode(WS2812DRV_MODE_16X16);
     DrawDrv_Init();
+    GpLedMatrixAi8051u_Init(&g_testAiMatrixCtx, GP_MATRIX_DEFAULT_I2C_ADDRESS);
     Test_LoadDefaultRenderConfig();
 
     MidTask_Init();
     KeyCtrl_Init();
     Test_DebugTimer2Init();
     /* Register animation task first so state update runs before frame rebuild when coincident. */
-    (void)MidTask_RegisterWithId(TEST_KEY_TASK_PERIOD_MS, KeyCtrl_Task10ms);
+    (void)MidTask_RegisterWithId(TEST_KEY_TASK_PERIOD_MS, Test_KeyTaskProxy);
     (void)MidTask_RegisterWithId(TEST_DRAW_ANIM_TASK_PERIOD_MS, Test_DrawAnimTaskProxy);
-    (void)MidTask_RegisterWithId(TEST_DRAW_FRAME_TASK32MS_PERIOD_MS, DrawDrv_Task32ms);
+    (void)MidTask_RegisterWithId(TEST_DRAW_FRAME_TASK32MS_PERIOD_MS, Test_DrawFrameTaskProxy);
     (void)MidTask_RegisterWithId(TEST_DEBUG_TASK_PERIOD_MS, Test_DebugTask1s);
 
     Test_Timer1ApplyRefreshInterval(Test_GetIntervalByScanMode());
@@ -526,6 +556,7 @@ void Test_Init(void)
 
 void Test_TaskLoop(void)
 {
+    GpLedMatrixAi8051u_Poll(&g_testAiMatrixCtx);
     MidTask_Process();
 }
 

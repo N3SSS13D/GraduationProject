@@ -8,8 +8,9 @@
 - 语音控灯场景下的颜色、亮度、动画、文本或图案参数表达。
 - ACK、超时重试、状态回读、序号管理和心跳机制。
 - 与 AI8051U 显示动作接口的最小稳定边界。
+- 以本地动作对象为优先输入，暂不把外部 MCP 桥接作为协议设计前提。
 
 ## English
 Refine `GP_Port/gp_led_matrix_protocol.h` and the protocol spec so that command set, chunking strategy, checksum rules, error handling, and payload mapping stay aligned with `test_image.h`.
 
-Also cover the minimal stable action model for voice-controlled color, brightness, animation, text/pattern delivery, plus ACK, retry, status-readback, sequence, and heartbeat handling.
+Also cover the minimal stable action model for voice-controlled color, brightness, animation, text/pattern delivery, plus ACK, retry, status-readback, sequence, and heartbeat handling, with local action delivery as the primary integration target.

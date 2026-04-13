@@ -16,12 +16,22 @@ static uint8_t g_drawFrameIndex = 0;
 static uint8_t g_drawAnimPhase = 0;
 static uint16_t g_drawScrollOffset = 0;
 static uint8_t g_drawImageTick = 0;
-static uint8_t g_drawRgbLutR[256];
-static uint8_t g_drawRgbLutG[256];
-static uint8_t g_drawRgbLutB[256];
-static uint8_t g_drawTextSequence[DRAWDRV_TEXT_SEQUENCE_MAX];
+static uint8_t xdata g_drawRgbLutR[256];
+static uint8_t xdata g_drawRgbLutG[256];
+static uint8_t xdata g_drawRgbLutB[256];
+static uint8_t xdata g_drawTextSequence[DRAWDRV_TEXT_SEQUENCE_MAX];
 static uint8_t g_drawTextSequenceLen = 0U;
 static uint8_t g_drawTextDisplayGlyph = 0U;
+/* Reuse shared scratch storage to keep text-pixel lookup off the 8051 stack. */
+static uint8_t xdata g_drawTextPixelTextRow = 0U;
+static uint8_t xdata g_drawTextPixelGlyphIndex = 0U;
+static uint8_t xdata g_drawTextPixelGlyphCol = 0U;
+static uint8_t xdata g_drawTextPixelOffset = 0U;
+static uint8_t xdata g_drawTextPixelGlyphCount = 0U;
+static uint16_t xdata g_drawTextPixelTextWidth = 0U;
+static uint16_t xdata g_drawTextPixelVirtualCol = 0U;
+static uint16_t xdata g_drawTextPixelRowBits = 0U;
+static uint16_t xdata g_drawTextPixelBitMask = 0U;
 
 static uint8_t DrawDrv_GetTextSequenceGlyphCount(void)
 {
@@ -240,16 +250,6 @@ static void DrawDrv_MapByDirection(uint8_t row, uint8_t col, uint8_t *srcRow, ui
 
 static uint8_t DrawDrv_GetJluTextPixel(uint8_t row, uint8_t col)
 {
-    uint8_t textRow;
-    uint8_t glyphIndex;
-    uint8_t glyphCol;
-    uint8_t offset;
-    uint8_t glyphCount;
-    uint16_t textWidth;
-    uint16_t virtualCol;
-    uint16_t rowBits;
-    uint16_t bitMask;
-
     if ((row >= TEST_IMAGE_ROWS) || (col >= TEST_IMAGE_COLS))
     {
         return (uint8_t)TEST_IMAGE_BG_RGB332;
@@ -259,47 +259,47 @@ static uint8_t DrawDrv_GetJluTextPixel(uint8_t row, uint8_t col)
         || (g_drawCfg.effect == DRAWDRV_EFFECT_SCROLL_LEFT)
         || (g_drawCfg.effect == DRAWDRV_EFFECT_SCROLL_RIGHT))
     {
-        textWidth = DrawDrv_GetTextVirtualWidth();
-        if (textWidth == 0U)
+        g_drawTextPixelTextWidth = DrawDrv_GetTextVirtualWidth();
+        if (g_drawTextPixelTextWidth == 0U)
         {
             return (uint8_t)TEST_IMAGE_BG_RGB332;
         }
 
-        offset = (uint16_t)(g_drawScrollOffset % textWidth);
+        g_drawTextPixelOffset = (uint8_t)(g_drawScrollOffset % g_drawTextPixelTextWidth);
 
-        virtualCol = (uint16_t)col + (uint16_t)offset;
-        if (virtualCol >= textWidth)
+        g_drawTextPixelVirtualCol = (uint16_t)col + (uint16_t)g_drawTextPixelOffset;
+        if (g_drawTextPixelVirtualCol >= g_drawTextPixelTextWidth)
         {
-            virtualCol = (uint16_t)(virtualCol - textWidth);
+            g_drawTextPixelVirtualCol = (uint16_t)(g_drawTextPixelVirtualCol - g_drawTextPixelTextWidth);
         }
 
-        glyphCount = DrawDrv_GetTextSequenceGlyphCount();
-        if (glyphCount == 0U)
+        g_drawTextPixelGlyphCount = DrawDrv_GetTextSequenceGlyphCount();
+        if (g_drawTextPixelGlyphCount == 0U)
         {
             return (uint8_t)TEST_IMAGE_BG_RGB332;
         }
 
-        glyphIndex = DrawDrv_GetTextSequenceGlyph((uint8_t)(virtualCol / DRAWDRV_JLU_GLYPH_ADVANCE));
-        glyphCol = (uint8_t)(virtualCol % DRAWDRV_JLU_GLYPH_ADVANCE);
+        g_drawTextPixelGlyphIndex = DrawDrv_GetTextSequenceGlyph((uint8_t)(g_drawTextPixelVirtualCol / DRAWDRV_JLU_GLYPH_ADVANCE));
+        g_drawTextPixelGlyphCol = (uint8_t)(g_drawTextPixelVirtualCol % DRAWDRV_JLU_GLYPH_ADVANCE);
     }
     else
     {
-        offset = 0U;
-        glyphIndex = g_drawTextDisplayGlyph;
-        glyphCol = col;
+        g_drawTextPixelOffset = 0U;
+        g_drawTextPixelGlyphIndex = g_drawTextDisplayGlyph;
+        g_drawTextPixelGlyphCol = col;
     }
 
-    if ((glyphIndex >= DRAWDRV_JLU_GLYPH_COUNT) || (glyphCol >= DRAWDRV_JLU_GLYPH_WIDTH))
+    if ((g_drawTextPixelGlyphIndex >= DRAWDRV_JLU_GLYPH_COUNT) || (g_drawTextPixelGlyphCol >= DRAWDRV_JLU_GLYPH_WIDTH))
     {
         return (uint8_t)TEST_IMAGE_BG_RGB332;
     }
 
     /* Physical LED rows are indexed bottom-to-top (0..15). */
-    textRow = (uint8_t)((TEST_IMAGE_ROWS - 1U) - row);
-    rowBits = g_testScrollGlyphRows[glyphIndex][textRow];
-    bitMask = (uint16_t)(0x8000U >> glyphCol);
+    g_drawTextPixelTextRow = (uint8_t)((TEST_IMAGE_ROWS - 1U) - row);
+    g_drawTextPixelRowBits = g_testScrollGlyphRows[g_drawTextPixelGlyphIndex][g_drawTextPixelTextRow];
+    g_drawTextPixelBitMask = (uint16_t)(0x8000U >> g_drawTextPixelGlyphCol);
 
-    if ((rowBits & bitMask) != 0U)
+    if ((g_drawTextPixelRowBits & g_drawTextPixelBitMask) != 0U)
     {
         return 0xFFU;
     }
@@ -576,32 +576,8 @@ void DrawDrv_Task32ms(void)
 
 void DrawDrv_Task500ms(void)
 {
-    uint8_t patternCount;
-    uint8_t allowImageSwitch;
-
-    allowImageSwitch = (uint8_t)(g_drawCfg.effect != DRAWDRV_EFFECT_STATIC);
-    if (g_drawCfg.effect == DRAWDRV_EFFECT_TEXT_SCROLL_JLU)
-    {
-        allowImageSwitch = 0U;
-    }
-
-    if (allowImageSwitch != 0U)
-    {
-        g_drawImageTick++;
-        if (g_drawImageTick >= DRAWDRV_IMAGE_SWITCH_TICKS)
-        {
-            g_drawImageTick = 0;
-            patternCount = DrawDrv_GetPatternCount();
-            if (patternCount != 0U)
-            {
-                g_drawFrameIndex++;
-                if (g_drawFrameIndex >= patternCount)
-                {
-                    g_drawFrameIndex = 0;
-                }
-            }
-        }
-    }
+    /* Preset patterns are selected explicitly and should not rotate automatically. */
+    g_drawImageTick = 0U;
 }
 
 void DrawDrv_RequestRebuild(void)

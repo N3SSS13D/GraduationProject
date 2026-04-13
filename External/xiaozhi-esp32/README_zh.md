@@ -20,19 +20,6 @@
 
 v1 的稳定版本为 1.9.2，可以通过 `git checkout v1` 来切换到 v1 版本，该分支会持续维护到 2026 年 2 月。
 
-## GraduationProject 快照说明
-
-当前仓库中的 `External/xiaozhi-esp32/` 目录作为毕业设计参考快照使用，重点不是替换上游功能，而是为 `STC AI8051U + WS2812` 主线提供语音交互、MCP 与 I2C 外设扩展参考。
-
-当前已补充的项目内扩展资产位于 `GP_Port/`，主要包括：
-
-- `gp_led_matrix_protocol.h`：ESP32 与 AI8051U 的共享协议头。
-- `gp_led_matrix_esp32.h/.cc`：ESP32 侧 16x16 LED 矩阵驱动骨架。
-- `gp_led_matrix_ai8051u.h`：AI8051U 接口层设计边界。
-- 调试圆点、MCP 工具、桥接测试脚本与阶段 prompt。
-
-下一阶段目标是打通“小智 AI 语音结果 -> I2C 自定义协议 -> AI8051U -> WS2812 LED 显示”的闭环。
-
 ### 已实现功能
 
 - Wi-Fi / ML307 Cat.1 4G

@@ -19,6 +19,7 @@
 - Use PascalCase for functions, enum type names, struct type names, and union type names (e.g., `GetLevel`); module-exported interface functions may prepend an ALL_CAPS module abbreviation separated by an underscore (e.g., `GPIO_GetLevel`)
 - Use lowerCamelCase for global variables; optionally prefix with `g_` to improve searchability (e.g., `g_sensorValue`)
 - Use lowerCamelCase for local variables; keep names brief — context should reveal meaning; variables with wider scope deserve more descriptive names
+- Do not use `data` as a variable name, parameter name, or field name in 8051/STC-side C code; this toolchain may parse it as a storage-class keyword
 - Use lowerCamelCase for function parameters, macro parameters, struct members, and union members (e.g., `bufLen`)
 - Use all-lowercase with underscores for file and folder names; follow the pattern `module_feature` (e.g., `gpio_driver.c`)
 - Use anonymous types for typedef; self-referencing pointer types may add a `tag` prefix or a trailing underscore; never redefine basic numeric types via typedef
@@ -42,6 +43,7 @@
 - After each code change, add appropriate explanatory comments for structure and behavior in modified code (follow existing comment style, keep comments concise, and avoid redundant comments)
 - After each completed coding task, provide a Markdown-formatted summary report that includes: change overview, affected files, key logic updates, and verification status
 - When adding custom functions, only use existing/valid APIs and ensure each custom function is declared in the corresponding header file before use
+- After each optimization or behavior change, synchronously update the related prompt files under `.github/prompts/` and `External/xiaozhi-esp32/GP_Port/` when their assumptions, workflow, or task boundaries are affected
 
 ## WS2812 Driver Documentation Sync
 - When changing WS2812 scan/output timing behavior, update both docs in `Doc/项目文档/` and problem review docs in `STC51/Project/ws2812_driver/` in the same task.

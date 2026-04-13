@@ -199,7 +199,7 @@ private:
     Esp32Camera* camera_;
 
     void InitializeI2c() {
-        // Initialize I2C peripheral
+        // The matrix link uses external 3.3V pullups, so keep the ESP32-side bus pullup configuration explicit.
         i2c_master_bus_config_t i2c_bus_cfg = {
             .i2c_port = (i2c_port_t)1,
             .sda_io_num = AUDIO_CODEC_I2C_SDA_PIN,
@@ -209,7 +209,7 @@ private:
             .intr_priority = 0,
             .trans_queue_depth = 0,
             .flags = {
-                .enable_internal_pullup = 1,
+                .enable_internal_pullup = 0,
             },
         };
         ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_bus_cfg, &i2c_bus_));
@@ -470,6 +470,19 @@ public:
 
     virtual Led* GetLed() override {
         static GpLedMatrixEsp32 led_matrix(i2c_bus_, GP_MATRIX_I2C_ADDRESS, GP_MATRIX_DEFAULT_BRIGHTNESS);
+        static bool link_status_hook_done = false;
+
+        if (!link_status_hook_done) {
+            auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display_);
+            if (debug_display != nullptr) {
+                link_status_hook_done = true;
+                debug_display->ApplyAiLinkStatus(false, "AI8051U INIT\nwaiting image update");
+                led_matrix.SetLinkStatusCallback([debug_display](bool online, const std::string& status_text) {
+                    debug_display->ApplyAiLinkStatus(online, status_text);
+                });
+            }
+        }
+
         return &led_matrix;
     }
     

@@ -9,6 +9,7 @@
 #include "mcp_server.h"
 #include "assets.h"
 #include "gp_debug_display.h"
+#include "gp_led_matrix_esp32.h"
 #include "settings.h"
 
 #include <array>
@@ -36,11 +37,171 @@ struct DebugColorKeyword {
     std::array<const char*, 6> keywords;
 };
 
+struct DebugPresetKeyword {
+    const char* label;
+    GpColorDebugPreset preset;
+    std::array<const char*, 6> keywords;
+};
+
+const DebugColorKeyword* MatchDebugColorKeyword(const std::string& text);
+bool HasBackgroundColorKeyword(const std::string& text);
+
 constexpr std::string_view kVoiceColorAnalyzeAction = "voice_color_analyze";
 constexpr std::string_view kVoiceColorResultAction = "voice_color_result";
 constexpr uint16_t kDefaultDotSize = 28;
 constexpr uint16_t kLargeDotSize = 42;
 constexpr uint16_t kSmallDotSize = 18;
+constexpr uint8_t kMatrixDebugBrightness = 0x40;
+constexpr uint8_t kMatrixDebugPatternDiamond = 0;
+constexpr uint8_t kMatrixDebugPatternCross = 1;
+constexpr uint8_t kMatrixDebugPatternPythonDemo = 2;
+constexpr uint32_t kMatrixDefaultRgb888 = 0xF5F5F5;
+constexpr uint32_t kMatrixDefaultBackgroundRgb888 = 0x000000;
+
+uint32_t g_matrixBackgroundRgb888 = kMatrixDefaultBackgroundRgb888;
+std::optional<GpColorDebugState> g_lastAppliedColorState;
+
+uint8_t ExtractRgb888Channel(uint32_t rgb, uint8_t shift) {
+    return static_cast<uint8_t>((rgb >> shift) & 0xFFU);
+}
+
+uint8_t BuildMatrixAnimStep(const GpColorDebugState& state) {
+    if (state.animation_period_ms <= 900U) {
+        return 2U;
+    }
+    return 1U;
+}
+
+uint8_t BuildMatrixGradientSpan(const GpColorDebugState& state) {
+    const uint16_t scaled_span = static_cast<uint16_t>(state.dot_size_px) * 2U;
+    return static_cast<uint8_t>(std::clamp<uint16_t>(scaled_span, 32U, 120U));
+}
+
+std::string ToAsciiLower(const std::string& text) {
+    std::string lowered = text;
+
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+
+    return lowered;
+}
+
+uint32_t ResolveMatrixBackgroundRgb888(const GpColorDebugState& state) {
+    if (state.has_matrix_background_rgb888) {
+        return state.matrix_background_rgb888;
+    }
+
+    return g_matrixBackgroundRgb888;
+}
+
+const char* GetPresetLabel(GpColorDebugPreset preset) {
+    switch (preset) {
+    case GpColorDebugPreset::kDiamond:
+        return "diamond";
+    case GpColorDebugPreset::kCross:
+        return "cross";
+    case GpColorDebugPreset::kPythonDemo:
+        return "python_demo";
+    case GpColorDebugPreset::kScrollSubtitle:
+        return "scroll_subtitle";
+    case GpColorDebugPreset::kSolid:
+    default:
+        return "solid";
+    }
+}
+
+const DebugPresetKeyword* MatchDebugPresetKeyword(const std::string& text) {
+    static const std::array<DebugPresetKeyword, 4> kPresets{{
+        {"diamond", GpColorDebugPreset::kDiamond, {"菱形", "diamond", "rhombus", "钻石", "菱", ""}},
+        {"cross", GpColorDebugPreset::kCross, {"十字", "cross", "plus", "叉", "crosshair", ""}},
+        {"python_demo", GpColorDebugPreset::kPythonDemo, {"python", "logo", "蛇", "python demo", "python图案", ""}},
+        {"scroll_subtitle", GpColorDebugPreset::kScrollSubtitle, {"字幕", "滚动字幕", "scroll", "text", "marquee", "滚动"}},
+    }};
+
+    const std::string lowered = ToAsciiLower(text);
+    for (const auto& preset : kPresets) {
+        for (const char* keyword : preset.keywords) {
+            if (keyword == nullptr || keyword[0] == '\0') {
+                continue;
+            }
+            if (text.find(keyword) != std::string::npos || lowered.find(keyword) != std::string::npos) {
+                return &preset;
+            }
+        }
+    }
+    return nullptr;
+}
+
+GpMatrixActionPayload BuildMatrixActionFromDebugState(const GpColorDebugState& state) {
+    GpMatrixActionPayload action = {};
+    uint32_t background_rgb888;
+
+    action.source = kGpMatrixActionSourceLocal;
+    action.direction = kGpMatrixDirectionNormal;
+    action.brightness = kMatrixDebugBrightness;
+    action.primary_r = ExtractRgb888Channel(state.primary_rgb888, 16);
+    action.primary_g = ExtractRgb888Channel(state.primary_rgb888, 8);
+    action.primary_b = ExtractRgb888Channel(state.primary_rgb888, 0);
+    action.scroll_step = 1U;
+    action.anim_step = BuildMatrixAnimStep(state);
+    action.gradient_span = BuildMatrixGradientSpan(state);
+
+    background_rgb888 = ResolveMatrixBackgroundRgb888(state);
+    action.secondary_r = ExtractRgb888Channel(background_rgb888, 16);
+    action.secondary_g = ExtractRgb888Channel(background_rgb888, 8);
+    action.secondary_b = ExtractRgb888Channel(background_rgb888, 0);
+
+    if (state.preset == GpColorDebugPreset::kSolid) {
+        action.content = kGpMatrixActionContentSolid;
+        action.effect = kGpMatrixEffectStatic;
+        action.color_mode = kGpMatrixColorModeSolid;
+        return action;
+    }
+
+    if (state.preset == GpColorDebugPreset::kScrollSubtitle) {
+        action.content = kGpMatrixActionContentGlyph;
+        action.glyph_id = 0U;
+        action.effect = kGpMatrixEffectTextScroll;
+        action.color_mode = kGpMatrixColorModeSolid;
+        action.flags = GP_MATRIX_ACTION_FLAG_USE_SECONDARY;
+        return action;
+    }
+
+    action.content = kGpMatrixActionContentPattern;
+    if (state.preset == GpColorDebugPreset::kCross) {
+        action.pattern_id = kMatrixDebugPatternCross;
+    } else if (state.preset == GpColorDebugPreset::kPythonDemo) {
+        action.pattern_id = kMatrixDebugPatternPythonDemo;
+    } else {
+        action.pattern_id = kMatrixDebugPatternDiamond;
+    }
+
+    if (state.animation == GpColorDebugAnimation::kPulse) {
+        action.effect = kGpMatrixEffectBreath;
+        action.color_mode = kGpMatrixColorModeSolid;
+        action.flags = GP_MATRIX_ACTION_FLAG_USE_SECONDARY;
+    } else if (state.animation == GpColorDebugAnimation::kGradient) {
+        action.effect = kGpMatrixEffectGradient;
+        action.color_mode = kGpMatrixColorModeGradient;
+        action.flags = GP_MATRIX_ACTION_FLAG_USE_SECONDARY;
+    } else {
+        action.effect = kGpMatrixEffectStatic;
+        action.color_mode = kGpMatrixColorModeSolid;
+        action.flags = GP_MATRIX_ACTION_FLAG_USE_SECONDARY;
+    }
+
+    return action;
+}
+
+void ApplyColorDebugToMatrix(const GpColorDebugState& state) {
+    auto* matrix_led = dynamic_cast<GpLedMatrixEsp32*>(Board::GetInstance().GetLed());
+    if (matrix_led == nullptr) {
+        return;
+    }
+
+    (void)matrix_led->ShowAction(BuildMatrixActionFromDebugState(state));
+}
 
 std::string FormatRgb888(uint32_t rgb) {
     char buffer[16] = {0};
@@ -48,11 +209,32 @@ std::string FormatRgb888(uint32_t rgb) {
     return buffer;
 }
 
-std::string ToAsciiLower(std::string text) {
-    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
-    return text;
+bool TryApplyBackgroundColorCommand(Display* display, const std::string& transcript) {
+    const auto* keyword = MatchDebugColorKeyword(transcript);
+    GpColorDebugState refreshed_state;
+
+    if ((keyword == nullptr) || !HasBackgroundColorKeyword(transcript) || (MatchDebugPresetKeyword(transcript) != nullptr)) {
+        return false;
+    }
+
+    g_matrixBackgroundRgb888 = keyword->primary_rgb888;
+    if (g_lastAppliedColorState.has_value()) {
+        refreshed_state = *g_lastAppliedColorState;
+        refreshed_state.matrix_background_rgb888 = g_matrixBackgroundRgb888;
+        refreshed_state.has_matrix_background_rgb888 = true;
+        g_lastAppliedColorState = refreshed_state;
+
+        if (refreshed_state.preset != GpColorDebugPreset::kSolid) {
+            ApplyColorDebugToMatrix(refreshed_state);
+        }
+    }
+
+    if (display != nullptr) {
+        const std::string notification = std::string("Matrix background: ") + FormatRgb888(g_matrixBackgroundRgb888);
+        display->ShowNotification(notification.c_str(), 1800);
+    }
+
+    return true;
 }
 
 const DebugColorKeyword* MatchDebugColorKeyword(const std::string& text) {
@@ -96,11 +278,18 @@ bool ContainsAnyKeyword(const std::string& text, std::initializer_list<const cha
     return false;
 }
 
+bool HasBackgroundColorKeyword(const std::string& text) {
+    return ContainsAnyKeyword(text, {"背景", "底色", "背景色", "background", "backdrop", "bg"});
+}
+
 bool IsVoiceColorIntent(const std::string& transcript) {
     if (MatchDebugColorKeyword(transcript) != nullptr) {
         return true;
     }
-    return ContainsAnyKeyword(transcript, {"圆点", "颜色", "渐变", "动画", "rgb", "dot", "color", "gradient", "pulse", "breath"});
+    if (MatchDebugPresetKeyword(transcript) != nullptr) {
+        return true;
+    }
+    return ContainsAnyKeyword(transcript, {"圆点", "颜色", "渐变", "动画", "背景", "底色", "rgb", "dot", "color", "gradient", "pulse", "breath", "background", "菱形", "十字", "字幕", "图案", "scroll", "pattern"});
 }
 
 uint16_t MatchDotSize(const std::string& transcript) {
@@ -140,21 +329,42 @@ std::optional<uint32_t> ParseRgb888String(const char* text) {
 
 std::optional<GpColorDebugState> BuildLocalColorState(const std::string& transcript, std::string source) {
     const auto* keyword = MatchDebugColorKeyword(transcript);
-    if (keyword == nullptr) {
+    const auto* preset_keyword = MatchDebugPresetKeyword(transcript);
+
+    if ((keyword == nullptr) && (preset_keyword == nullptr)) {
         return std::nullopt;
     }
 
     GpColorDebugState state;
-    state.primary_rgb888 = keyword->primary_rgb888;
-    state.secondary_rgb888 = keyword->secondary_rgb888;
-    state.has_secondary = keyword->has_secondary;
+    if (keyword != nullptr) {
+        state.primary_rgb888 = keyword->primary_rgb888;
+        state.secondary_rgb888 = keyword->secondary_rgb888;
+        state.has_secondary = keyword->has_secondary;
+        state.label = keyword->label;
+    } else {
+        state.primary_rgb888 = kMatrixDefaultRgb888;
+        state.secondary_rgb888 = 0x202020;
+        state.has_secondary = false;
+        state.label = "white";
+    }
+
+    if (preset_keyword != nullptr) {
+        state.preset = preset_keyword->preset;
+    }
     state.dot_size_px = MatchDotSize(transcript);
     state.animation = MatchAnimation(transcript, state.has_secondary);
     state.animation_period_ms = state.animation == GpColorDebugAnimation::kPulse ? 1100 : 1600;
-    state.label = keyword->label;
     state.rgb888_text = FormatRgb888(state.primary_rgb888);
     state.source = std::move(source);
     state.transcript = transcript;
+    if (preset_keyword != nullptr) {
+        state.label += std::string(" ") + GetPresetLabel(state.preset);
+    }
+
+    if (state.preset == GpColorDebugPreset::kSolid) {
+        state.animation = GpColorDebugAnimation::kSolid;
+    }
+
     return state;
 }
 
@@ -216,16 +426,54 @@ std::optional<GpColorDebugState> ParseRemoteColorState(const cJSON* payload) {
 
     const auto* duration = cJSON_GetObjectItem(payload, "duration_ms");
     state.animation_period_ms = cJSON_IsNumber(duration) ? static_cast<uint16_t>(duration->valueint) : 1400;
+
+    const auto* background = cJSON_GetObjectItem(payload, "background_rgb888");
+    if (cJSON_IsString(background)) {
+        const auto background_rgb = ParseRgb888String(background->valuestring);
+        if (background_rgb.has_value()) {
+            state.matrix_background_rgb888 = *background_rgb;
+            state.has_matrix_background_rgb888 = true;
+        }
+    }
+
+    const auto* preset = cJSON_GetObjectItem(payload, "preset");
+    if (cJSON_IsString(preset)) {
+        const std::string preset_name = ToAsciiLower(preset->valuestring);
+        if (preset_name == "diamond") {
+            state.preset = GpColorDebugPreset::kDiamond;
+        } else if (preset_name == "cross") {
+            state.preset = GpColorDebugPreset::kCross;
+        } else if (preset_name == "python_demo" || preset_name == "python") {
+            state.preset = GpColorDebugPreset::kPythonDemo;
+        } else if (preset_name == "scroll_subtitle" || preset_name == "scroll") {
+            state.preset = GpColorDebugPreset::kScrollSubtitle;
+        }
+    }
+
+    if (state.preset == GpColorDebugPreset::kSolid) {
+        state.animation = GpColorDebugAnimation::kSolid;
+    }
     return state;
 }
 
 bool ApplyColorDebugState(Display* display, const GpColorDebugState& state, bool notify) {
     auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display);
+    GpColorDebugState matrix_state = state;
+
     if (debug_display == nullptr) {
         return false;
     }
 
+    if (matrix_state.has_matrix_background_rgb888) {
+        g_matrixBackgroundRgb888 = matrix_state.matrix_background_rgb888;
+    } else {
+        matrix_state.matrix_background_rgb888 = g_matrixBackgroundRgb888;
+    }
+    matrix_state.has_matrix_background_rgb888 = true;
+    g_lastAppliedColorState = matrix_state;
+
     debug_display->ApplyColorDebugState(state);
+    ApplyColorDebugToMatrix(matrix_state);
     if (notify) {
         const std::string notification = std::string("Color debug: ") + state.label + " " + state.rgb888_text;
         display->ShowNotification(notification.c_str(), 1800);
@@ -243,7 +491,9 @@ std::string BuildVoiceColorAnalyzePayload(const std::string& transcript) {
     cJSON_AddStringToObject(format, "action", std::string(kVoiceColorResultAction).c_str());
     cJSON_AddStringToObject(format, "primary_rgb888", "#RRGGBB");
     cJSON_AddStringToObject(format, "secondary_rgb888", "#RRGGBB or empty");
+    cJSON_AddStringToObject(format, "background_rgb888", "#RRGGBB or empty");
     cJSON_AddStringToObject(format, "animation", "solid|gradient|pulse");
+    cJSON_AddStringToObject(format, "preset", "solid|diamond|cross|python_demo|scroll_subtitle");
     cJSON_AddNumberToObject(format, "size", 36);
     cJSON_AddNumberToObject(format, "duration_ms", 1400);
     cJSON_AddStringToObject(format, "label", "teal");
@@ -262,6 +512,10 @@ std::string BuildVoiceColorAnalyzePayload(const std::string& transcript) {
 
 void HandleVoiceColorDebugFromStt(Application* app, Display* display, const std::string& transcript) {
     if (!IsVoiceColorIntent(transcript)) {
+        return;
+    }
+
+    if (TryApplyBackgroundColorCommand(display, transcript)) {
         return;
     }
 
