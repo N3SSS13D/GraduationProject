@@ -9,6 +9,8 @@
 - I2C 协议包的编码、分包、ACK 与错误路径。
 - 活跃板型 `lichuang-dev` 的矩阵链路引脚与地址一致性：`GPIO1/GPIO2` 对 `P2.4/P2.3`，地址 `0x31`。
 - AI8051U `P2.4/P2.3` 是否已配置为开漏且未启用内部上拉，是否与外接 `3.3V` 上拉约束一致。
+- AI8051U 在线/离线模式仲裁是否符合预期：有效协议通信进入在线，通信超时回到离线，且长按 `P33` 可人工反转当前模式。
+- AI8051U I2C DMA 路径是否符合当前策略：默认 TX DMA 应答正常，RX DMA 默认关闭且可单独开启验证，不应引入亮度下降、`RXLOSS`、`TXOVW` 或回复长度异常。
 - 是否符合“仅显式图像更新时通信”的当前行为边界，以及 AI8051U 未被远程占用时渐变流动默认图案是否按预期回退。
 - 语音测试圆点与 LED 矩阵的颜色、动画是否同步，且 `solid/pulse/gradient` 能映射到矩阵动作。
 - AI8051U 调试日志是否区分 `payload_stop`、`restart_flush`、`empty_stop` 与 `[I2C_PKT]`，并能据此判断“总线有活动”与“协议已成功执行”的差异。
@@ -19,4 +21,4 @@
 ## English
 Validate ESP32 build health, board integration, protocol consistency, and AI8051U interface completeness. If hardware is not available, finish static verification, build validation, and an explicit integration test plan instead.
 
-By default, include voice-result field consistency, active-board pin/address checks for the `lichuang-dev` matrix path, explicit open-drain validation for AI8051U P2.4/P2.3, the current explicit-image-update-only behavior boundary and gradient fallback behavior, synchronized voice-debug-dot to matrix action checks, I2C packet encode/decode paths, ACK/error handling, link-status panel validation, and an end-to-end validation plan for AI8051U-executed WS2812 actions.
+By default, include voice-result field consistency, active-board pin/address checks for the `lichuang-dev` matrix path, explicit open-drain validation for AI8051U P2.4/P2.3, online/offline mode arbitration checks, the current explicit-image-update-only behavior boundary and gradient fallback behavior, synchronized voice-debug-dot to matrix action checks, I2C packet encode/decode paths, ACK/error handling, link-status panel validation, and an end-to-end validation plan for AI8051U-executed WS2812 actions.

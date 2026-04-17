@@ -9,7 +9,7 @@
 #include "ws2812_drv.h"
 
 #define TEST_SCHED_TICK_US               1000UL
-#define TEST_ROW_INTERVAL_US_DEFAULT_NORMAL  2000UL
+#define TEST_ROW_INTERVAL_US_DEFAULT_NORMAL  1000UL
 #define TEST_ROW_INTERVAL_US_DEFAULT_LEGACY  1000UL
 #define TEST_ROW_INTERVAL_US_MIN         300UL
 #define TEST_ROW_INTERVAL_US_SAFETY_MARGIN_LEGACY  120UL
@@ -59,6 +59,7 @@ static uint32_t Test_ClampLegacyRowIntervalUs(uint32_t intervalUs);
 static void Test_Timer1ApplyRefreshInterval(uint32_t intervalUs);
 static void Test_KeyTaskProxy(void);
 static void Test_DrawFrameTaskProxy(void);
+static DrawDrv_Effect_t Test_GetNextOfflineEffect(DrawDrv_ContentType_t contentType, DrawDrv_Effect_t currentEffect);
 
 static uint32_t Test_ClampLegacyRowIntervalUs(uint32_t intervalUs)
 {
@@ -113,12 +114,46 @@ static void Test_DrawFrameTaskProxy(void)
 
 static void Test_KeyTaskProxy(void)
 {
-    if (GpLedAction_IsRemoteModeActive() != 0U)
+    GpLedAction_Task10ms();
+    KeyCtrl_Task10ms();
+}
+
+static DrawDrv_Effect_t Test_GetNextOfflineEffect(DrawDrv_ContentType_t contentType, DrawDrv_Effect_t currentEffect)
+{
+    if (contentType == DRAWDRV_CONTENT_GLYPH)
     {
-        return;
+        switch (currentEffect)
+        {
+            case DRAWDRV_EFFECT_TEXT_SCROLL_JLU:
+                return DRAWDRV_EFFECT_STATIC;
+
+            case DRAWDRV_EFFECT_STATIC:
+                return DRAWDRV_EFFECT_BREATH;
+
+            case DRAWDRV_EFFECT_BREATH:
+                return DRAWDRV_EFFECT_COLOR_CYCLE;
+
+            case DRAWDRV_EFFECT_COLOR_CYCLE:
+            default:
+                return DRAWDRV_EFFECT_TEXT_SCROLL_JLU;
+        }
     }
 
-    KeyCtrl_Task10ms();
+    switch (currentEffect)
+    {
+        case DRAWDRV_EFFECT_STATIC:
+            return DRAWDRV_EFFECT_BREATH;
+
+        case DRAWDRV_EFFECT_BREATH:
+            return DRAWDRV_EFFECT_GRADIENT;
+
+        case DRAWDRV_EFFECT_GRADIENT:
+            return DRAWDRV_EFFECT_COLOR_CYCLE;
+
+        case DRAWDRV_EFFECT_COLOR_CYCLE:
+        default:
+            return DRAWDRV_EFFECT_STATIC;
+    }
 }
 
 static void Test_ApplyDebugStaticDisplay(void)
@@ -536,6 +571,8 @@ void Test_Init(void)
     (void)WS2812DRV_SetDisplayMode(WS2812DRV_MODE_16X16);
     DrawDrv_Init();
     GpLedMatrixAi8051u_Init(&g_testAiMatrixCtx, GP_MATRIX_DEFAULT_I2C_ADDRESS);
+    /* Default to TX DMA only; RX DMA stays opt-in until hardware validation confirms it does not perturb refresh timing. */
+    GpLedMatrixAi8051u_SetDmaMode(&g_testAiMatrixCtx, 0U, 1U);
     Test_LoadDefaultRenderConfig();
 
     MidTask_Init();
@@ -824,6 +861,39 @@ void Test_NextPresetMode(void)
     }
 
     Test_ApplyPresetMode(nextMode);
+}
+
+void Test_NextOfflinePattern(void)
+{
+    if (GpLedAction_IsOnlineModeActive() != 0U)
+    {
+        return;
+    }
+
+    Test_NextPresetMode();
+}
+
+void Test_NextOfflineEffect(void)
+{
+    if (GpLedAction_IsOnlineModeActive() != 0U)
+    {
+        return;
+    }
+
+    DrawDrv_GetRenderConfig(&g_testRenderCfg);
+    g_testRenderCfg.effect = Test_GetNextOfflineEffect(g_testRenderCfg.contentType, g_testRenderCfg.effect);
+    DrawDrv_SetRenderConfig(&g_testRenderCfg);
+    DrawDrv_RequestRebuild();
+}
+
+void Test_ToggleControlMode(void)
+{
+    GpLedAction_ToggleModeOverride();
+}
+
+uint8_t Test_GetControlMode(void)
+{
+    return (uint8_t)GpLedAction_GetControlMode();
 }
 
 uint8_t Test_GetPresetMode(void)

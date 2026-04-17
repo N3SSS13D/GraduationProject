@@ -84,3 +84,11 @@ If the request is ambiguous, ask only the minimum clarifying questions needed to
 	- `External/xiaozhi-esp32/GP_Port/` now contains protocol notes, an ESP32 driver skeleton, an AI8051U interface header, debug-dot tooling, and endpoint validation scripts.
 	- The official MCP bridge actively sends `initialize`, so test tools must behave as an MCP server.
 	- The next practical target is to map XiaoZhi voice output into AI8051U-executable WS2812 actions over I2C.
+
+### 2026-04-17
+
+- Issue: the AI8051U matrix slave needed an I2C DMA backend without regressing the stable refresh path.
+- Current conclusion:
+	- The active implementation is a hybrid backend: interrupt-driven slave RX remains the stable default, while reply TX can use I2C TX DMA.
+	- RX DMA is available behind `GpLedMatrixAi8051u_SetDmaMode()` but is not the default path until hardware validation confirms it does not perturb LED brightness or scan timing.
+	- Validation now needs to cover both protocol correctness and DMA-side fault signals such as `RXLOSS`, `TXOVW`, and reply-length mismatches.

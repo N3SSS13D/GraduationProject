@@ -24,6 +24,10 @@ typedef struct
     uint8_t packetPending;
     uint8_t txLength;
     uint8_t txPending;
+    uint8_t dmaRxEnabled;
+    uint8_t dmaTxEnabled;
+    uint8_t dmaRxActive;
+    uint8_t dmaTxActive;
     uint8_t glyphCount;
     uint8_t glyphWidth;
     uint8_t glyphSpacing;
@@ -31,9 +35,12 @@ typedef struct
     uint16_t receivedBytes;
     uint16_t glyphExpectedBytes;
     uint16_t glyphReceivedBytes;
+    uint16_t dmaLastRxDone;
+    uint16_t dmaLastTxDone;
 } GpLedMatrixAi8051uContext;
 
 void GpLedMatrixAi8051u_Init(GpLedMatrixAi8051uContext xdata *context, uint8_t i2cAddress);
+void GpLedMatrixAi8051u_SetDmaMode(GpLedMatrixAi8051uContext xdata *context, uint8_t enableRx, uint8_t enableTx);
 void GpLedMatrixAi8051u_OnI2cReceive(GpLedMatrixAi8051uContext xdata *context, const uint8_t *rxBytes, uint8_t length);
 uint8_t GpLedMatrixAi8051u_PrepareTx(GpLedMatrixAi8051uContext xdata *context, uint8_t *outData, uint8_t maxLength);
 void GpLedMatrixAi8051u_Poll(GpLedMatrixAi8051uContext xdata *context);

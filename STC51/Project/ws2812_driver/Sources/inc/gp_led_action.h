@@ -3,10 +3,21 @@
 
 #include "gp_led_matrix_protocol.h"
 
+typedef enum GpLedControlMode {
+    kGpLedControlModeOffline = 0,
+    kGpLedControlModeOnline = 1,
+} GpLedControlMode;
+
 void GpLedAction_Init(void);
 void GpLedAction_SetBrightness(uint8_t brightness);
 void GpLedAction_ReleaseRemoteMode(void);
+void GpLedAction_NotifyCommunicationActive(void);
+void GpLedAction_Task10ms(void);
+void GpLedAction_ToggleModeOverride(void);
 uint8_t GpLedAction_IsRemoteModeActive(void);
+uint8_t GpLedAction_IsOnlineModeActive(void);
+uint8_t GpLedAction_IsHostControlEnabled(void);
+GpLedControlMode GpLedAction_GetControlMode(void);
 uint8_t GpLedAction_ShouldBypassDrawScheduler(void);
 GpMatrixStatusCode GpLedAction_ApplyAction(const GpMatrixActionPayload xdata *payload);
 GpMatrixStatusCode GpLedAction_ApplyFrameRgb332(const uint8_t xdata *frameData, uint16_t length, GpMatrixMode mode);

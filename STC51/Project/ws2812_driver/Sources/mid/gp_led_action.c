@@ -4,9 +4,16 @@
 #include "test_image.h"
 #include "ws2812_drv.h"
 
+#define GP_LED_COMM_ACTIVE_TIMEOUT_TICKS 300U
+
 static uint8_t g_gpLedRemoteActive = 0U;
 static uint8_t g_gpLedDirectFrameActive = 0U;
 static uint8_t g_gpLedDefaultBrightness = 200U;
+static uint8_t g_gpLedCommOnline = 0U;
+static uint8_t g_gpLedManualOverrideEnabled = 0U;
+static uint8_t g_gpLedManualOverrideOnline = 0U;
+static uint8_t g_gpLedEffectiveOnline = 0U;
+static uint16_t g_gpLedCommActiveTicks = 0U;
 /* Direct-frame rendering shares a single scratch area to reduce EDATA usage. */
 static DrawDrv_RenderConfig_t xdata g_gpLedRenderCfg;
 static uint8_t xdata g_gpLedTempRow = 0U;
@@ -17,6 +24,33 @@ static uint8_t xdata g_gpLedTempG = 0U;
 static uint8_t xdata g_gpLedTempB = 0U;
 static uint16_t xdata g_gpLedTempPixelIndex = 0U;
 static uint16_t xdata g_gpLedTempRowBits = 0U;
+
+static uint8_t GpLedAction_GetRequestedOnline(void)
+{
+    if (g_gpLedManualOverrideEnabled != 0U)
+    {
+        return g_gpLedManualOverrideOnline;
+    }
+
+    return g_gpLedCommOnline;
+}
+
+static void GpLedAction_UpdateControlMode(void)
+{
+    uint8_t nextOnline;
+
+    nextOnline = GpLedAction_GetRequestedOnline();
+    if (nextOnline == g_gpLedEffectiveOnline)
+    {
+        return;
+    }
+
+    g_gpLedEffectiveOnline = nextOnline;
+    if (g_gpLedEffectiveOnline == 0U)
+    {
+        GpLedAction_ReleaseRemoteMode();
+    }
+}
 
 static uint8_t GpLedAction_ScaleColor(uint8_t value, uint8_t brightness)
 {
@@ -132,6 +166,11 @@ void GpLedAction_Init(void)
 {
     g_gpLedRemoteActive = 0U;
     g_gpLedDirectFrameActive = 0U;
+    g_gpLedCommOnline = 0U;
+    g_gpLedManualOverrideEnabled = 0U;
+    g_gpLedManualOverrideOnline = 0U;
+    g_gpLedEffectiveOnline = 0U;
+    g_gpLedCommActiveTicks = 0U;
 }
 
 void GpLedAction_SetBrightness(uint8_t brightness)
@@ -153,9 +192,56 @@ void GpLedAction_ReleaseRemoteMode(void)
     DrawDrv_RequestRebuild();
 }
 
+void GpLedAction_NotifyCommunicationActive(void)
+{
+    g_gpLedCommOnline = 1U;
+    g_gpLedCommActiveTicks = GP_LED_COMM_ACTIVE_TIMEOUT_TICKS;
+    GpLedAction_UpdateControlMode();
+}
+
+void GpLedAction_Task10ms(void)
+{
+    if (g_gpLedCommActiveTicks != 0U)
+    {
+        g_gpLedCommActiveTicks--;
+        if (g_gpLedCommActiveTicks == 0U)
+        {
+            g_gpLedCommOnline = 0U;
+            GpLedAction_UpdateControlMode();
+        }
+    }
+}
+
+void GpLedAction_ToggleModeOverride(void)
+{
+    g_gpLedManualOverrideEnabled = 1U;
+    g_gpLedManualOverrideOnline = (uint8_t)(g_gpLedEffectiveOnline == 0U);
+    GpLedAction_UpdateControlMode();
+}
+
 uint8_t GpLedAction_IsRemoteModeActive(void)
 {
     return g_gpLedRemoteActive;
+}
+
+uint8_t GpLedAction_IsOnlineModeActive(void)
+{
+    return g_gpLedEffectiveOnline;
+}
+
+uint8_t GpLedAction_IsHostControlEnabled(void)
+{
+    return g_gpLedEffectiveOnline;
+}
+
+GpLedControlMode GpLedAction_GetControlMode(void)
+{
+    if (g_gpLedEffectiveOnline != 0U)
+    {
+        return kGpLedControlModeOnline;
+    }
+
+    return kGpLedControlModeOffline;
 }
 
 uint8_t GpLedAction_ShouldBypassDrawScheduler(void)
@@ -168,6 +254,11 @@ GpMatrixStatusCode GpLedAction_ApplyAction(const GpMatrixActionPayload xdata *pa
     if (payload == 0)
     {
         return kGpMatrixStatusInternalError;
+    }
+
+    if (GpLedAction_IsHostControlEnabled() == 0U)
+    {
+        return kGpMatrixStatusBusy;
     }
 
     if ((payload->flags & GP_MATRIX_ACTION_FLAG_REMOTE_RELEASE) != 0U)
@@ -247,6 +338,11 @@ GpMatrixStatusCode GpLedAction_ApplyAction(const GpMatrixActionPayload xdata *pa
 
 GpMatrixStatusCode GpLedAction_ApplyFrameRgb332(const uint8_t xdata *frameData, uint16_t length, GpMatrixMode mode)
 {
+    if (GpLedAction_IsHostControlEnabled() == 0U)
+    {
+        return kGpMatrixStatusBusy;
+    }
+
     if ((frameData == 0) || (length < GP_MATRIX_RGB332_FRAME_SIZE))
     {
         return kGpMatrixStatusBadLength;
@@ -268,6 +364,11 @@ GpMatrixStatusCode GpLedAction_ApplyGlyphRows(const uint8_t xdata *glyphData,
                                               uint8_t glyphWidth,
                                               uint8_t glyphSpacing)
 {
+    if (GpLedAction_IsHostControlEnabled() == 0U)
+    {
+        return kGpMatrixStatusBusy;
+    }
+
     if ((glyphData == 0) || (glyphCount == 0U) || (glyphWidth != GP_MATRIX_WIDTH))
     {
         return kGpMatrixStatusUnsupported;
