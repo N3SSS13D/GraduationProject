@@ -1,102 +1,109 @@
 # GraduationProject
 
-## 椤圭洰姒傝堪
+## 项目概述
 
-鏈粨搴撶敤浜庢瘯涓氳璁″紑鍙戯紝褰撳墠涓荤嚎宸茬粡杩涘叆绋冲畾鑱旇皟闃舵锛屾牳蹇冮棴鐜负锛?
+本仓库用于毕业设计开发，当前已经形成稳定的 I2C 联调版本，核心闭环为：
 
-`灏忔櫤璇煶/璋冭瘯鐘舵€?-> ESP32 鍔ㄤ綔鏄犲皠 -> 鏈湴 I2C 鑷畾涔夊崗璁?-> AI8051U 鎺ユ敹鎵ц -> WS2812 LED 鐭╅樀鏄剧ず`
+`小智语音/调试状态 -> ESP32 动作映射 -> 本地 I2C 自定义协议 -> AI8051U 接收执行 -> WS2812 LED 矩阵显示`
 
-褰撳墠鐗堟湰宸茬粡瀹屾垚涓ゆ潯涓荤嚎鐨勭ǔ瀹氭敹鍙ｏ細
+当前主线由两部分组成：
 
 1. `STC51/Project/ws2812_driver/`
-   - AI8051U 渚?WS2812 澶嶇敤鎵弿鏄剧ず绯荤粺銆?
-   - 宸插叿澶囩ǔ瀹氱殑 PWM + DMA銆?4HC595 琛岄€夈€丳MOS 楂樹晶鍒囨崲銆乁SB 璋冭瘯涓?I2C 浠庢満閾捐矾銆?
+   - AI8051U 侧 WS2812 复用扫描显示系统。
+   - 已具备稳定的 PWM + DMA、74HC595 行选、PMOS 高侧切换、USB 调试和 I2C 从机链路。
 2. `External/xiaozhi-esp32/`
-   - 灏忔櫤 ESP32 鍙傝€冨揩鐓у強鏈」鐩墿灞曘€?
-   - 宸插叿澶囪闊抽鑹?棰勮鏄犲皠銆佺煩闃靛姩浣滃璞′笅鍙戙€丄CK 璇诲洖銆佺ǔ瀹氱増璋冭瘯鐣岄潰涓庢湰鍦?HTTP 鎴浘閾捐矾銆?
+   - 小智 ESP32 参考工程及本项目扩展。
+   - 已完成 `GP_Port/` 下的 I2C 协议、矩阵驱动、调试界面、截图工具和联调脚本集成。
 
-## 褰撳墠绋冲畾鐗堣兘鍔?
+## 当前稳定版能力
 
-### STC51 / AI8051U / WS2812 渚?
+### STC51 / AI8051U / WS2812 侧
 
-- PWM + DMA 鍙岄€氶亾杈撳嚭閾捐矾绋冲畾杩愯銆?
-- 74HC595 + PMOS 琛屾壂鎻忋€佸浣嶅熬娉㈠拰瀹氭椂鑺傛媿绛栫暐宸叉敹鍙ｃ€?
-- 宸叉敮鎸?`normal_pair` 涓?`legacy_shift` 涓ょ被鎵弿/鍙戦€佹ā寮忋€?
-- 宸叉敮鎸?USB 璋冭瘯鍛戒护锛氶鑹层€佸浘妗堛€侀棿闅斻€佹覆鏌撴ā寮忓垏鎹€?
-- 宸叉敮鎸?AI8051U I2C 浠庢満銆佸崗璁В鏋愩€佸姩浣滃垎鍙戙€佺姸鎬?閿欒鍥炲寘銆?
+- 已稳定运行 PWM + DMA 双通道输出。
+- 已完成 74HC595 + PMOS 行扫描、尾波复位和节拍调度收口。
+- 已支持 `normal_pair` 与 `legacy_shift` 两类扫描/发送模式。
+- 已支持 USB/串口调试命令：颜色、图案、间隔、渲染模式切换。
+- 已支持 AI8051U I2C 从机、协议解析、动作执行、ACK/错误状态回包。
+- 当前默认采用 START/STOP 保留在 ISR、RX/TX 双向 DMA 负责包数据搬运的 I2C 后端。
 
-### XiaoZhi / ESP32 / GP_Port 渚?
+### XiaoZhi / ESP32 / GP_Port 侧
 
-- 宸叉帴鍏ュ叡浜崗璁ご `gp_led_matrix_protocol.h`銆?
-- 宸叉帴閫?ESP32 渚х煩闃甸┍鍔?`gp_led_matrix_esp32.h/.cc`銆?
-- 宸叉帴閫?AI8051U 鎺ュ彛灞?`gp_led_matrix_ai8051u.h/.c` 涓庡姩浣滄墽琛屽眰 `gp_led_action.c`銆?
-- 宸叉敮鎸佽闊抽鑹茬粨鏋滀笌璋冭瘯鍦嗙偣鐘舵€佸悓姝ュ埌 LED 鐭╅樀銆?
-- 宸叉敮鎸佺煩闃甸璁撅細`diamond`銆乣cross`銆乣JLU_emblem`銆乣scroll_subtitle`銆?
-- 宸叉敮鎸佲€滄湭鎸囧畾棰勮鏃堕粯璁ょ函鑹叉弧灞忊€濆拰鈥滀粎鍦ㄦ樉寮忓浘鍍忔洿鏂版椂閫氫俊鈥濈瓥鐣ャ€?
-- 宸叉敮鎸佸浘妗堣儗鏅壊鐙珛鎺у埗锛屾寚瀹氶璁惧悗涓嶅啀鑷姩杞挱鍏朵粬娴嬭瘯鍥炬銆?
-- 宸叉敮鎸佺ǔ瀹氱増璋冭瘯鐣岄潰锛歚DBG` 鍏ュ彛銆佸浐瀹氭爣棰樻爮 `Back / Debug Menu / S`銆佸崟椤佃Е鎽告帶鍒跺尯銆佸渾鐐归瑙堝尯銆侀摼璺姸鎬佸尯鍜屾憳瑕佷俊鎭尯銆?
-- 宸叉敮鎸佹湰鍦?HTTP 鎴浘锛氳澶囦晶 `S` 鎸夐敭鐩翠紶 `/snapshot`锛屼富鏈轰晶閫氳繃 `/control/snapshot` 瑙﹀彂璁惧鎴浘銆?
+- 已接通共享协议头 `gp_led_matrix_protocol.h`。
+- 已完成 ESP32 侧矩阵驱动 `gp_led_matrix_esp32.h/.cc`。
+- 已完成 AI8051U 接口层 `gp_led_matrix_ai8051u.h/.c` 和动作执行层对接。
+- 已支持语音颜色结果与调试圆点状态同步到 LED 矩阵。
+- 已支持矩阵预设：`diamond`、`cross`、`JLU_emblem`、`scroll_subtitle`。
+- 已支持“未指定预设时默认纯色满屏”和“仅在显式图像更新时通信”策略。
+- 已支持图案背景色独立控制，选中预设后不再轮播旧测试图案。
+- 已支持稳定版调试菜单：`DBG` 入口、固定标题栏 `Back / Debug Menu / S`、单页触摸控制区、圆点预览区、链路状态区和摘要信息区。
+- 已支持设备侧截图：按下 `S` 冻结当前帧、后台编码 PNG、通过本地 HTTP `/snapshot` 上传。
+- 已支持主机侧通过 `/control/snapshot` 触发设备执行截图。
+- 已支持本地 Python MCP 联调脚本输出桥接状态、HTTP 状态和最近一次保存结果。
 
-## 浠撳簱缁撴瀯
+## 仓库结构
 
 ```text
 GraduationProject/
 |-- README.md
 |-- Doc/
-|   `-- 椤圭洰鏂囨。/
+|   `-- 项目文档/
+|       |-- project_status_summary_2026-04-12.md
 |       |-- usb_play_v2_guide.md
 |       |-- ws2812_driver_current_implementation.md
 |       |-- xiaozhi_ai8051u_i2c_interface_protocol.md
 |       `-- xiaozhi_esp32_porting_summary.md
 |-- External/
 |   `-- xiaozhi-esp32/
-|       |-- main/                      # 灏忔櫤搴旂敤銆佹澘绾у拰璁惧鎶借薄
-|       `-- GP_Port/                   # 鏈」鐩墿灞曞崗璁€侀┍鍔ㄣ€佽仈璋冭剼鏈拰璇存槑
+|       |-- main/                      # 小智应用、板级与设备抽象
+|       `-- GP_Port/                   # 本项目扩展协议、驱动、联调脚本和说明
 |-- STC51/
 |   `-- Project/
 |       `-- ws2812_driver/
 |           |-- Sources/
-|           |   |-- app/               # 鎵弿璋冨害涓庡簲鐢ㄥ眰娴佺▼
-|           |   |-- mid/               # 娓叉煋銆佸姩鐢汇€佹寜閿帶鍒?
-|           |   |-- drv/               # WS2812 / 74HC595 椹卞姩
-|           |   |-- inc/               # 鍏变韩澶存枃浠朵笌閰嶇疆
-|           |   |-- timer.c            # 瀹氭椂鍣ㄤ笌鑺傛媿鎺у埗
-|           |   |-- usblib.c           # USB 鍛戒护鍏ュ彛
-|           |   `-- main.c             # MCU 鍏ュ彛涓庡垵濮嬪寲
+|           |   |-- app/               # 扫描调度与应用层流程
+|           |   |-- mid/               # 渲染、动画、按键控制
+|           |   |-- drv/               # WS2812 / 74HC595 / I2C 驱动
+|           |   |-- inc/               # 共享头文件与配置
+|           |   |-- timer.c            # 定时器与节拍控制
+|           |   |-- usblib.c           # USB 命令入口
+|           |   `-- main.c             # MCU 入口与初始化
 |           `-- ws2812_driver.uvproj
 `-- .github/
-    `-- prompts/                       # 椤圭洰寮€鍙?prompt 闆嗗悎
+    `-- prompts/                       # 项目开发 prompt 集合
 ```
 
-## 鍏抽敭鏂囨。鍏ュ彛
+## 关键文档入口
 
-- 灏忔櫤绉绘涓庤仈璋冩€荤粨锛歚Doc/椤圭洰鏂囨。/xiaozhi_esp32_porting_summary.md`
-- 灏忔櫤涓?AI8051U I2C 鍗忚璇存槑锛歚Doc/椤圭洰鏂囨。/xiaozhi_ai8051u_i2c_interface_protocol.md`
-- WS2812 椹卞姩瀹炵幇璇存槑锛歚Doc/椤圭洰鏂囨。/ws2812_driver_current_implementation.md`
-- GP_Port 鎬昏锛歚External/xiaozhi-esp32/GP_Port/gp_port_project_overview.md`
-- 璋冭瘯鐣岄潰涓庢埅鍥句娇鐢ㄨ鏄庯細`External/xiaozhi-esp32/GP_Port/gp_debug_feature_usage.md`
-- MCP 宸ュ叿璇存槑锛歚External/xiaozhi-esp32/GP_Port/gp_mcp_tools.md`
+- 项目阶段总览：[Doc/项目文档/project_status_summary_2026-04-12.md](Doc/项目文档/project_status_summary_2026-04-12.md)
+- WS2812 驱动实现说明：[Doc/项目文档/ws2812_driver_current_implementation.md](Doc/项目文档/ws2812_driver_current_implementation.md)
+- 小智与 AI8051U I2C 协议说明：[Doc/项目文档/xiaozhi_ai8051u_i2c_interface_protocol.md](Doc/项目文档/xiaozhi_ai8051u_i2c_interface_protocol.md)
+- 小智移植与联调总结：[Doc/项目文档/xiaozhi_esp32_porting_summary.md](Doc/项目文档/xiaozhi_esp32_porting_summary.md)
+- GP_Port 总览：[External/xiaozhi-esp32/GP_Port/gp_port_project_overview.md](External/xiaozhi-esp32/GP_Port/gp_port_project_overview.md)
+- 调试界面与截图说明：[External/xiaozhi-esp32/GP_Port/gp_debug_feature_usage.md](External/xiaozhi-esp32/GP_Port/gp_debug_feature_usage.md)
+- MCP 工具与本地桥接说明：[External/xiaozhi-esp32/GP_Port/gp_mcp_tools.md](External/xiaozhi-esp32/GP_Port/gp_mcp_tools.md)
 
-## 鏋勫缓涓庨獙璇?
+## 构建与验证
 
-### STC51 宸ョ▼
+### STC51 工程
 
-1. 浣跨敤 Keil 鎵撳紑 `STC51/Project/ws2812_driver/ws2812_driver.uvproj`銆?
-2. 缂栬瘧骞跺湪闇€瑕佹椂閫氳繃 STC ISP 涓嬭浇鍥轰欢銆?
-3. 閫氳繃涓插彛鎴?USB 鍛戒护楠岃瘉棰滆壊銆佸浘妗堛€侀棿闅斿拰娓叉煋妯″紡鍒囨崲銆?
+1. 使用 Keil 打开 `STC51/Project/ws2812_driver/ws2812_driver.uvproj`。
+2. 执行编译，必要时通过 STC ISP 下载固件。
+3. 通过 USB 或串口命令验证颜色、图案、间隔和渲染模式切换。
 
-### ESP32 宸ョ▼
+### ESP32 工程
 
-1. 浣跨敤 ESP-IDF 鎻掍欢鎵撳紑 `External/xiaozhi-esp32/`銆?
-2. 閫夋嫨 `lichuang-dev` 骞舵墽琛屾瀯寤恒€?
-3. 杩愯 `GP_Port/gp_mcp_endpoint_client.py`锛岃仈璋?`/snapshot`銆乣/control/snapshot` 鍜?MCP 宸ュ叿閾俱€?
+1. 使用 ESP-IDF 插件打开 `External/xiaozhi-esp32/`。
+2. 选择 `lichuang-dev` 并执行构建。
+3. 运行 `GP_Port/gp_mcp_endpoint_client.py`，联调 `/snapshot`、`/control/snapshot` 和设备侧 MCP 工具。
 
-## 鎻愪氦杈圭晫
+## 提交边界
 
-榛樿涓嶆彁浜や互涓嬬函鏈湴浜х墿锛?
+默认不提交以下纯本地产物：
 
 - `*.uvgui.*`
 - `*.uvopt`
 - `__pycache__/`
 - `*.pyc`
-- 涓存椂瀵煎嚭鎴浘銆佹祴璇曞浘鐗囧拰涓存椂鏃ュ織
+- 临时导出截图、测试图片和临时日志
+
+
