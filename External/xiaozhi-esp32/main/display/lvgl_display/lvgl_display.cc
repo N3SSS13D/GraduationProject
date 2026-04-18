@@ -12,6 +12,8 @@
 #include "settings.h"
 #include "assets/lang_config.h"
 #include "jpg/image_to_jpeg.h"
+#define LODEPNG_NO_COMPILE_CPP
+#include "libs/lodepng/lodepng.h"
 
 #define TAG "Display"
 
@@ -253,6 +255,74 @@ bool LvglDisplay::SnapshotToJpeg(std::string& jpeg_data, int quality) {
     return ret;
 #else
     ESP_LOGE(TAG, "LV_USE_SNAPSHOT is not enabled");
+    return false;
+#endif
+}
+
+bool LvglDisplay::SnapshotToPng(std::string& png_data) {
+#if CONFIG_LV_USE_SNAPSHOT && CONFIG_LV_USE_LODEPNG
+    std::string rgb888_data;
+    unsigned int width = 0;
+    unsigned int height = 0;
+
+    try {
+
+        {
+            DisplayLockGuard lock(this);
+
+            lv_obj_t* screen = lv_screen_active();
+            lv_draw_buf_t* draw_buffer = lv_snapshot_take(screen, LV_COLOR_FORMAT_RGB565);
+            if (draw_buffer == nullptr) {
+                ESP_LOGE(TAG, "Failed to take PNG snapshot, draw_buffer is nullptr");
+                return false;
+            }
+
+            width = static_cast<unsigned int>(draw_buffer->header.w);
+            height = static_cast<unsigned int>(draw_buffer->header.h);
+            rgb888_data.resize(static_cast<size_t>(width) * static_cast<size_t>(height) * 3U);
+
+            const uint16_t* src = reinterpret_cast<const uint16_t*>(draw_buffer->data);
+            for (size_t index = 0; index < static_cast<size_t>(width) * static_cast<size_t>(height); ++index) {
+                /* LVGL snapshots are already stored in native RGB565; byte swapping is only needed in some flush paths. */
+                const uint16_t pixel = src[index];
+                const uint8_t red = static_cast<uint8_t>(((pixel >> 11) & 0x1FU) * 255U / 31U);
+                const uint8_t green = static_cast<uint8_t>(((pixel >> 5) & 0x3FU) * 255U / 63U);
+                const uint8_t blue = static_cast<uint8_t>((pixel & 0x1FU) * 255U / 31U);
+                rgb888_data[index * 3U] = static_cast<char>(red);
+                rgb888_data[index * 3U + 1U] = static_cast<char>(green);
+                rgb888_data[index * 3U + 2U] = static_cast<char>(blue);
+            }
+
+            lv_draw_buf_destroy(draw_buffer);
+        }
+
+        /* Release LVGL-owned buffers before PNG encoding so the UI path is blocked for as little time as possible. */
+        unsigned char* encoded = nullptr;
+        size_t encoded_size = 0;
+        const unsigned error = lodepng_encode24(&encoded, &encoded_size,
+            reinterpret_cast<const unsigned char*>(rgb888_data.data()), width, height);
+        if (error != 0U) {
+            ESP_LOGE(TAG, "Failed to encode PNG snapshot: %u", error);
+            if (encoded != nullptr) {
+                free(encoded);
+            }
+            return false;
+        }
+
+        png_data.assign(reinterpret_cast<const char*>(encoded), encoded_size);
+        free(encoded);
+        return true;
+    } catch (const std::exception& exception) {
+        ESP_LOGE(TAG, "PNG snapshot exception: %s", exception.what());
+        png_data.clear();
+        return false;
+    } catch (...) {
+        ESP_LOGE(TAG, "PNG snapshot failed with unknown exception");
+        png_data.clear();
+        return false;
+    }
+#else
+    ESP_LOGE(TAG, "PNG snapshot support is not enabled");
     return false;
 #endif
 }

@@ -7,8 +7,12 @@
 #include <esp_timer.h>
 
 #include <string>
+#include <atomic>
+#include <condition_variable>
 #include <mutex>
 #include <deque>
+#include <unordered_map>
+#include <unordered_set>
 #include <memory>
 
 #include "protocol.h"
@@ -107,6 +111,10 @@ public:
     void WakeWordInvoke(const std::string& wake_word);
     bool UpgradeFirmware(const std::string& url, const std::string& version = "");
     bool CanEnterSleepMode();
+    bool CallMcpTool(const std::string& tool_name, const std::string& arguments_json,
+        std::string* result_json = nullptr, std::string* error_message = nullptr, int timeout_ms = 8000);
+    bool SendMcpToolCallAsync(const std::string& tool_name, const std::string& arguments_json,
+        std::string* error_message = nullptr);
     void SendMcpMessage(const std::string& payload);
     void SendCustomMessage(const std::string& payload);
     void SetAecMode(AecMode mode);
@@ -144,6 +152,20 @@ private:
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;
 
+    struct PendingMcpCall {
+        std::mutex mutex;
+        std::condition_variable condition;
+        bool completed = false;
+        bool success = false;
+        std::string result_json;
+        std::string error_message;
+    };
+
+    std::mutex pending_mcp_calls_mutex_;
+    std::unordered_map<int, std::shared_ptr<PendingMcpCall>> pending_mcp_calls_;
+    std::unordered_set<int> async_mcp_call_ids_;
+    std::atomic<int> next_mcp_call_id_{1};
+
 
     // Event handlers
     void HandleStateChangedEvent();
@@ -164,6 +186,7 @@ private:
     void InitializeProtocol();
     void ShowActivationCode(const std::string& code, const std::string& message);
     void SetListeningMode(ListeningMode mode);
+    bool HandlePendingMcpResponse(const cJSON* payload);
     
     // State change handler called by state machine
     void OnStateChanged(DeviceState old_state, DeviceState new_state);

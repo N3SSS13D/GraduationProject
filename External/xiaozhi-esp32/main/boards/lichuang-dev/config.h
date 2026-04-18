@@ -38,7 +38,9 @@
 #define DISPLAY_BACKLIGHT_OUTPUT_INVERT true
 
 #define GP_MATRIX_I2C_ADDRESS 0x31
-#define GP_MATRIX_DEFAULT_BRIGHTNESS 0x40
+/* Match the XiaoZhi online path with the AI8051U offline default to avoid a visible brightness drop. */
+#define GP_MATRIX_DEFAULT_BRIGHTNESS 200U
+#define GP_DEBUG_SNAPSHOT_DEFAULT_UPLOAD_URL "http://49.140.69.242:8765/snapshot"
 
 /* Camera pins */
 #define CAMERA_PIN_PWDN GPIO_NUM_NC

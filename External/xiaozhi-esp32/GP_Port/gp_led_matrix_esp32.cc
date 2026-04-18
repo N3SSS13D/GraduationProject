@@ -26,8 +26,34 @@ constexpr uint8_t kColorWhite = 0xFF;
 constexpr uint32_t kGpMatrixI2cSpeedHz = 100000;
 constexpr uint32_t kStartupLinkTestIntervalMs = 1000;
 constexpr uint32_t kReplyPollIntervalMs = 8;
-constexpr uint32_t kReplyPollRetries = 4;
+constexpr uint32_t kReplyPollRetries = 12;
 constexpr size_t kStatusReplyPayloadBytes = 4;
+constexpr uint8_t kMatrixDebugPatternDiamond = 0;
+constexpr uint8_t kMatrixDebugPatternCross = 1;
+constexpr uint8_t kMatrixDebugPatternJluEmblem = 2;
+
+uint8_t ExtractRgb888Channel(uint32_t rgb, uint8_t shift) {
+    return static_cast<uint8_t>((rgb >> shift) & 0xFFU);
+}
+
+uint8_t BuildMatrixAnimStep(const GpColorDebugState& state) {
+    if (state.animation_period_ms <= 900U) {
+        return 2U;
+    }
+    return 1U;
+}
+
+uint8_t BuildMatrixGradientSpan(const GpColorDebugState& state) {
+    const uint16_t scaled_span = static_cast<uint16_t>(state.dot_size_px) * 2U;
+    return static_cast<uint8_t>(std::clamp<uint16_t>(scaled_span, 32U, 120U));
+}
+
+uint32_t ResolveMatrixBackgroundRgb888(const GpColorDebugState& state) {
+    if (state.has_matrix_background_rgb888) {
+        return state.matrix_background_rgb888;
+    }
+    return 0x000000U;
+}
 
 GpMatrixActionPayload BuildSolidAction(uint8_t brightness, uint8_t red, uint8_t green, uint8_t blue) {
     GpMatrixActionPayload action = {};
@@ -110,6 +136,66 @@ void GpLedMatrixEsp32::SetBrightness(uint8_t brightness) {
 void GpLedMatrixEsp32::SetLinkStatusCallback(LinkStatusCallback callback) {
     std::lock_guard<std::mutex> lock(mutex_);
     link_status_callback_ = std::move(callback);
+}
+
+bool GpLedMatrixEsp32::ShowDebugState(const GpColorDebugState& state) {
+    GpMatrixActionPayload action = {};
+    const uint32_t background_rgb888 = ResolveMatrixBackgroundRgb888(state);
+
+    action.source = kGpMatrixActionSourceLocal;
+    action.direction = kGpMatrixDirectionNormal;
+    action.brightness = brightness_;
+    action.primary_r = ExtractRgb888Channel(state.primary_rgb888, 16);
+    action.primary_g = ExtractRgb888Channel(state.primary_rgb888, 8);
+    action.primary_b = ExtractRgb888Channel(state.primary_rgb888, 0);
+    action.secondary_r = ExtractRgb888Channel(background_rgb888, 16);
+    action.secondary_g = ExtractRgb888Channel(background_rgb888, 8);
+    action.secondary_b = ExtractRgb888Channel(background_rgb888, 0);
+    action.scroll_step = 1U;
+    action.anim_step = BuildMatrixAnimStep(state);
+    action.gradient_span = BuildMatrixGradientSpan(state);
+
+    if (state.has_secondary) {
+        action.secondary_r = ExtractRgb888Channel(state.secondary_rgb888, 16);
+        action.secondary_g = ExtractRgb888Channel(state.secondary_rgb888, 8);
+        action.secondary_b = ExtractRgb888Channel(state.secondary_rgb888, 0);
+        action.flags |= GP_MATRIX_ACTION_FLAG_USE_SECONDARY;
+    }
+
+    if (state.preset == GpColorDebugPreset::kScrollSubtitle) {
+        action.content = kGpMatrixActionContentGlyph;
+        action.glyph_id = 0U;
+        action.effect = kGpMatrixEffectTextScroll;
+        action.color_mode = kGpMatrixColorModeSolid;
+        return ShowAction(action);
+    }
+
+    if (state.preset == GpColorDebugPreset::kSolid) {
+        action.content = kGpMatrixActionContentSolid;
+    } else {
+        action.content = kGpMatrixActionContentPattern;
+        if (state.preset == GpColorDebugPreset::kCross) {
+            action.pattern_id = kMatrixDebugPatternCross;
+        } else if (state.preset == GpColorDebugPreset::kJluEmblem) {
+            action.pattern_id = kMatrixDebugPatternJluEmblem;
+        } else {
+            action.pattern_id = kMatrixDebugPatternDiamond;
+        }
+    }
+
+    if ((state.animation == GpColorDebugAnimation::kGradient) && state.has_secondary) {
+        action.effect = kGpMatrixEffectGradient;
+        action.color_mode = kGpMatrixColorModeGradient;
+        action.flags |= GP_MATRIX_ACTION_FLAG_USE_SECONDARY;
+    } else if (state.animation == GpColorDebugAnimation::kPulse) {
+        action.effect = kGpMatrixEffectBreath;
+        action.color_mode = kGpMatrixColorModeSolid;
+    } else {
+        action.effect = kGpMatrixEffectStatic;
+        action.color_mode = kGpMatrixColorModeSolid;
+    }
+
+    return ShowAction(action);
 }
 
 bool GpLedMatrixEsp32::ShowAction(const GpMatrixActionPayload& action) {
@@ -268,6 +354,7 @@ bool GpLedMatrixEsp32::ReadReply(uint8_t expected_sequence, uint8_t expected_com
     std::array<uint8_t, GP_MATRIX_PACKET_HEADER_SIZE + kStatusReplyPayloadBytes + 1> reply = {};
 
     reply_status = kGpMatrixStatusInternalError;
+    vTaskDelay(pdMS_TO_TICKS(4));
     for (uint32_t attempt = 0; attempt < kReplyPollRetries; ++attempt) {
         const esp_err_t err = i2c_master_receive(i2c_device_, reply.data(), reply.size(), 100);
         if (err == ESP_OK) {
@@ -400,21 +487,27 @@ std::string GpLedMatrixEsp32::BuildStatusText(bool online,
                                               GpMatrixStatusCode reply_status,
                                               bool reply_valid) const {
     char buffer[96] = {0};
+    const char* err_text = "fail";
+
+    if (err == ESP_ERR_TIMEOUT) {
+        err_text = "tmout";
+    } else if (err == ESP_OK) {
+        err_text = "ok";
+    }
 
     if (online) {
         std::snprintf(buffer,
                       sizeof(buffer),
-                      "AI8051U ONLINE\n%s s%02u l%02u rp%02u\n%s",
+                      "ONLINE\n%s s%02u r%02u\n%s",
                       CommandShortName(command),
                       static_cast<unsigned int>(sequence),
-                      static_cast<unsigned int>(payload_length),
                       static_cast<unsigned int>(reply_status),
                       last_payload_summary_.c_str());
     } else {
         if (reply_valid) {
             std::snprintf(buffer,
                           sizeof(buffer),
-                          "AI8051U ERROR\n%s s%02u rp%02u\n%s",
+                          "ERROR\n%s s%02u r%02u\n%s",
                           CommandShortName(command),
                           static_cast<unsigned int>(sequence),
                           static_cast<unsigned int>(reply_status),
@@ -422,14 +515,15 @@ std::string GpLedMatrixEsp32::BuildStatusText(bool online,
         } else {
             std::snprintf(buffer,
                           sizeof(buffer),
-                          "AI8051U NO-REPLY\n%s s%02u %s\n%s",
+                          "NO-REPLY\n%s s%02u %s\n%s",
                           CommandShortName(command),
                           static_cast<unsigned int>(sequence),
-                          esp_err_to_name(err),
+                          err_text,
                           last_payload_summary_.c_str());
         }
     }
 
+    (void)payload_length;
     return buffer;
 }
 

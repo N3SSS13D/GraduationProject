@@ -6,6 +6,10 @@
 #define GP_MATRIX_PROTOCOL_MIN_PACKET_LENGTH GP_MATRIX_PACKET_OVERHEAD_SIZE
 #define GP_MATRIX_STATUS_PAYLOAD_BYTES 4U
 #define GP_MATRIX_I2C_DEBUG_ENABLE 1U
+#define GP_MATRIX_I2C_DMA_DEFAULT_RX_ENABLE 1U
+#define GP_MATRIX_I2C_DMA_DEFAULT_TX_ENABLE 1U
+#define GP_MATRIX_I2C_DMA_BUS_PRIORITY 2U
+#define GP_MATRIX_I2C_DMA_INT_PRIORITY 2U
 
 /* Parser helpers use shared scratch state so command handlers do not consume extra stack. */
 static GpLedMatrixAi8051uContext xdata *g_gpMatrixCtx = 0;
@@ -68,6 +72,12 @@ static uint8_t xdata g_gpMatrixI2cDebugFlagsShadow = 0U;
 #define GP_MATRIX_I2C_DEBUG_FLAG_PACKET_DROP 0x40U
 #define GP_MATRIX_I2C_DEBUG_FLAG_PROTOCOL_DROP 0x80U
 #endif
+
+static void GpLedMatrixAi8051u_BuildReply(GpMatrixStatusCode status);
+static void GpLedMatrixAi8051u_QueueRxPacketFromIsr(void);
+static GpMatrixStatusCode GpLedMatrixAi8051u_ValidatePacketForAck(GpLedMatrixAi8051uContext xdata *context,
+                                                                  const uint8_t xdata *packet,
+                                                                  uint8_t packetLength);
 
 uint8_t GpMatrixComputeChecksum(const uint8_t *packetBytes, uint16_t byteCount)
 {
@@ -176,10 +186,10 @@ static void GpLedMatrixAi8051u_ConfigureDmaBackend(void)
     DMA_I2C_ClearRxLossFlag();
     DMA_I2C_ClearFIFO();
     DMA_I2C_SetInterval(0U);
-    DMA_I2C_SetTxBusPriority(1U);
-    DMA_I2C_SetRxBusPriority(1U);
-    DMA_I2C_SetTxIntPriority(1U);
-    DMA_I2C_SetRxIntPriority(1U);
+    DMA_I2C_SetTxBusPriority(GP_MATRIX_I2C_DMA_BUS_PRIORITY);
+    DMA_I2C_SetRxBusPriority(GP_MATRIX_I2C_DMA_BUS_PRIORITY);
+    DMA_I2C_SetTxIntPriority(GP_MATRIX_I2C_DMA_INT_PRIORITY);
+    DMA_I2C_SetRxIntPriority(GP_MATRIX_I2C_DMA_INT_PRIORITY);
 }
 
 static uint8_t GpLedMatrixAi8051u_StartDmaTx(void)
@@ -262,12 +272,23 @@ static uint8_t GpLedMatrixAi8051u_FinalizeDmaRxPacket(uint8_t queuePacket)
 
 static void GpLedMatrixAi8051u_QueueRxPacketFromIsr(void)
 {
+    GpMatrixStatusCode status;
+
     if ((g_gpMatrixI2cContext == 0) || (g_gpMatrixI2cRxCount == 0U))
     {
         return;
     }
 
-    if (g_gpMatrixI2cContext->packetPending == 0U)
+    status = GpLedMatrixAi8051u_ValidatePacketForAck(g_gpMatrixI2cContext,
+                                                     g_gpMatrixI2cContext->rxBuffer,
+                                                     g_gpMatrixI2cRxCount);
+    g_gpMatrixCtx = g_gpMatrixI2cContext;
+    g_gpMatrixCommand = g_gpMatrixI2cContext->lastCommand;
+    g_gpMatrixSequence = g_gpMatrixI2cContext->lastSequence;
+    GpLedMatrixAi8051u_BuildReply(status);
+    g_gpMatrixI2cContext->packetReplyPrepared = 1U;
+
+    if (status == kGpMatrixStatusOk)
     {
         g_gpMatrixI2cContext->packetLength = g_gpMatrixI2cRxCount;
         g_gpMatrixI2cContext->packetPending = 1U;
@@ -278,6 +299,91 @@ static void GpLedMatrixAi8051u_QueueRxPacketFromIsr(void)
     g_gpMatrixI2cPacketDropCount++;
     g_gpMatrixI2cDebugFlags |= GP_MATRIX_I2C_DEBUG_FLAG_PACKET_DROP;
 #endif
+}
+
+static GpMatrixStatusCode GpLedMatrixAi8051u_ValidatePacketForAck(GpLedMatrixAi8051uContext xdata *context,
+                                                                  const uint8_t xdata *packet,
+                                                                  uint8_t packetLength)
+{
+    uint8_t command;
+    uint16_t payloadLength;
+    uint8_t expectedLength;
+    const uint8_t xdata *payload;
+
+    if ((context == 0) || (packet == 0))
+    {
+        return kGpMatrixStatusInternalError;
+    }
+    if (context->packetPending != 0U)
+    {
+        return kGpMatrixStatusBusy;
+    }
+    if (packetLength < GP_MATRIX_PACKET_OVERHEAD_SIZE)
+    {
+        return kGpMatrixStatusBadLength;
+    }
+    if ((packet[0] != GP_MATRIX_PROTOCOL_MAGIC0)
+        || (packet[1] != GP_MATRIX_PROTOCOL_MAGIC1)
+        || (packet[2] != GP_MATRIX_PROTOCOL_VERSION))
+    {
+        return kGpMatrixStatusUnsupported;
+    }
+    if (GpMatrixComputeChecksum(packet, (uint16_t)packetLength - 1U) != packet[packetLength - 1U])
+    {
+        return kGpMatrixStatusBadChecksum;
+    }
+
+    command = packet[3];
+    context->lastCommand = command;
+    context->lastSequence = packet[4];
+    payloadLength = GpLedMatrixAi8051u_ReadLe16(&packet[6]);
+    expectedLength = (uint8_t)(GP_MATRIX_PACKET_HEADER_SIZE + payloadLength + 1U);
+    if (expectedLength != packetLength)
+    {
+        return kGpMatrixStatusBadLength;
+    }
+
+    payload = &packet[GP_MATRIX_PACKET_HEADER_SIZE];
+    switch (command)
+    {
+        case kGpMatrixCommandPing:
+        case kGpMatrixCommandHeartbeat:
+            return (payloadLength == 0U) ? kGpMatrixStatusOk : kGpMatrixStatusBadLength;
+
+        case kGpMatrixCommandSetBrightness:
+        case kGpMatrixCommandSetMode:
+            return (payloadLength == 1U) ? kGpMatrixStatusOk : kGpMatrixStatusBadLength;
+
+        case kGpMatrixCommandStateHint:
+            return (payloadLength == 2U) ? kGpMatrixStatusOk : kGpMatrixStatusBadLength;
+
+        case kGpMatrixCommandSetAction:
+            return (payloadLength == GP_MATRIX_ACTION_PAYLOAD_BYTES) ? kGpMatrixStatusOk : kGpMatrixStatusBadLength;
+
+        case kGpMatrixCommandFrameStart:
+            return (payloadLength == GP_MATRIX_FRAME_START_PAYLOAD_BYTES) ? kGpMatrixStatusOk : kGpMatrixStatusBadLength;
+
+        case kGpMatrixCommandFrameChunk:
+        case kGpMatrixCommandScrollGlyphChunk:
+            if ((payloadLength < GP_MATRIX_FRAME_CHUNK_PREFIX_BYTES)
+                || ((uint16_t)payload[1] + GP_MATRIX_FRAME_CHUNK_PREFIX_BYTES != payloadLength))
+            {
+                return kGpMatrixStatusBadLength;
+            }
+            return kGpMatrixStatusOk;
+
+        case kGpMatrixCommandFrameCommit:
+            return ((payloadLength == 0U) || (payloadLength == 1U)) ? kGpMatrixStatusOk : kGpMatrixStatusBadLength;
+
+        case kGpMatrixCommandScrollGlyphStart:
+            return (payloadLength == GP_MATRIX_SCROLL_START_PAYLOAD_BYTES) ? kGpMatrixStatusOk : kGpMatrixStatusBadLength;
+
+        case kGpMatrixCommandScrollGlyphCommit:
+            return (payloadLength == 0U) ? kGpMatrixStatusOk : kGpMatrixStatusBadLength;
+
+        default:
+            return kGpMatrixStatusUnsupported;
+    }
 }
 
 static uint8_t GpLedMatrixAi8051u_HasProtocolPrefix(const uint8_t xdata *packet, uint8_t packetLength)
@@ -741,6 +847,7 @@ void GpLedMatrixAi8051u_Init(GpLedMatrixAi8051uContext xdata *context, uint8_t i
     context->lastStatus = (uint8_t)kGpMatrixStatusOk;
     context->packetLength = 0U;
     context->packetPending = 0U;
+    context->packetReplyPrepared = 0U;
     context->txLength = 0U;
     context->txPending = 0U;
     context->dmaRxEnabled = 0U;
@@ -788,6 +895,10 @@ void GpLedMatrixAi8051u_Init(GpLedMatrixAi8051uContext xdata *context, uint8_t i
     I2C_SetIntPriority(1);
     I2C_Enable();
     I2C_EnableSlaveAllInt();
+
+    GpLedMatrixAi8051u_SetDmaMode(context,
+                                  GP_MATRIX_I2C_DMA_DEFAULT_RX_ENABLE,
+                                  GP_MATRIX_I2C_DMA_DEFAULT_TX_ENABLE);
 
 #if GP_MATRIX_I2C_DEBUG_ENABLE
     printf("[I2C_INIT] addr=0x%02X pins=P24(SCL),P23(SDA) mode=open-drain pullup=disabled ext=3V3 speed<=100k\r\n",
@@ -853,6 +964,7 @@ void GpLedMatrixAi8051u_OnI2cReceive(GpLedMatrixAi8051uContext xdata *context, c
     }
     context->packetLength = length;
     context->packetPending = 1U;
+    context->packetReplyPrepared = 0U;
 }
 
 uint8_t GpLedMatrixAi8051u_PrepareTx(GpLedMatrixAi8051uContext xdata *context, uint8_t *outData, uint8_t maxLength)
@@ -919,6 +1031,11 @@ void GpLedMatrixAi8051u_Poll(GpLedMatrixAi8051uContext xdata *context)
     }
 
     status = GpLedMatrixAi8051u_ProcessPacket(context, context->rxBuffer, g_gpMatrixPacketLength);
+    if (context->packetReplyPrepared == 0U)
+    {
+        GpLedMatrixAi8051u_BuildReply(status);
+    }
+    context->packetReplyPrepared = 0U;
 
 #if GP_MATRIX_I2C_DEBUG_ENABLE
     printf("[I2C_PKT] len=%u cmd=0x%02X seq=%u status=0x%02X reply=%u\r\n",

@@ -51,31 +51,11 @@ constexpr std::string_view kVoiceColorResultAction = "voice_color_result";
 constexpr uint16_t kDefaultDotSize = 28;
 constexpr uint16_t kLargeDotSize = 42;
 constexpr uint16_t kSmallDotSize = 18;
-constexpr uint8_t kMatrixDebugBrightness = 0x40;
-constexpr uint8_t kMatrixDebugPatternDiamond = 0;
-constexpr uint8_t kMatrixDebugPatternCross = 1;
-constexpr uint8_t kMatrixDebugPatternPythonDemo = 2;
 constexpr uint32_t kMatrixDefaultRgb888 = 0xF5F5F5;
 constexpr uint32_t kMatrixDefaultBackgroundRgb888 = 0x000000;
 
 uint32_t g_matrixBackgroundRgb888 = kMatrixDefaultBackgroundRgb888;
 std::optional<GpColorDebugState> g_lastAppliedColorState;
-
-uint8_t ExtractRgb888Channel(uint32_t rgb, uint8_t shift) {
-    return static_cast<uint8_t>((rgb >> shift) & 0xFFU);
-}
-
-uint8_t BuildMatrixAnimStep(const GpColorDebugState& state) {
-    if (state.animation_period_ms <= 900U) {
-        return 2U;
-    }
-    return 1U;
-}
-
-uint8_t BuildMatrixGradientSpan(const GpColorDebugState& state) {
-    const uint16_t scaled_span = static_cast<uint16_t>(state.dot_size_px) * 2U;
-    return static_cast<uint8_t>(std::clamp<uint16_t>(scaled_span, 32U, 120U));
-}
 
 std::string ToAsciiLower(const std::string& text) {
     std::string lowered = text;
@@ -87,12 +67,40 @@ std::string ToAsciiLower(const std::string& text) {
     return lowered;
 }
 
-uint32_t ResolveMatrixBackgroundRgb888(const GpColorDebugState& state) {
-    if (state.has_matrix_background_rgb888) {
-        return state.matrix_background_rgb888;
+std::string EscapeJsonString(const std::string& text) {
+    std::string escaped;
+
+    escaped.reserve(text.size() + 8);
+    for (char ch : text) {
+        switch (ch) {
+        case '\\':
+            escaped += "\\\\";
+            break;
+        case '"':
+            escaped += "\\\"";
+            break;
+        case '\b':
+            escaped += "\\b";
+            break;
+        case '\f':
+            escaped += "\\f";
+            break;
+        case '\n':
+            escaped += "\\n";
+            break;
+        case '\r':
+            escaped += "\\r";
+            break;
+        case '\t':
+            escaped += "\\t";
+            break;
+        default:
+            escaped.push_back(ch);
+            break;
+        }
     }
 
-    return g_matrixBackgroundRgb888;
+    return escaped;
 }
 
 const char* GetPresetLabel(GpColorDebugPreset preset) {
@@ -101,8 +109,8 @@ const char* GetPresetLabel(GpColorDebugPreset preset) {
         return "diamond";
     case GpColorDebugPreset::kCross:
         return "cross";
-    case GpColorDebugPreset::kPythonDemo:
-        return "python_demo";
+    case GpColorDebugPreset::kJluEmblem:
+        return "JLU_emblem";
     case GpColorDebugPreset::kScrollSubtitle:
         return "scroll_subtitle";
     case GpColorDebugPreset::kSolid:
@@ -115,7 +123,7 @@ const DebugPresetKeyword* MatchDebugPresetKeyword(const std::string& text) {
     static const std::array<DebugPresetKeyword, 4> kPresets{{
         {"diamond", GpColorDebugPreset::kDiamond, {"菱形", "diamond", "rhombus", "钻石", "菱", ""}},
         {"cross", GpColorDebugPreset::kCross, {"十字", "cross", "plus", "叉", "crosshair", ""}},
-        {"python_demo", GpColorDebugPreset::kPythonDemo, {"python", "logo", "蛇", "python demo", "python图案", ""}},
+        {"JLU_emblem", GpColorDebugPreset::kJluEmblem, {"吉林大学校徽", "吉大校徽", "校徽", "jlu_emblem", "jlu emblem", "emblem"}},
         {"scroll_subtitle", GpColorDebugPreset::kScrollSubtitle, {"字幕", "滚动字幕", "scroll", "text", "marquee", "滚动"}},
     }};
 
@@ -133,74 +141,13 @@ const DebugPresetKeyword* MatchDebugPresetKeyword(const std::string& text) {
     return nullptr;
 }
 
-GpMatrixActionPayload BuildMatrixActionFromDebugState(const GpColorDebugState& state) {
-    GpMatrixActionPayload action = {};
-    uint32_t background_rgb888;
-
-    action.source = kGpMatrixActionSourceLocal;
-    action.direction = kGpMatrixDirectionNormal;
-    action.brightness = kMatrixDebugBrightness;
-    action.primary_r = ExtractRgb888Channel(state.primary_rgb888, 16);
-    action.primary_g = ExtractRgb888Channel(state.primary_rgb888, 8);
-    action.primary_b = ExtractRgb888Channel(state.primary_rgb888, 0);
-    action.scroll_step = 1U;
-    action.anim_step = BuildMatrixAnimStep(state);
-    action.gradient_span = BuildMatrixGradientSpan(state);
-
-    background_rgb888 = ResolveMatrixBackgroundRgb888(state);
-    action.secondary_r = ExtractRgb888Channel(background_rgb888, 16);
-    action.secondary_g = ExtractRgb888Channel(background_rgb888, 8);
-    action.secondary_b = ExtractRgb888Channel(background_rgb888, 0);
-
-    if (state.preset == GpColorDebugPreset::kSolid) {
-        action.content = kGpMatrixActionContentSolid;
-        action.effect = kGpMatrixEffectStatic;
-        action.color_mode = kGpMatrixColorModeSolid;
-        return action;
-    }
-
-    if (state.preset == GpColorDebugPreset::kScrollSubtitle) {
-        action.content = kGpMatrixActionContentGlyph;
-        action.glyph_id = 0U;
-        action.effect = kGpMatrixEffectTextScroll;
-        action.color_mode = kGpMatrixColorModeSolid;
-        action.flags = GP_MATRIX_ACTION_FLAG_USE_SECONDARY;
-        return action;
-    }
-
-    action.content = kGpMatrixActionContentPattern;
-    if (state.preset == GpColorDebugPreset::kCross) {
-        action.pattern_id = kMatrixDebugPatternCross;
-    } else if (state.preset == GpColorDebugPreset::kPythonDemo) {
-        action.pattern_id = kMatrixDebugPatternPythonDemo;
-    } else {
-        action.pattern_id = kMatrixDebugPatternDiamond;
-    }
-
-    if (state.animation == GpColorDebugAnimation::kPulse) {
-        action.effect = kGpMatrixEffectBreath;
-        action.color_mode = kGpMatrixColorModeSolid;
-        action.flags = GP_MATRIX_ACTION_FLAG_USE_SECONDARY;
-    } else if (state.animation == GpColorDebugAnimation::kGradient) {
-        action.effect = kGpMatrixEffectGradient;
-        action.color_mode = kGpMatrixColorModeGradient;
-        action.flags = GP_MATRIX_ACTION_FLAG_USE_SECONDARY;
-    } else {
-        action.effect = kGpMatrixEffectStatic;
-        action.color_mode = kGpMatrixColorModeSolid;
-        action.flags = GP_MATRIX_ACTION_FLAG_USE_SECONDARY;
-    }
-
-    return action;
-}
-
 void ApplyColorDebugToMatrix(const GpColorDebugState& state) {
     auto* matrix_led = dynamic_cast<GpLedMatrixEsp32*>(Board::GetInstance().GetLed());
     if (matrix_led == nullptr) {
         return;
     }
 
-    (void)matrix_led->ShowAction(BuildMatrixActionFromDebugState(state));
+    (void)matrix_led->ShowDebugState(state);
 }
 
 std::string FormatRgb888(uint32_t rgb) {
@@ -443,8 +390,8 @@ std::optional<GpColorDebugState> ParseRemoteColorState(const cJSON* payload) {
             state.preset = GpColorDebugPreset::kDiamond;
         } else if (preset_name == "cross") {
             state.preset = GpColorDebugPreset::kCross;
-        } else if (preset_name == "python_demo" || preset_name == "python") {
-            state.preset = GpColorDebugPreset::kPythonDemo;
+        } else if (preset_name == "jlu_emblem" || preset_name == "jlu emblem" || preset_name == "jilin university emblem") {
+            state.preset = GpColorDebugPreset::kJluEmblem;
         } else if (preset_name == "scroll_subtitle" || preset_name == "scroll") {
             state.preset = GpColorDebugPreset::kScrollSubtitle;
         }
@@ -1080,6 +1027,9 @@ void Application::InitializeProtocol() {
         } else if (strcmp(type->valuestring, "mcp") == 0) {
             auto payload = cJSON_GetObjectItem(root, "payload");
             if (cJSON_IsObject(payload)) {
+                if (HandlePendingMcpResponse(payload)) {
+                    return;
+                }
                 McpServer::GetInstance().ParseMessage(payload);
             }
         } else if (strcmp(type->valuestring, "system") == 0) {
@@ -1528,6 +1478,227 @@ bool Application::CanEnterSleepMode() {
     }
 
     // Now it is safe to enter sleep mode
+    return true;
+}
+
+bool Application::CallMcpTool(const std::string& tool_name, const std::string& arguments_json,
+    std::string* result_json, std::string* error_message, int timeout_ms) {
+    std::shared_ptr<PendingMcpCall> pending_call;
+    std::string payload;
+    int request_id;
+
+    if (timeout_ms <= 0) {
+        if (error_message != nullptr) {
+            *error_message = "timeout_ms must be greater than 0";
+        }
+        return false;
+    }
+
+    if (!protocol_) {
+        if (error_message != nullptr) {
+            *error_message = "Protocol is not initialized";
+        }
+        return false;
+    }
+
+    request_id = next_mcp_call_id_.fetch_add(1);
+    pending_call = std::make_shared<PendingMcpCall>();
+    {
+        std::lock_guard<std::mutex> lock(pending_mcp_calls_mutex_);
+        pending_mcp_calls_[request_id] = pending_call;
+    }
+
+    payload = "{\"jsonrpc\":\"2.0\",\"id\":" + std::to_string(request_id) +
+        ",\"method\":\"tools/call\",\"params\":{\"name\":\"" + EscapeJsonString(tool_name) +
+        "\",\"arguments\":" + (arguments_json.empty() ? "{}" : arguments_json) + "}}";
+    SendMcpMessage(payload);
+
+    {
+        std::unique_lock<std::mutex> lock(pending_call->mutex);
+        if (!pending_call->condition.wait_for(lock, std::chrono::milliseconds(timeout_ms), [&pending_call]() {
+            return pending_call->completed;
+        })) {
+            lock.unlock();
+            std::lock_guard<std::mutex> map_lock(pending_mcp_calls_mutex_);
+            pending_mcp_calls_.erase(request_id);
+            if (error_message != nullptr) {
+                *error_message = "Timed out waiting for MCP tool result";
+            }
+            return false;
+        }
+
+        if (result_json != nullptr) {
+            *result_json = pending_call->result_json;
+        }
+        if (error_message != nullptr) {
+            *error_message = pending_call->error_message;
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(pending_mcp_calls_mutex_);
+        pending_mcp_calls_.erase(request_id);
+    }
+
+    return pending_call->success;
+}
+
+bool Application::SendMcpToolCallAsync(const std::string& tool_name, const std::string& arguments_json,
+    std::string* error_message) {
+    cJSON* root = nullptr;
+    cJSON* params = nullptr;
+    cJSON* arguments = nullptr;
+    char* payload_text = nullptr;
+    bool ok = false;
+    int request_id = 0;
+
+    if (!protocol_) {
+        if (error_message != nullptr) {
+            *error_message = "Protocol is not initialized";
+        }
+        return false;
+    }
+
+    request_id = next_mcp_call_id_.fetch_add(1);
+
+    root = cJSON_CreateObject();
+    params = cJSON_CreateObject();
+    if ((root == nullptr) || (params == nullptr)) {
+        if (error_message != nullptr) {
+            *error_message = "Failed to allocate MCP notification JSON";
+        }
+        goto cleanup;
+    }
+
+    arguments = arguments_json.empty() ? cJSON_CreateObject() : cJSON_Parse(arguments_json.c_str());
+    if (arguments == nullptr) {
+        if (error_message != nullptr) {
+            *error_message = "Failed to parse MCP tool arguments JSON";
+        }
+        goto cleanup;
+    }
+
+    cJSON_AddStringToObject(root, "jsonrpc", "2.0");
+    cJSON_AddNumberToObject(root, "id", request_id);
+    cJSON_AddStringToObject(root, "method", "tools/call");
+    cJSON_AddStringToObject(params, "name", tool_name.c_str());
+    cJSON_AddItemToObject(params, "arguments", arguments);
+    arguments = nullptr;
+    cJSON_AddItemToObject(root, "params", params);
+    params = nullptr;
+
+    payload_text = cJSON_PrintUnformatted(root);
+    if (payload_text == nullptr) {
+        if (error_message != nullptr) {
+            *error_message = "Failed to serialize MCP notification JSON";
+        }
+        goto cleanup;
+    }
+
+    try {
+        {
+            std::lock_guard<std::mutex> lock(pending_mcp_calls_mutex_);
+            async_mcp_call_ids_.insert(request_id);
+        }
+        SendMcpMessage(payload_text);
+        ok = true;
+    } catch (const std::exception& exception) {
+        std::lock_guard<std::mutex> lock(pending_mcp_calls_mutex_);
+        async_mcp_call_ids_.erase(request_id);
+        if (error_message != nullptr) {
+            *error_message = exception.what();
+        }
+    } catch (...) {
+        std::lock_guard<std::mutex> lock(pending_mcp_calls_mutex_);
+        async_mcp_call_ids_.erase(request_id);
+        if (error_message != nullptr) {
+            *error_message = "Unexpected MCP notification failure";
+        }
+    }
+
+cleanup:
+    if (payload_text != nullptr) {
+        cJSON_free(payload_text);
+    }
+    if (arguments != nullptr) {
+        cJSON_Delete(arguments);
+    }
+    if (params != nullptr) {
+        cJSON_Delete(params);
+    }
+    if (root != nullptr) {
+        cJSON_Delete(root);
+    }
+    return ok;
+}
+
+bool Application::HandlePendingMcpResponse(const cJSON* payload) {
+    const cJSON* id = cJSON_GetObjectItem(payload, "id");
+    const cJSON* method = cJSON_GetObjectItem(payload, "method");
+    const cJSON* result = cJSON_GetObjectItem(payload, "result");
+    const cJSON* error = cJSON_GetObjectItem(payload, "error");
+    std::shared_ptr<PendingMcpCall> pending_call;
+    bool is_async_call = false;
+
+    if (!cJSON_IsNumber(id) || cJSON_IsString(method) || ((result == nullptr) && (error == nullptr))) {
+        return false;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(pending_mcp_calls_mutex_);
+        auto iter = pending_mcp_calls_.find(id->valueint);
+        if (iter == pending_mcp_calls_.end()) {
+            auto async_iter = async_mcp_call_ids_.find(id->valueint);
+            if (async_iter == async_mcp_call_ids_.end()) {
+                return false;
+            }
+            async_mcp_call_ids_.erase(async_iter);
+            is_async_call = true;
+        } else {
+            pending_call = iter->second;
+        }
+    }
+
+    if (is_async_call) {
+        if (error != nullptr) {
+            const cJSON* message = cJSON_GetObjectItem(error, "message");
+            if (cJSON_IsString(message) && (message->valuestring != nullptr)) {
+                ESP_LOGW(TAG, "Async MCP tool call failed: %s", message->valuestring);
+            } else {
+                ESP_LOGW(TAG, "Async MCP tool call failed with unknown error");
+            }
+        } else {
+            ESP_LOGI(TAG, "Async MCP tool call response received: id=%d", id->valueint);
+        }
+        return true;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(pending_call->mutex);
+        pending_call->completed = true;
+        pending_call->success = (error == nullptr);
+        if (result != nullptr) {
+            char* result_text = cJSON_PrintUnformatted(result);
+            pending_call->result_json = result_text != nullptr ? result_text : "{}";
+            if (result_text != nullptr) {
+                cJSON_free(result_text);
+            }
+        }
+        if (error != nullptr) {
+            const cJSON* message = cJSON_GetObjectItem(error, "message");
+            if (cJSON_IsString(message)) {
+                pending_call->error_message = message->valuestring;
+            } else {
+                char* error_text = cJSON_PrintUnformatted(error);
+                pending_call->error_message = error_text != nullptr ? error_text : "Unknown MCP error";
+                if (error_text != nullptr) {
+                    cJSON_free(error_text);
+                }
+            }
+        }
+    }
+
+    pending_call->condition.notify_all();
     return true;
 }
 

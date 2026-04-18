@@ -1,19 +1,18 @@
 # AI8051U I2C DMA Integration Reference
 
-## Hybrid Rollout Pattern
+## DMA Rollout Pattern
 Use this rollout order when the project already has a stable interrupt-driven I2C slave implementation.
 
 1. Keep START/STOP, timeout handling, and packet queueing in the existing I2C ISR.
 2. Add DMA initialization during driver init, but keep both directions disabled by default.
-3. Turn on TX DMA first for reply packets.
-4. Leave RX interrupt-driven until hardware validation is complete.
-5. Only then consider enabling RX DMA behind a per-direction switch.
+3. Enable both RX DMA and TX DMA for packet payload movement once the framing ISR is stable.
+4. Keep a per-direction switch so you can temporarily disable one side during bring-up.
 
-## Why Hybrid First
+## Why Keep ISR Framing
 - The protocol parser and buffer layout usually already work.
-- The highest-gain, lowest-risk DMA optimization is reply TX because the buffer is already assembled.
-- RX DMA often needs extra normalization because some controllers may surface the address byte differently from the byte interrupt path.
-- On LED-heavy systems, RX DMA can perturb timing or bus contention more noticeably than TX DMA.
+- START/STOP and timeout boundaries are still easier to reason about in the I2C ISR.
+- RX DMA often needs a small normalization step because some controllers may surface the address byte differently from the byte interrupt path.
+- Once framing stays stable, enabling both DMA directions reduces byte-by-byte ISR load without forcing a protocol rewrite.
 
 ## Minimum Driver Elements
 A practical AI8051U I2C DMA driver usually needs:
@@ -39,15 +38,14 @@ In this repository, the reference implementation lives in:
 - `STC51/Project/ws2812_driver/Sources/app/test.c`
 
 The active default is:
-- RX DMA disabled
+- RX DMA enabled
 - TX DMA enabled
-- protocol RX state machine preserved
-- reply TX moved to I2CT DMA
+- protocol framing ISR preserved
+- both directions use the existing `rxBuffer` / `txBuffer`
 
 ## Suggested Bring-up Order
 1. Confirm the original interrupt-only path still works.
-2. Enable only TX DMA and test read-reply transactions.
-3. Check `DMA_I2C_ReadTxDone()` against the expected packet size.
-4. Run long-duration LED refresh and verify there is no visible dimming.
-5. Enable RX DMA only in a dedicated test build.
-6. Compare packet lengths, checksum success rate, and brightness stability against the interrupt-only baseline.
+2. Enable RX DMA and TX DMA for packet payload movement.
+3. Check `DMA_I2C_ReadTxDone()` and `DMA_I2C_ReadRxDone()` against the expected packet sizes.
+4. Confirm the address byte is not retained as a fake first payload byte.
+5. Compare packet lengths, checksum success rate, and DMA fault counters against the interrupt-only baseline.

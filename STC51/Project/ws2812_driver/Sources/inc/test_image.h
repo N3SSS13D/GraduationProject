@@ -8,14 +8,14 @@
 
 #define TEST_IMAGE_IDX_DIAMOND           0
 #define TEST_IMAGE_IDX_CROSS             1
-#define TEST_IMAGE_IDX_PYTHON_DEMO       2
+#define TEST_IMAGE_IDX_JLU_EMBLEM        2
 
 #ifndef TEST_IMAGE_BG_RGB332
 #define TEST_IMAGE_BG_RGB332             0x00
 #endif
 
-/* Unified pattern/glyph data region (merged from python output). */
-static const char code g_testPatternNamePythonDemo[] = "python_demo";
+/* Unified pattern/glyph data region (merged from the JLU emblem asset). */
+static const char code g_testPatternNameJluEmblem[] = "JLU_emblem";
 
 #ifndef TEST_SCROLL_GLYPH_COUNT
 #define TEST_SCROLL_GLYPH_COUNT          4U
@@ -109,7 +109,7 @@ static const uint16_t code g_testScrollGlyphRows[TEST_SCROLL_GLYPH_COUNT][TEST_I
     }
 };
 
-static const uint8_t code g_testPattern_custom0[TEST_IMAGE_PIXELS_PER_FRAME] =
+static const uint8_t code g_testPatternJluEmblem[TEST_IMAGE_PIXELS_PER_FRAME] =
 {
     0x00,0x03,0x03,0x03,0x03,0x03,0x03,0x03,0x03,0x03,0x03,0x03,0x03,0x03,0x00,0x00,
     0x00,0x03,0x00,0x00,0x00,0x00,0x00,0x03,0x00,0x00,0x00,0x00,0x00,0x03,0x00,0x00,
@@ -183,14 +183,14 @@ static const char code *code g_testImageNames[TEST_IMAGE_COUNT] =
 {
     g_testPatternNameDiamond,
     g_testPatternNameCross,
-    g_testPatternNamePythonDemo
+    g_testPatternNameJluEmblem
 };
 
 static const uint8_t code *code g_testImageFrames[TEST_IMAGE_COUNT] =
 {
     g_testPatternDiamond,
     g_testPatternCross,
-    g_testPattern_custom0
+    g_testPatternJluEmblem
 };
 
 #endif

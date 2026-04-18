@@ -207,8 +207,8 @@
 
 ## 6. 当前默认配置
 
-- 默认 AI8051U I2C 后端：保留中断式收包状态机，并开启 TX DMA 发送应答包。
-- 默认 DMA 方向策略：`RX DMA=off`，`TX DMA=on`；`RX DMA` 已预留为可单独开启的增强路径。
+- 默认 AI8051U I2C 后端：保留 START/STOP 框架中断处理，并默认启用 RX/TX 双向 DMA 进行包数据搬运。
+- 默认 DMA 方向策略：`RX DMA=on`，`TX DMA=on`；如需回退或做对比测试，可通过 `GpLedMatrixAi8051u_SetDmaMode()` 单独关闭某个方向。
 - 默认 DMA 策略切换接口：`GpLedMatrixAi8051u_SetDmaMode()`。
 - 默认显示发送模式：`normal_pair`
 - 默认渲染模式：16x64

@@ -10,9 +10,14 @@
 #include "i2c_device.h"
 #include "esp32_camera.h"
 #include "mcp_server.h"
+#include "settings.h"
+#include "system_info.h"
 
 #include <esp_log.h>
 #include <esp_lcd_panel_vendor.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
 #include <driver/i2c_master.h>
 #include <driver/spi_common.h>
 #include <esp_lcd_touch_ft5x06.h>
@@ -22,10 +27,22 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 #include <cstdio>
+#include <memory>
+#include <mutex>
 #include <optional>
+#include <string_view>
 
 #define TAG "LichuangDevBoard"
+
+namespace {
+constexpr const char* kSnapshotPrefix = "xiaozhi_screen";
+constexpr const char* kSnapshotSettingsNamespace = "debug_snapshot";
+constexpr const char* kSnapshotUploadUrlKey = "upload_url";
+constexpr const char* kSerialSnapCommand = "snap";
+constexpr const char* kSerialSnapUrlCommand = "snap_url";
+}
 
 namespace {
 
@@ -34,6 +51,24 @@ std::string ToAsciiLower(std::string text) {
         return static_cast<char>(std::tolower(ch));
     });
     return text;
+}
+
+std::string TrimAsciiWhitespace(std::string text) {
+    const auto is_space = [](unsigned char ch) {
+        return std::isspace(ch) != 0;
+    };
+
+    text.erase(text.begin(), std::find_if(text.begin(), text.end(), [&](unsigned char ch) {
+        return !is_space(ch);
+    }));
+    text.erase(std::find_if(text.rbegin(), text.rend(), [&](unsigned char ch) {
+        return !is_space(ch);
+    }).base(), text.end());
+    return text;
+}
+
+bool StartsWithCommand(const std::string& text, std::string_view prefix) {
+    return (text.size() >= prefix.size()) && (text.compare(0, prefix.size(), prefix.data()) == 0);
 }
 
 std::optional<uint32_t> ParseRgb888(const std::string& text) {
@@ -191,12 +226,469 @@ public:
 
 class LichuangDevBoard : public WifiBoard {
 private:
+    static constexpr uint32_t kDebugCommandTaskStackWords = 8192;
+    static constexpr UBaseType_t kDebugCommandTaskPriority = 2;
+    static constexpr size_t kDebugCommandQueueLength = 6;
+    static constexpr uint32_t kSerialCommandTaskStackWords = 4096;
+    static constexpr UBaseType_t kSerialCommandTaskPriority = 1;
+    static constexpr size_t kSerialCommandBufferSize = 256;
+
+    struct DebugCommand {
+        enum class Type : uint8_t {
+            kApplyMatrixState = 0,
+            kCaptureSnapshot = 1,
+        };
+
+        Type type = Type::kApplyMatrixState;
+        GpColorDebugState state;
+        int quality = 50;
+    };
+
     i2c_master_bus_handle_t i2c_bus_;
     i2c_master_dev_handle_t pca9557_handle_;
     Button boot_button_;
     Display* display_;
     Pca9557* pca9557_;
     Esp32Camera* camera_;
+    std::unique_ptr<GpLedMatrixEsp32> led_matrix_;
+    QueueHandle_t debug_command_queue_ = nullptr;
+    uint32_t last_debug_snapshot_sequence_ = 0;
+    std::mutex debug_snapshot_mutex_;
+    std::mutex debug_snapshot_upload_mutex_;
+    bool debug_snapshot_upload_in_progress_ = false;
+
+    static std::string GetCompiledDebugSnapshotUploadUrl() {
+        return TrimAsciiWhitespace(GP_DEBUG_SNAPSHOT_DEFAULT_UPLOAD_URL);
+    }
+
+    static std::string GetDebugSnapshotUploadUrl() {
+        Settings settings(kSnapshotSettingsNamespace, false);
+        return settings.GetString(kSnapshotUploadUrlKey, "");
+    }
+
+    static void SetDebugSnapshotUploadUrl(const std::string& url) {
+        Settings settings(kSnapshotSettingsNamespace, true);
+
+        if (url.empty()) {
+            settings.EraseKey(kSnapshotUploadUrlKey);
+            return;
+        }
+
+        settings.SetString(kSnapshotUploadUrlKey, url);
+    }
+
+    static cJSON* BuildDebugSnapshotUploadUrlJson() {
+        const std::string url = GetDebugSnapshotUploadUrl();
+        cJSON* json = cJSON_CreateObject();
+
+        cJSON_AddStringToObject(json, "upload_url", url.c_str());
+        cJSON_AddBoolToObject(json, "configured", !url.empty());
+        cJSON_AddStringToObject(json, "compiled_default_upload_url", GetCompiledDebugSnapshotUploadUrl().c_str());
+        return json;
+    }
+
+    static cJSON* BuildDebugSnapshotCaptureJson(const std::string& status_text, int quality) {
+        const std::string upload_url = GetDebugSnapshotUploadUrl();
+        cJSON* json = cJSON_CreateObject();
+
+        cJSON_AddBoolToObject(json, "accepted", status_text == "Uploading snapshot...");
+        cJSON_AddStringToObject(json, "status", status_text.c_str());
+        cJSON_AddNumberToObject(json, "quality", quality);
+        cJSON_AddStringToObject(json, "upload_url", upload_url.c_str());
+        return json;
+    }
+
+    static void LogDebugSnapshotUploadUrl(const char* reason) {
+        const std::string current_url = GetDebugSnapshotUploadUrl();
+        const std::string default_url = GetCompiledDebugSnapshotUploadUrl();
+
+        ESP_LOGI(TAG, "[%s] snapshot upload url=%s", reason, current_url.empty() ? "<empty>" : current_url.c_str());
+        if (!default_url.empty()) {
+            ESP_LOGI(TAG, "[%s] compiled default snapshot upload url=%s", reason, default_url.c_str());
+        }
+    }
+
+    static bool ResetDebugSnapshotUploadUrlToCompiledDefault() {
+        const std::string default_url = GetCompiledDebugSnapshotUploadUrl();
+
+        if (default_url.empty()) {
+            return false;
+        }
+
+        SetDebugSnapshotUploadUrl(default_url);
+        return true;
+    }
+
+    static void EnsureDefaultDebugSnapshotUploadUrl() {
+        const std::string current_url = GetDebugSnapshotUploadUrl();
+        const std::string default_url = GetCompiledDebugSnapshotUploadUrl();
+
+        if (!current_url.empty()) {
+            ESP_LOGI(TAG, "Snapshot upload URL already configured: %s", current_url.c_str());
+            return;
+        }
+        if (default_url.empty()) {
+            ESP_LOGI(TAG, "No compiled default snapshot upload URL configured");
+            return;
+        }
+
+        SetDebugSnapshotUploadUrl(default_url);
+        ESP_LOGI(TAG, "Applied compiled default snapshot upload URL: %s", default_url.c_str());
+    }
+
+    static bool UploadSnapshotToHttp(const std::string& png_data,
+                                     int width,
+                                     int height,
+                                     int quality,
+                                     uint32_t sequence,
+                                     std::string* error_message) {
+        const std::string upload_url = GetDebugSnapshotUploadUrl();
+        auto network = Board::GetInstance().GetNetwork();
+        std::string response;
+
+        if (upload_url.empty()) {
+            if (error_message != nullptr) {
+                *error_message = "Snapshot upload URL is not configured";
+            }
+            return false;
+        }
+
+        if (network == nullptr) {
+            if (error_message != nullptr) {
+                *error_message = "Network interface is not available";
+            }
+            return false;
+        }
+
+        auto http = network->CreateHttp(3);
+        http->SetHeader("Device-Id", SystemInfo::GetMacAddress().c_str());
+        http->SetHeader("Client-Id", Board::GetInstance().GetUuid().c_str());
+        http->SetHeader("Content-Type", "image/png");
+        http->SetHeader("Transfer-Encoding", "chunked");
+        http->SetHeader("X-Snapshot-Width", std::to_string(width));
+        http->SetHeader("X-Snapshot-Height", std::to_string(height));
+        http->SetHeader("X-Snapshot-Quality", std::to_string(quality));
+        http->SetHeader("X-Snapshot-Sequence", std::to_string(static_cast<unsigned long>(sequence)));
+        http->SetHeader("X-Snapshot-Prefix", kSnapshotPrefix);
+
+        if (!http->Open("POST", upload_url)) {
+            if (error_message != nullptr) {
+                *error_message = "Failed to open snapshot upload URL";
+            }
+            return false;
+        }
+
+        http->Write(png_data.data(), png_data.size());
+        http->Write("", 0);
+
+        if (http->GetStatusCode() != 200) {
+            response = http->ReadAll();
+            http->Close();
+            if (error_message != nullptr) {
+                *error_message = "Snapshot upload HTTP status " + std::to_string(http->GetStatusCode()) + ": " + response;
+            }
+            return false;
+        }
+
+        response = http->ReadAll();
+        http->Close();
+        ESP_LOGI(TAG, "Snap upload HTTP response: %s", response.c_str());
+        return true;
+    }
+
+    void FinishDebugSnapshotUpload(const std::string& notify_text) {
+        ESP_LOGI(TAG, "Snap upload finished: %s", notify_text.c_str());
+        std::lock_guard<std::mutex> lock(debug_snapshot_upload_mutex_);
+        debug_snapshot_upload_in_progress_ = false;
+    }
+
+    void RunDebugSnapshotUpload(int quality) {
+        std::string png_data;
+        std::string error_message;
+        std::string notify_text = "Snapshot upload failed";
+        bool upload_ok = false;
+        uint32_t sequence = 0;
+        int width = 0;
+        int height = 0;
+
+        ESP_LOGI(TAG, "Snap upload start: quality=%d", quality);
+        auto* lvgl_display = dynamic_cast<LvglDisplay*>(display_);
+        if (lvgl_display == nullptr) {
+            error_message = "Current display does not support PNG snapshots";
+            goto cleanup;
+        }
+
+        if (!lvgl_display->SnapshotToPng(png_data)) {
+            error_message = "Failed to capture PNG snapshot";
+            goto cleanup;
+        }
+        ESP_LOGI(TAG, "Snap upload captured PNG: %u bytes", static_cast<unsigned int>(png_data.size()));
+
+        width = display_->width();
+        height = display_->height();
+        {
+            std::lock_guard<std::mutex> lock(debug_snapshot_mutex_);
+            last_debug_snapshot_sequence_ += 1U;
+            sequence = last_debug_snapshot_sequence_;
+        }
+
+        upload_ok = UploadSnapshotToHttp(png_data, width, height, quality, sequence, &error_message);
+        if (upload_ok) {
+            notify_text = "Snapshot uploaded to HTTP";
+            ESP_LOGI(TAG, "Snap upload HTTP sent: seq=%lu width=%d height=%d",
+                static_cast<unsigned long>(sequence), width, height);
+        }
+
+cleanup:
+        if (!upload_ok && !error_message.empty()) {
+            notify_text = error_message;
+            ESP_LOGE(TAG, "Snap upload failed: %s", error_message.c_str());
+        }
+
+        FinishDebugSnapshotUpload(notify_text);
+    }
+
+    static void RunDebugCommandTask(void* task_parameter) {
+        auto* self = static_cast<LichuangDevBoard*>(task_parameter);
+        DebugCommand* command = nullptr;
+
+        if ((self == nullptr) || (self->debug_command_queue_ == nullptr)) {
+            vTaskDelete(nullptr);
+            return;
+        }
+
+        while (true) {
+            command = nullptr;
+            if (xQueueReceive(self->debug_command_queue_, &command, portMAX_DELAY) != pdTRUE) {
+                continue;
+            }
+
+            std::unique_ptr<DebugCommand> holder(command);
+            if (command == nullptr) {
+                continue;
+            }
+
+            switch (command->type) {
+            case DebugCommand::Type::kApplyMatrixState:
+                if (self->led_matrix_ != nullptr) {
+                    self->led_matrix_->ShowDebugState(command->state);
+                }
+                break;
+            case DebugCommand::Type::kCaptureSnapshot:
+                self->RunDebugSnapshotUpload(command->quality);
+                break;
+            default:
+                break;
+            }
+        }
+    }
+
+    bool EnqueueDebugCommand(std::unique_ptr<DebugCommand> command) {
+        DebugCommand* raw_command = nullptr;
+
+        if ((debug_command_queue_ == nullptr) || (command == nullptr)) {
+            return false;
+        }
+
+        raw_command = command.get();
+        if (xQueueSend(debug_command_queue_, &raw_command, 0) != pdTRUE) {
+            ESP_LOGW(TAG, "Debug command queue is full");
+            return false;
+        }
+
+        command.release();
+        return true;
+    }
+
+    bool QueueMatrixDebugState(const GpColorDebugState& state) {
+        auto command = std::make_unique<DebugCommand>();
+
+        command->type = DebugCommand::Type::kApplyMatrixState;
+        command->state = state;
+        return EnqueueDebugCommand(std::move(command));
+    }
+
+    std::string QueueDebugSnapshotCapture(int quality) {
+        auto command = std::make_unique<DebugCommand>();
+        bool busy = false;
+
+        {
+            std::lock_guard<std::mutex> lock(debug_snapshot_upload_mutex_);
+            if (debug_snapshot_upload_in_progress_) {
+                busy = true;
+            } else {
+                debug_snapshot_upload_in_progress_ = true;
+            }
+        }
+
+        if (busy) {
+            return "Snapshot upload busy";
+        }
+
+        command->type = DebugCommand::Type::kCaptureSnapshot;
+        command->quality = quality;
+        if (!EnqueueDebugCommand(std::move(command))) {
+            {
+                std::lock_guard<std::mutex> lock(debug_snapshot_upload_mutex_);
+                debug_snapshot_upload_in_progress_ = false;
+            }
+            ESP_LOGE(TAG, "Snap upload queue failed");
+            return "Snapshot queue failed";
+        }
+
+        ESP_LOGI(TAG, "Snap upload queued");
+        return "Uploading snapshot...";
+    }
+
+    void InitializeDebugCommandTask() {
+        BaseType_t task_created;
+
+        debug_command_queue_ = xQueueCreate(kDebugCommandQueueLength, sizeof(DebugCommand*));
+        if (debug_command_queue_ == nullptr) {
+            ESP_LOGW(TAG, "Failed to create debug command queue");
+            return;
+        }
+
+        task_created = xTaskCreate(
+            &LichuangDevBoard::RunDebugCommandTask,
+            "dbg_cmd_worker",
+            kDebugCommandTaskStackWords,
+            this,
+            kDebugCommandTaskPriority,
+            nullptr);
+        if (task_created != pdPASS) {
+            vQueueDelete(debug_command_queue_);
+            debug_command_queue_ = nullptr;
+            ESP_LOGW(TAG, "Failed to create debug command task");
+        }
+    }
+
+    void ShowSerialCommandNotification(const std::string& text) {
+        Application::GetInstance().Schedule([this, text]() {
+            if (display_ != nullptr) {
+                display_->ShowNotification(text.c_str(), 1600);
+            }
+        });
+    }
+
+    void HandleSerialDebugCommand(std::string line) {
+        std::string argument_text;
+        std::string command;
+        int snap_quality = 50;
+        const std::string help_text =
+            "snap | snap <quality> | snap_url get | set <url> | clear | reset | help";
+
+        line = TrimAsciiWhitespace(std::move(line));
+        if (line.empty()) {
+            return;
+        }
+        if (StartsWithCommand(line, kSerialSnapCommand) &&
+            ((line.size() == std::strlen(kSerialSnapCommand)) || std::isspace(static_cast<unsigned char>(line[std::strlen(kSerialSnapCommand)])))) {
+            argument_text = TrimAsciiWhitespace(line.substr(std::strlen(kSerialSnapCommand)));
+            if (!argument_text.empty()) {
+                char extra = '\0';
+                if ((std::sscanf(argument_text.c_str(), "%d %c", &snap_quality, &extra) != 1) ||
+                    (snap_quality < 0) || (snap_quality > 95)) {
+                    ESP_LOGW(TAG, "Invalid snap quality: %s", argument_text.c_str());
+                    ESP_LOGI(TAG, "Usage: snap | snap <0..95>");
+                    return;
+                }
+            }
+
+            command = QueueDebugSnapshotCapture(snap_quality);
+            ESP_LOGI(TAG, "Serial command triggered snapshot: %s", command.c_str());
+            return;
+        }
+
+        if (!StartsWithCommand(line, kSerialSnapUrlCommand)) {
+            return;
+        }
+
+        argument_text = TrimAsciiWhitespace(line.substr(std::strlen(kSerialSnapUrlCommand)));
+        if (argument_text.empty() || argument_text == "help") {
+            ESP_LOGI(TAG, "Serial command: %s", help_text.c_str());
+            LogDebugSnapshotUploadUrl("serial_help");
+            return;
+        }
+
+        if (argument_text == "get") {
+            LogDebugSnapshotUploadUrl("serial_get");
+            ShowSerialCommandNotification("Snap URL printed to serial");
+            return;
+        }
+
+        if (argument_text == "clear") {
+            SetDebugSnapshotUploadUrl("");
+            ESP_LOGI(TAG, "Serial command cleared snapshot upload URL");
+            LogDebugSnapshotUploadUrl("serial_clear");
+            ShowSerialCommandNotification("Snap URL cleared");
+            return;
+        }
+
+        if (argument_text == "reset") {
+            if (ResetDebugSnapshotUploadUrlToCompiledDefault()) {
+                ESP_LOGI(TAG, "Serial command restored compiled default snapshot upload URL");
+                LogDebugSnapshotUploadUrl("serial_reset");
+                ShowSerialCommandNotification("Snap URL reset");
+            } else {
+                ESP_LOGW(TAG, "Serial command reset failed: no compiled default snapshot upload URL");
+                ShowSerialCommandNotification("No default Snap URL");
+            }
+            return;
+        }
+
+        if (StartsWithCommand(argument_text, "set ")) {
+            command = TrimAsciiWhitespace(argument_text.substr(4));
+            if (command.empty()) {
+                ESP_LOGW(TAG, "Serial command set failed: url is empty");
+                ESP_LOGI(TAG, "Usage: %s", help_text.c_str());
+                return;
+            }
+            SetDebugSnapshotUploadUrl(command);
+            ESP_LOGI(TAG, "Serial command set snapshot upload URL: %s", command.c_str());
+            LogDebugSnapshotUploadUrl("serial_set");
+            ShowSerialCommandNotification("Snap URL updated");
+            return;
+        }
+
+        ESP_LOGW(TAG, "Unknown serial command: %s", line.c_str());
+        ESP_LOGI(TAG, "Usage: %s", help_text.c_str());
+    }
+
+    static void RunSerialCommandTask(void* task_parameter) {
+        auto* self = static_cast<LichuangDevBoard*>(task_parameter);
+        char buffer[kSerialCommandBufferSize] = {0};
+
+        if (self == nullptr) {
+            vTaskDelete(nullptr);
+            return;
+        }
+
+        ESP_LOGI(TAG, "Serial debug command ready: snap | snap <quality> | snap_url get | set <url> | clear | reset | help");
+        while (true) {
+            if (std::fgets(buffer, sizeof(buffer), stdin) == nullptr) {
+                clearerr(stdin);
+                vTaskDelay(pdMS_TO_TICKS(150));
+                continue;
+            }
+            self->HandleSerialDebugCommand(buffer);
+        }
+    }
+
+    void InitializeSerialDebugCommands() {
+        BaseType_t task_created;
+
+        task_created = xTaskCreate(
+            &LichuangDevBoard::RunSerialCommandTask,
+            "dbg_serial_cmd",
+            kSerialCommandTaskStackWords,
+            this,
+            kSerialCommandTaskPriority,
+            nullptr);
+        if (task_created != pdPASS) {
+            ESP_LOGW(TAG, "Failed to create serial debug command task");
+        }
+    }
 
     void InitializeI2c() {
         // The matrix link uses external 3.3V pullups, so keep the ESP32-side bus pullup configuration explicit.
@@ -442,17 +934,74 @@ private:
                 debug_display->ApplyColorDebugState(state);
                 return BuildDotResultJson(state);
             });
+
+        mcp_server.AddTool("self.screen.debug_snapshot.set_upload_url",
+            "Set or clear the HTTP upload URL used by the local Snap button. Use an empty string to clear it.",
+            PropertyList({
+                Property("url", kPropertyTypeString, std::string(""))
+            }),
+            [](const PropertyList& properties) -> ReturnValue {
+                const std::string url = properties["url"].value<std::string>();
+                SetDebugSnapshotUploadUrl(url);
+                return BuildDebugSnapshotUploadUrlJson();
+            });
+
+        mcp_server.AddTool("self.screen.debug_snapshot.get_upload_url",
+            "Return the HTTP upload URL used by the local Snap button.",
+            PropertyList(),
+            [](const PropertyList& properties) -> ReturnValue {
+                return BuildDebugSnapshotUploadUrlJson();
+            });
+
+        mcp_server.AddTool("self.screen.debug_snapshot.capture",
+            "Trigger the local Snap flow and upload the screenshot to the configured HTTP receiver.",
+            PropertyList({
+                Property("quality", kPropertyTypeInteger, 50, 0, 95)
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                const int quality = properties["quality"].value<int>();
+                const std::string status_text = QueueDebugSnapshotCapture(quality);
+                return BuildDebugSnapshotCaptureJson(status_text, quality);
+            });
+
+    }
+
+    void InitializeLedMatrix() {
+        auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display_);
+
+        led_matrix_ = std::make_unique<GpLedMatrixEsp32>(i2c_bus_, GP_MATRIX_I2C_ADDRESS, GP_MATRIX_DEFAULT_BRIGHTNESS);
+        if (debug_display == nullptr) {
+            return;
+        }
+
+        debug_display->ApplyAiLinkStatus(false, "AI8051U INIT\nwaiting image update");
+        led_matrix_->SetLinkStatusCallback([debug_display](bool online, const std::string& status_text) {
+            Application::GetInstance().Schedule([debug_display, online, status_text]() {
+                debug_display->ApplyAiLinkStatus(online, status_text);
+            });
+        });
+        debug_display->SetMatrixDebugStateCallback([this](const GpColorDebugState& state) {
+            return QueueMatrixDebugState(state);
+        });
+        debug_display->SetDebugSnapshotCallback([this]() {
+            return QueueDebugSnapshotCapture(50);
+        });
     }
 
 public:
     LichuangDevBoard() : boot_button_(BOOT_BUTTON_GPIO) {
+        EnsureDefaultDebugSnapshotUploadUrl();
         InitializeI2c();
         InitializeSpi();
         InitializeSt7789Display();
         InitializeTouch();
         InitializeButtons();
         InitializeCamera();
+        InitializeDebugCommandTask();
         InitializeTools();
+        InitializeLedMatrix();
+        InitializeSerialDebugCommands();
+        LogDebugSnapshotUploadUrl("startup");
 
         GetBacklight()->RestoreBrightness();
     }
@@ -469,21 +1018,7 @@ public:
     }
 
     virtual Led* GetLed() override {
-        static GpLedMatrixEsp32 led_matrix(i2c_bus_, GP_MATRIX_I2C_ADDRESS, GP_MATRIX_DEFAULT_BRIGHTNESS);
-        static bool link_status_hook_done = false;
-
-        if (!link_status_hook_done) {
-            auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display_);
-            if (debug_display != nullptr) {
-                link_status_hook_done = true;
-                debug_display->ApplyAiLinkStatus(false, "AI8051U INIT\nwaiting image update");
-                led_matrix.SetLinkStatusCallback([debug_display](bool online, const std::string& status_text) {
-                    debug_display->ApplyAiLinkStatus(online, status_text);
-                });
-            }
-        }
-
-        return &led_matrix;
+        return led_matrix_.get();
     }
     
     virtual Backlight* GetBacklight() override {

@@ -22,6 +22,7 @@ typedef struct
     uint8_t lastStatus;
     uint8_t packetLength;
     uint8_t packetPending;
+    uint8_t packetReplyPrepared;
     uint8_t txLength;
     uint8_t txPending;
     uint8_t dmaRxEnabled;

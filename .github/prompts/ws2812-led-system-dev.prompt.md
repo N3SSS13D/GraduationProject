@@ -89,6 +89,8 @@ If the request is ambiguous, ask only the minimum clarifying questions needed to
 
 - Issue: the AI8051U matrix slave needed an I2C DMA backend without regressing the stable refresh path.
 - Current conclusion:
-	- The active implementation is a hybrid backend: interrupt-driven slave RX remains the stable default, while reply TX can use I2C TX DMA.
-	- RX DMA is available behind `GpLedMatrixAi8051u_SetDmaMode()` but is not the default path until hardware validation confirms it does not perturb LED brightness or scan timing.
-	- Validation now needs to cover both protocol correctness and DMA-side fault signals such as `RXLOSS`, `TXOVW`, and reply-length mismatches.
+	- The active implementation now defaults to bidirectional I2C DMA for packet payload movement, while START/STOP framing remains in the slave ISR.
+	- `GpLedMatrixAi8051u_SetDmaMode()` can still disable either DMA direction for compatibility checks or fallback experiments.
+	- Validation now needs to cover protocol correctness and DMA-side fault signals such as `RXLOSS`, `TXOVW`, and reply-length mismatches.
+	- On `lichuang-dev`, the XiaoZhi-side debug UI now keeps the original main screen as default, exposes a `DBG` entry into a secondary debug menu, uses a fixed header (`Back / Debug Menu / S`), and keeps a stable single-page layout with touch controls, dot preview, link status, and summary information.
+	- The current bidirectional link strategy is: AI8051U prepares an ACK reply immediately after a complete protocol packet is captured, while the main poll loop performs the actual LED action execution outside the ISR.

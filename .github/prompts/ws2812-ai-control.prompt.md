@@ -43,10 +43,25 @@ Current phase emphasis:
 - Reuse the existing `GP_Port` protocol and interface assets before inventing new message shapes.
 - When the existing `voice_color_result` or local voice debug-dot path changes color/effect, mirror that same state to the LED matrix instead of creating a separate test-only flow.
 - Keep the AI8051U I2C electrical assumptions explicit: `P2.4/P2.3` should remain open-drain with no internal pull-up so the bus is controlled by the external `3.3V` pull-up network.
-- Treat former demo animations as callable matrix presets such as `diamond`, `cross`, `python_demo`, and `scroll_subtitle`, and let voice commands select them by name.
+- Treat former demo animations as callable matrix presets such as `diamond`, `cross`, `JLU_emblem`, and `scroll_subtitle`, and let voice commands select them by name.
 - When no preset name is requested, prefer a pure solid-color matrix display rather than expressing the state only through background-color changes.
 - Once a preset is selected, keep rendering only that preset instead of rotating through multiple legacy demo patterns.
 - Change pattern background color only through an explicit background-color command or field; solid-color display commands must not rewrite the stored background.
+- Keep the XiaoZhi online LED brightness aligned with the AI8051U offline default unless the user explicitly changes brightness.
+- Expose device-side UI debugging helpers through MCP, including snapshot control tools that start a device-side capture task and report execution status while the actual image payload is uploaded through the local HTTP receiver.
+- Keep the local Python MCP helper script runnable without arguments by preconfiguring the endpoint and saving captured screenshots into the project folder by default.
+- When the device Snap button is used, freeze that exact frame into an isolated LVGL snapshot buffer, release the LVGL-owned buffer quickly, encode PNG in the background, and upload it to a local HTTP snapshot receiver on the developer machine instead of relying on reverse MCP tools/call over the official voice-model bridge.
+- Prefer serial logs for snapshot progress and failure reporting instead of consuming scarce debug-menu screen space with persistent status text.
+- In addition to receiving device-side HTTP snapshot uploads, the local Python helper should expose a local HTTP control endpoint that lets the host request `self.screen.debug_snapshot.capture` without going through serial text commands.
+- Keep the local Python MCP helper responsibilities explicit: it may relay a device MCP tool call only when the local host hits the HTTP control endpoint, but it should not keep the old serial-trigger path or expose local screenshot Base64 sink tools.
+- After each XiaoZhi-side or MCP-script modification, run the mandatory debug flow in this order:
+	1. XiaoZhi side: build, flash, and monitor the XiaoZhi firmware.
+	2. Stop the old local MCP Python script.
+	3. Restart the local MCP Python script and confirm that both the MCP bridge connection and the local HTTP snapshot receiver are ready.
+	4. Use the local HTTP control endpoint and the on-device Snap button to validate both the host-triggered and device-triggered screenshot paths.
+	5. Verify the result from the local status endpoint and the device serial logs.
+	6. LED driver side: stop the serial monitor, build with Keil without manual download, wait 20 seconds, then reopen the serial port and inspect debug logs.
+	7. Continue iterating based on the observed debug information until the target behavior is reached.
 
 Output format:
 - "Assumptions"

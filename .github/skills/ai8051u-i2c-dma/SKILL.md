@@ -1,6 +1,6 @@
 ---
 name: ai8051u-i2c-dma
-description: 'Add or review AI8051U I2C DMA support. Use when enabling DMA_I2CT/DMA_I2CR, wiring AI8051U I2C slave RX/TX buffers to DMA, building hybrid interrupt-plus-DMA backends, or validating RXLOSS/TXOVW and reply-length behavior.'
+description: 'Add or review AI8051U I2C DMA support. Use when enabling DMA_I2CT/DMA_I2CR, wiring AI8051U I2C slave RX/TX buffers to DMA, building bidirectional DMA backends, or validating RXLOSS/TXOVW and reply-length behavior.'
 argument-hint: 'Target file or module that needs AI8051U I2C DMA support'
 user-invocable: true
 disable-model-invocation: false
@@ -10,10 +10,10 @@ disable-model-invocation: false
 
 ## When to Use
 - Add I2C DMA support to an AI8051U project.
-- Convert an interrupt-only AI8051U I2C slave to a hybrid interrupt + DMA backend.
+- Convert an interrupt-only AI8051U I2C slave to a DMA-backed payload path.
 - Review whether `DMA_I2CT_*`, `DMA_I2CR_*`, and `DMA_I2C_*` are configured correctly.
 - Debug `RXLOSS`, `TXOVW`, ACK error, or DMA length mismatch problems on AI8051U.
-- Reuse the graduation-project pattern where command receive stays interrupt-driven and reply transmit uses TX DMA.
+- Reuse the graduation-project pattern where START/STOP framing stays in the ISR and payload bytes can move through RX/TX DMA.
 
 ## Scope
 This skill is for AI8051U firmware projects that already have a working I2C path and want to add DMA without rewriting the whole protocol stack.
@@ -21,10 +21,10 @@ This skill is for AI8051U firmware projects that already have a working I2C path
 ## Recommended Strategy
 1. Keep the existing I2C slave state machine if it is already stable.
 2. Add DMA as a backend layer around existing `rxBuffer` and `txBuffer` instead of changing protocol parsing.
-3. Prefer hybrid rollout first:
-   - RX path stays interrupt-driven.
-   - TX path moves to I2CT DMA.
-4. Enable RX DMA only after hardware validation shows no visible LED brightness or scan-timing regression.
+3. Prefer a framing-plus-DMA split:
+   - START/STOP, timeout, and packet queueing stay in the I2C ISR.
+   - Payload bytes move through I2CT/I2CR DMA.
+4. If the target project is conservative, use `SetDmaMode(context, enableRx, enableTx)` to stage direction-by-direction rollout.
 
 ## Register Groups
 - `DMA_I2CT_CFG/CR/STA/AMT/DONE/TXAH/TXAL`: I2C TX DMA configuration and status.
@@ -50,13 +50,13 @@ This skill is for AI8051U firmware projects that already have a working I2C path
    - sets transfer interval and priorities,
    - leaves DMA idle until explicitly armed.
 4. Add direction-specific runtime control, ideally by a function like `SetDmaMode(context, enableRx, enableTx)`.
-5. For hybrid TX DMA:
+5. For TX DMA:
    - keep packet build logic unchanged,
    - when the master starts a read, point TX DMA to `txBuffer`,
    - set amount to `txLength - 1`,
    - enable TX DMA and trigger it,
    - clear `txPending` when `DMA_I2CT_STA.I2CTIF` indicates completion.
-6. For optional RX DMA:
+6. For RX DMA:
    - point RX DMA at `rxBuffer`,
    - set amount to `rxBufferSize - 1`,
    - trigger RX on START,
@@ -79,10 +79,10 @@ This skill is for AI8051U firmware projects that already have a working I2C path
 ## Validation Checklist
 - TX DMA reply length matches the protocol packet length.
 - Repeated-start read transactions do not leave TX DMA active after STOP.
-- RX DMA, if enabled, does not duplicate or drop the address byte.
+- RX DMA does not duplicate or drop the address byte.
 - No visible LED dimming or scan jitter appears when DMA is enabled.
 - `RXLOSS` and `TXOVW` are both cleared and counted.
 - Timeout and STOP still reset the I2C transfer state correctly.
 
 ## Reuse Reference
-See [integration reference](./references/integration.md) for a concrete hybrid pattern and rollout guidance.
+See [integration reference](./references/integration.md) for a concrete AI8051U DMA integration pattern and rollout guidance.

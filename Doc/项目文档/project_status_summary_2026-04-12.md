@@ -65,7 +65,7 @@
 - 已实现 AI8051U USB I2C 日志细分，可区分 `payload_stop`、`restart_flush`、`empty_stop` 与真实协议执行包。
 - 已实现 ESP32 侧回包校验、链路状态面板和最近命令摘要显示。
 - 已改为“仅在显式图像更新时通信”，待机/聆听状态不会再自动覆盖上一幅矩阵图像。
-- 已将原测试动画整理为可调用预设：`diamond`、`cross`、`python_demo`、`scroll_subtitle`。
+- 已将原测试动画整理为可调用预设：`diamond`、`cross`、`JLU_emblem`、`scroll_subtitle`。
 
 ## 4. 当前未完成项
 

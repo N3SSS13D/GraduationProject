@@ -29,7 +29,7 @@
 
 #define TEST_PRESET_DIAMOND_FADE         0U
 #define TEST_PRESET_CROSS_GRADIENT       1U
-#define TEST_PRESET_PYTHON_STATIC        2U
+#define TEST_PRESET_JLU_EMBLEM_STATIC    2U
 #define TEST_PRESET_JLU_SCROLL           3U
 
 static uint32_t g_testRowIntervalUs = TEST_ROW_INTERVAL_US_DEFAULT_NORMAL;
@@ -404,7 +404,7 @@ static void Test_ApplyPresetMode(uint8_t presetMode)
         g_testRenderCfg.bgB = 0x00;
         DrawDrv_SetImageIndex(TEST_IMAGE_IDX_CROSS);
     }
-    else if (presetMode == TEST_PRESET_PYTHON_STATIC)
+    else if (presetMode == TEST_PRESET_JLU_EMBLEM_STATIC)
     {
         g_testRenderCfg.contentType = DRAWDRV_CONTENT_PATTERN;
         g_testRenderCfg.colorMode = DRAWDRV_COLOR_SOLID;
@@ -419,7 +419,7 @@ static void Test_ApplyPresetMode(uint8_t presetMode)
         g_testRenderCfg.bgR = 0x00;
         g_testRenderCfg.bgG = 0x00;
         g_testRenderCfg.bgB = 0x00;
-        DrawDrv_SetImageIndex(TEST_IMAGE_IDX_PYTHON_DEMO);
+        DrawDrv_SetImageIndex(TEST_IMAGE_IDX_JLU_EMBLEM);
     }
     else
     {
@@ -571,8 +571,6 @@ void Test_Init(void)
     (void)WS2812DRV_SetDisplayMode(WS2812DRV_MODE_16X16);
     DrawDrv_Init();
     GpLedMatrixAi8051u_Init(&g_testAiMatrixCtx, GP_MATRIX_DEFAULT_I2C_ADDRESS);
-    /* Default to TX DMA only; RX DMA stays opt-in until hardware validation confirms it does not perturb refresh timing. */
-    GpLedMatrixAi8051u_SetDmaMode(&g_testAiMatrixCtx, 0U, 1U);
     Test_LoadDefaultRenderConfig();
 
     MidTask_Init();

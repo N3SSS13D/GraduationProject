@@ -11,6 +11,7 @@
 #include <driver/i2c_master.h>
 
 #include "device_state.h"
+#include "gp_debug_display.h"
 #include "i2c_device.h"
 #include "led/led.h"
 #include "gp_led_matrix_protocol.h"
@@ -25,6 +26,7 @@ public:
     void RunStartupLinkTest();
     void SetBrightness(uint8_t brightness);
     void SetLinkStatusCallback(LinkStatusCallback callback);
+    bool ShowDebugState(const GpColorDebugState& state);
     bool ShowAction(const GpMatrixActionPayload& action);
     bool ShowRgb332Frame(const uint8_t* frame, size_t length, GpMatrixMode mode = kGpMatrixModeSolidFrame);
     bool ShowGlyphRows(const uint16_t* rows, size_t row_count, uint8_t glyph_count, uint8_t glyph_width, uint8_t glyph_spacing);
