@@ -1,5 +1,10 @@
 # Project General Coding Guidelines
 
+## Project Skills
+- Apply `.github/skills/karpathy-guidelines/SKILL.md` when writing, reviewing, or refactoring code in this repository.
+- Concretely: state assumptions before coding, prefer the simplest change that solves the request, keep edits surgical, and define explicit verification criteria before implementation.
+- If a task can be solved with documentation or a small targeted change, do not add new abstractions or speculative configuration.
+
 ## Code Style
 - Self-written code must follow these guidelines; external/third-party code retains its original style
 - Order include files from least stable to most stable to reduce compile time

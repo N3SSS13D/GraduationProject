@@ -23,6 +23,8 @@
 //<<AICUBE_USER_GLOBAL_DEFINE_BEGIN>>
 // 在此添加用户全局变量定义、用户宏定义以及函数声明  
 #define MAIN_STARTUP_DELAY_MS           2000
+
+static void SYS_ClockInit(void);
 //<<AICUBE_USER_GLOBAL_DEFINE_END>>
 
 
@@ -63,12 +65,14 @@ void SYS_Init(void)
     EnableAccessXFR();                  //使能访问扩展XFR
     AccessCodeFastest();                //设置最快速度访问程序代码
     AccessIXramFastest();               //设置最快速度访问内部XDATA
+    SYS_ClockInit();                    //设置系统主时钟为33.1776MHz
     IAP_SetTimeBase();                  //设置IAP等待参数,产生1us时基
 
     //<<AICUBE_USER_PREINITIAL_CODE_BEGIN>>
     // 在此添加用户预初始化代码  
     //<<AICUBE_USER_PREINITIAL_CODE_END>>
 
+    PORT2_Init();                       //P2口初始化
     PORT0_Init();                       //P0口初始化
     PORT1_Init();                       //P1口初始化
     PORT3_Init();                       //P3口初始化
@@ -88,6 +92,26 @@ void SYS_Init(void)
     EnableGlobalInt();                  //使能全局中断
 }
 
+static void SYS_ClockInit(void)
+{
+    CLK_HSIOCK_Divider(1);
+    CLK_SPICLK_Divider(1);
+    CLK_I2SCLK_Divider(1);
+    CLK_PWMACLK_Divider(1);
+    CLK_PWMBCLK_Divider(1);
+    CLK_TFPUCLK_Divider(1);
+
+    CLK_IRC48M_Enable();
+    CLK_IRC48M_WaitStable();
+
+    CLK_SYSCLK_Divider(10);
+    HIRC_33M1776();
+    CLK_MCLK_HIRC();
+    CLK_MCLK2_BYPASS();
+    CLK_SYSCLK_Divider(1);
+    CLK_HSIOCK_MCLK();
+}
+
 ////////////////////////////////////////
 // 微秒延时函数
 // 入口参数: us (设置延时的微秒值)
@@ -97,7 +121,7 @@ void delay_us(uint16_t us)
 {
     do
     {
-        NOP(34);                        //(MAIN_Fosc + 500000) / 1000000 - 6
+        NOP(27);                        //(MAIN_Fosc + 500000) / 1000000 - 6
     } while (--us);
 }
 

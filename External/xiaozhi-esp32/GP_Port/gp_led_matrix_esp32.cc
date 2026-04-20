@@ -9,7 +9,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#include "application.h"
+#include "gp_led_matrix_transport.h"
 
 #define TAG "GpLedMatrix"
 
@@ -23,7 +23,6 @@ constexpr uint8_t kColorBlue = 0x03;
 constexpr uint8_t kColorCyan = 0x1F;
 constexpr uint8_t kColorPurple = 0xC3;
 constexpr uint8_t kColorWhite = 0xFF;
-constexpr uint32_t kGpMatrixI2cSpeedHz = 100000;
 constexpr uint32_t kStartupLinkTestIntervalMs = 1000;
 constexpr uint32_t kReplyPollIntervalMs = 8;
 constexpr uint32_t kReplyPollRetries = 12;
@@ -83,9 +82,8 @@ GpMatrixActionPayload BuildReleaseAction() {
 }
 }
 
-GpLedMatrixEsp32::GpLedMatrixEsp32(i2c_master_bus_handle_t i2c_bus, uint8_t address, uint8_t brightness)
-    : I2cDevice(i2c_bus, address, kGpMatrixI2cSpeedHz),
-      brightness_(brightness),
+GpLedMatrixEsp32::GpLedMatrixEsp32(std::unique_ptr<GpMatrixTransport> transport, uint8_t brightness)
+        : brightness_(brightness),
       sequence_(0),
       success_count_(0),
       failure_count_(0),
@@ -94,6 +92,7 @@ GpLedMatrixEsp32::GpLedMatrixEsp32(i2c_master_bus_handle_t i2c_bus, uint8_t addr
       remote_override_active_(false),
       has_last_action_(false),
       has_last_state_(false),
+            transport_(std::move(transport)),
       last_state_(kDeviceStateUnknown) {
 }
 
@@ -318,11 +317,10 @@ bool GpLedMatrixEsp32::SendCommand(uint8_t command, const uint8_t* payload, size
     buffer.back() = GpMatrixComputeChecksum(buffer.data(), buffer.size() - 1);
     last_payload_summary_ = BuildPayloadSummary(command, payload, payload_length);
 
-    auto err = i2c_master_transmit(i2c_device_, buffer.data(), buffer.size(), 100);
-    if (err != ESP_OK) {
+    if ((transport_ == nullptr) || !transport_->WritePacket(buffer.data(), buffer.size(), 100)) {
         failure_count_++;
-        ESP_LOGW(TAG, "I2C command 0x%02x failed: %s", command, esp_err_to_name(err));
-        NotifyLinkStatus(false, BuildStatusText(false, command, sequence, payload_length, err, kGpMatrixStatusInternalError, false));
+        ESP_LOGW(TAG, "Matrix transport write failed for command 0x%02x", command);
+        NotifyLinkStatus(false, BuildStatusText(false, command, sequence, payload_length, ESP_FAIL, kGpMatrixStatusInternalError, false));
         return false;
     }
 
@@ -356,8 +354,7 @@ bool GpLedMatrixEsp32::ReadReply(uint8_t expected_sequence, uint8_t expected_com
     reply_status = kGpMatrixStatusInternalError;
     vTaskDelay(pdMS_TO_TICKS(4));
     for (uint32_t attempt = 0; attempt < kReplyPollRetries; ++attempt) {
-        const esp_err_t err = i2c_master_receive(i2c_device_, reply.data(), reply.size(), 100);
-        if (err == ESP_OK) {
+        if ((transport_ != nullptr) && transport_->ReadPacket(reply.data(), reply.size(), 100)) {
             if ((reply[0] != GP_MATRIX_PROTOCOL_MAGIC0)
                 || (reply[1] != GP_MATRIX_PROTOCOL_MAGIC1)
                 || (reply[2] != GP_MATRIX_PROTOCOL_VERSION)) {

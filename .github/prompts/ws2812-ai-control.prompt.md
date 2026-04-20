@@ -38,11 +38,11 @@ Execution requirements:
 6. Keep protocol parsing and arbitration in `mid/`, and keep App focused on decision flow.
 
 Current phase emphasis:
-- The next target is not a generic AI platform layer. It is a narrow bridge from XiaoZhi voice output to AI8051U-executable LED actions over local I2C first.
+- The next target is not a generic AI platform layer. It is a narrow bridge from XiaoZhi voice output to AI8051U-executable LED actions over the current local transport, which is I2C on the stable branch and the restored UART2 HC-05 path on `BT_Version`.
 - Prioritize the local communication loop without requiring external MCP bridging. Add MCP-facing expansion only after the local path is stable.
 - Reuse the existing `GP_Port` protocol and interface assets before inventing new message shapes.
 - When the existing `voice_color_result` or local voice debug-dot path changes color/effect, mirror that same state to the LED matrix instead of creating a separate test-only flow.
-- Keep the AI8051U I2C electrical assumptions explicit: `P2.4/P2.3` should remain open-drain with no internal pull-up so the bus is controlled by the external `3.3V` pull-up network.
+- Keep the active AI8051U transport electrical assumptions explicit: the stable branch uses I2C on `P2.4/P2.3`, while the current `BT_Version` path uses UART2 on `P4.2/P4.3` at `9600 8N1` with HC-05 text forwarding and Timer2 reserved only for UART2 baud generation.
 - Treat former demo animations as callable matrix presets such as `diamond`, `cross`, `JLU_emblem`, and `scroll_subtitle`, and let voice commands select them by name.
 - When no preset name is requested, prefer a pure solid-color matrix display rather than expressing the state only through background-color changes.
 - Once a preset is selected, keep rendering only that preset instead of rotating through multiple legacy demo patterns.
@@ -62,6 +62,7 @@ Current phase emphasis:
 	5. Verify the result from the local status endpoint and the device serial logs.
 	6. LED driver side: stop the serial monitor, build with Keil without manual download, wait 20 seconds, then reopen the serial port and inspect debug logs.
 	7. Continue iterating based on the observed debug information until the target behavior is reached.
+- Recommended automation entry for the above flow: `tools/ws2812_dev_cycle.ps1`. Use `-ValidateSnapshotControl` when you need the script to also trigger `/control/snapshot`.
 
 Output format:
 - "Assumptions"

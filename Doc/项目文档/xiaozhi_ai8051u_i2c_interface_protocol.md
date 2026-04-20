@@ -1,5 +1,7 @@
 # 小智 AI 与 AI8051U I2C 接口及协议说明
 
+> 说明：本文档对应稳定版 `I2C_Version` 的参考实现。`BT_Version` 当前已改为 AI8051U `UART2 + HC-05` 传输链路，相关设置和限制见 `bt_version_hc05_uart2_architecture.md`。
+
 ## 1. 目标
 
 本文档用于说明当前 `xiaozhi-esp32` 与 `STC51/Project/ws2812_driver` 之间的本地 I2C 联调接口、默认时序、协议包格式，以及当前已实现和待验证的能力。

@@ -18,8 +18,8 @@
 #define __ENCODING              "UTF-8" //DO NOT DELETE or MODIFY
 
 
-#define HIRC                    40000000UL
-#define FOSC                    40000000UL
+#define HIRC                    33177600UL
+#define FOSC                    33177600UL
 #define SYSCLK                  FOSC
 #define MAIN_Fosc               FOSC
 
@@ -45,6 +45,7 @@
 
 #include "port.h"
 #include "timer.h"
+#include "uart.h"
 #include "exti.h"
 #include "pwm.h"
 #include "usblib.h"

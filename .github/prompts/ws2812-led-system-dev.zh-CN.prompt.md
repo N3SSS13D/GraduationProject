@@ -32,6 +32,7 @@ model: "GPT-5 (copilot)"
 - 若任务涉及小智 AI 桥接，先检查 `External/xiaozhi-esp32/GP_Port/` 是否已有可复用协议或接口定义。
 
 执行要求：
+0. 开始分析、编写、评审或重构前，先读取并应用 `.github/skills/karpathy-guidelines/SKILL.md`，明确假设、选择最小改动，并先定义验证标准。
 1. 先分析现有代码并总结可复用部分。
 2. 仅针对本次功能提出最小实现方案。
 3. 按现有风格和命名规范直接修改工作区代码。
@@ -39,6 +40,8 @@ model: "GPT-5 (copilot)"
 5. 若功能涉及任务调度，实现轻量协作式（非抢占）mini-OS 风格调度器，适配 8051 资源约束。
 6. 若功能涉及小智AI控制，优先将 `voice_color_result` 或等价动作对象映射为显示动作，并与 `GP_Port/gp_led_matrix_protocol.h` 保持兼容。
 7. 增补简明技术文档，说明集成方式与使用方法。
+8. 每次修改代码后，自动执行当前任务对应的验证流程；涉及本仓库联调顺序时，优先使用 `tools/ws2812_dev_cycle.ps1` 作为统一自动化入口。
+9. 若当前改动涉及 `BT_Version` 的 AI8051U 蓝牙调试链路，验证时优先使用 `-RunAi8051BtDebug`，自动打开 AI8051 serial monitor，发送 `BT AT`、`BT AT+UART?` 并读取返回日志。
 
 约束：
 - 保证时序关键路径具备确定性。
@@ -50,7 +53,8 @@ model: "GPT-5 (copilot)"
 当前仓库阶段：
 - `STC51/Project/ws2812_driver` 已具备稳定的 PWM + DMA、74HC595/PMOS 行扫描与 USB 调试命令基础。
 - `External/xiaozhi-esp32/GP_Port/` 已具备协议头、ESP32 驱动骨架、AI8051U 接口设计、MCP 调试工具与联调脚本。
-- 下一阶段主目标是打通“小智 AI -> I2C 自定义协议 -> AI8051U -> WS2812 显示动作”闭环。
+- 稳定版主目标已完成“小智 AI -> I2C 自定义协议 -> AI8051U -> WS2812 显示动作”闭环；`BT_Version` 当前本地联调主目标是保持 AI8051U 侧 `UART2(P4.2/P4.3) + HC-05` 链路稳定，新增 `P4.1 -> HC-05 PIO11` AT 模式控制，系统主时钟固定为 `33.1776MHz`，上电默认 `9600 8N1`，使用 USB 仅做结构化 `BT SEND/BT STATUS` 蓝牙调试命令转发与 UART2 收发日志监视，并继续保留 ESP32 侧传输抽象与经典蓝牙 SPP 链接限制记录。
+- 在 `BT_Version` 上，当前 AI8051U 串口测试应直接使用 `P4.2/P4.3` 上的 UART2，保持 `gp_led_matrix_ai8051u` 为主运行路径，避免把 Timer2 复用为本地计时调试资源，并在执行 `AT+UART=...` 后让 AI8051U 本地 UART2 波特率同步切换到新的目标值。
 
 输出格式：
 - "Assumptions"
@@ -58,6 +62,12 @@ model: "GPT-5 (copilot)"
 - "Files changed"
 - "Verification"（实际执行的构建/测试/静态检查；若未执行需说明原因）
 - "Next steps"
+
+验证补充要求：
+
+- 只要修改了源代码，就不要停在“建议如何测试”；应直接执行可用的自动化验证。
+- STC51 侧源码修改后，至少执行一次 `STC51/Project/ws2812_driver/ws2812_driver.uvproj` 的 Keil 重编译，直到构建成功。
+- 若改动影响小智、MCP、AI8051U 联调边界，同步执行 `tools/ws2812_dev_cycle.ps1` 对应流程，并把实际验证结果写入 "Verification"。
 
 如果需求存在歧义，只提最少且必要的问题后继续推进。
 
@@ -89,4 +99,4 @@ model: "GPT-5 (copilot)"
 	- 将 `voice_color_result` 结构映射为 STC 侧 WS2812 动作参数；
 	- 在 `Sources/app/` 增加 AI 输入适配层；
 	- 在 `Sources/drv/` 或 `Sources/mid/` 增加颜色/动画动作接口；
-	- 优先围绕 I2C 自定义协议和 AI8051U 收包执行链做增量实现。
+	- 稳定版继续围绕 I2C 自定义协议收敛；`BT_Version` 当前优先围绕 AI8051U `UART2 + HC-05` 传输闭环与协议回包路径做最小实现与验证。

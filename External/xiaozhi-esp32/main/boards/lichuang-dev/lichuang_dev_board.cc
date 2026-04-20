@@ -4,6 +4,7 @@
 #include "display/emote_display.h"
 #include "gp_debug_display.h"
 #include "gp_led_matrix_esp32.h"
+#include "gp_led_matrix_transport.h"
 #include "application.h"
 #include "button.h"
 #include "config.h"
@@ -691,7 +692,7 @@ cleanup:
     }
 
     void InitializeI2c() {
-        // The matrix link uses external 3.3V pullups, so keep the ESP32-side bus pullup configuration explicit.
+        /* Audio codec, touch panel, camera SCCB, and the PCA9557 all share this local I2C bus. */
         i2c_master_bus_config_t i2c_bus_cfg = {
             .i2c_port = (i2c_port_t)1,
             .sda_io_num = AUDIO_CODEC_I2C_SDA_PIN,
@@ -968,13 +969,35 @@ cleanup:
 
     void InitializeLedMatrix() {
         auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display_);
+        std::unique_ptr<GpMatrixTransport> transport;
+        bool using_bt_spp = false;
 
-        led_matrix_ = std::make_unique<GpLedMatrixEsp32>(i2c_bus_, GP_MATRIX_I2C_ADDRESS, GP_MATRIX_DEFAULT_BRIGHTNESS);
+    #if CONFIG_GP_MATRIX_TRANSPORT_BT_SPP
+        transport = CreateGpMatrixBtSppTransport(CONFIG_GP_MATRIX_BT_LOCAL_NAME,
+                                                 CONFIG_GP_MATRIX_BT_REMOTE_NAME,
+                                                 CONFIG_GP_MATRIX_BT_REMOTE_ADDR,
+                                                 CONFIG_GP_MATRIX_BT_PIN_CODE,
+                                                 CONFIG_GP_MATRIX_BT_CONNECT_TIMEOUT_MS);
+        using_bt_spp = (transport != nullptr);
+    #else
+        transport = CreateGpMatrixI2cTransport(i2c_bus_, GP_MATRIX_I2C_ADDRESS, 100000);
+    #endif
+
+        if (transport == nullptr) {
+            ESP_LOGW(TAG, "Falling back to I2C matrix transport");
+            transport = CreateGpMatrixI2cTransport(i2c_bus_, GP_MATRIX_I2C_ADDRESS, 100000);
+        }
+
+        led_matrix_ = std::make_unique<GpLedMatrixEsp32>(std::move(transport), GP_MATRIX_DEFAULT_BRIGHTNESS);
         if (debug_display == nullptr) {
             return;
         }
 
-        debug_display->ApplyAiLinkStatus(false, "AI8051U INIT\nwaiting image update");
+        if (using_bt_spp) {
+            debug_display->ApplyAiLinkStatus(false, "HC-05 SPP\nwaiting connect");
+        } else {
+            debug_display->ApplyAiLinkStatus(false, "AI8051U INIT\nwaiting image update");
+        }
         led_matrix_->SetLinkStatusCallback([debug_display](bool online, const std::string& status_text) {
             Application::GetInstance().Schedule([debug_display, online, status_text]() {
                 debug_display->ApplyAiLinkStatus(online, status_text);

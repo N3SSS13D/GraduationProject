@@ -18,6 +18,7 @@
 - 将原有测试动画整理为可调用预设，例如 `diamond`、`cross`、`python_demo`、`scroll_subtitle`，并允许语音指令直接引用这些预设名。
 
 工作要求：
+0. 开始分析、编写、评审或重构前，先读取并应用 `d:\GraduationProject\.github\skills\karpathy-guidelines\SKILL.md`，明确假设、选择最小改动，并先定义验证标准。
 1. 优先复用 `Board`、`I2cDevice`、`Led` 三层抽象。
 2. 当前矩阵内容应以显式图像更新为准，不应由待机、聆听、说话等设备状态自动覆盖。
 3. 协议负载优先兼容 `GP_Port/test_image.h` 里的 RGB332 帧和 16 行字模格式。
@@ -30,6 +31,8 @@
 10. 每次小智端和 MCP 脚本修改后，自动终止旧 MCP 脚本，并通过 ESP-IDF 执行编译、下载、监视，然后重新运行 MCP 脚本。
 11. 每次改动后优先检查构建错误，再补说明文档和命令示例。
 12. 任何 AI8051U 侧代码都应按接口层或模板层组织，除非明确要求再扩展成完整固件工程。
+13. 若涉及仓库级联调，优先使用 `d:\GraduationProject\tools\ws2812_dev_cycle.ps1` 作为统一自动化入口；修改代码后不要只写“建议测试”，应直接执行可用的自动化验证。
+14. 若当前分支为 `BT_Version` 且改动涉及 AI8051U 蓝牙链路，验证阶段优先追加 `-RunAi8051BtDebug`，自动打开 AI8051 serial monitor，发送 `BT SEND AT`、`BT SEND AT+...`、`BT STATUS` 并读取返回日志。
 
 输出要求：
 1. 修改说明要指出新增的协议、ESP32 驱动、AI8051U 接口边界和验证状态。

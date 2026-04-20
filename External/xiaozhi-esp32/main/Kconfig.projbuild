@@ -33,6 +33,59 @@ config CUSTOM_ASSETS_FILE
         The custom assets file to flash.
         It can be a local file relative to the project directory or a remote url.
 
+choice GP_MATRIX_TRANSPORT
+    prompt "GP matrix transport"
+    default GP_MATRIX_TRANSPORT_I2C
+    help
+        Select how the ESP32 side reaches the AI8051U matrix protocol endpoint.
+
+    config GP_MATRIX_TRANSPORT_I2C
+        bool "I2C"
+    config GP_MATRIX_TRANSPORT_BT_SPP
+        depends on IDF_TARGET_ESP32
+        bool "Classic Bluetooth SPP"
+endchoice
+
+comment "Classic Bluetooth SPP transport is available only on ESP32 classic Bluetooth targets"
+    depends on !IDF_TARGET_ESP32
+
+config GP_MATRIX_BT_LOCAL_NAME
+    depends on GP_MATRIX_TRANSPORT_BT_SPP
+    string "Local classic Bluetooth name"
+    default "XiaoZhi-Matrix"
+    help
+        The device name exposed by the ESP32 classic Bluetooth stack while opening the SPP client.
+
+config GP_MATRIX_BT_REMOTE_NAME
+    depends on GP_MATRIX_TRANSPORT_BT_SPP
+    string "Remote HC-05 name"
+    default "HC-05"
+    help
+        When no remote MAC address is configured, the ESP32 will scan for this classic Bluetooth name.
+
+config GP_MATRIX_BT_REMOTE_ADDR
+    depends on GP_MATRIX_TRANSPORT_BT_SPP
+    string "Remote HC-05 MAC address"
+    default ""
+    help
+        Optional classic Bluetooth MAC address in the form 00:11:22:33:44:55.
+        If set, the ESP32 skips discovery-by-name and connects directly on the default SPP channel.
+
+config GP_MATRIX_BT_PIN_CODE
+    depends on GP_MATRIX_TRANSPORT_BT_SPP
+    string "Classic Bluetooth PIN code"
+    default "1234"
+    help
+        Fixed legacy PIN code used for pairing with the HC-05 module.
+
+config GP_MATRIX_BT_CONNECT_TIMEOUT_MS
+    depends on GP_MATRIX_TRANSPORT_BT_SPP
+    int "SPP connect timeout (ms)"
+    range 1000 30000
+    default 12000
+    help
+        Maximum time spent waiting for the HC-05 SPP link to come online.
+
 choice
     prompt "Default Language"
     default LANGUAGE_ZH_CN

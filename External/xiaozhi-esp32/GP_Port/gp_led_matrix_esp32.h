@@ -5,22 +5,22 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 
-#include <driver/i2c_master.h>
-
 #include "device_state.h"
 #include "gp_debug_display.h"
-#include "i2c_device.h"
 #include "led/led.h"
 #include "gp_led_matrix_protocol.h"
 
-class GpLedMatrixEsp32 : public Led, protected I2cDevice {
+class GpMatrixTransport;
+
+class GpLedMatrixEsp32 : public Led {
 public:
     using LinkStatusCallback = std::function<void(bool online, const std::string& status_text)>;
 
-    GpLedMatrixEsp32(i2c_master_bus_handle_t i2c_bus, uint8_t address, uint8_t brightness = 0x40);
+    GpLedMatrixEsp32(std::unique_ptr<GpMatrixTransport> transport, uint8_t brightness = 0x40);
 
     void OnStateChanged() override;
     void RunStartupLinkTest();
@@ -43,6 +43,7 @@ private:
     bool remote_override_active_;
     bool has_last_action_;
     bool has_last_state_;
+    std::unique_ptr<GpMatrixTransport> transport_;
     GpMatrixActionPayload last_action_;
     DeviceState last_state_;
     std::string last_payload_summary_;

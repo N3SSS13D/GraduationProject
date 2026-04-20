@@ -18,9 +18,14 @@ Preferred dependency direction:
 
 - The STC side already has a stable WS2812 scan/output path with PWM + DMA, 74HC595 row selection, and USB debug commands.
 - The XiaoZhi snapshot already includes `GP_Port` protocol notes, an ESP32 driver skeleton, an AI8051U interface design, and MCP debug tooling.
-- The next milestone is a complete voice-to-LED bridge over I2C and a custom protocol.
+- The stable milestone is the complete voice-to-LED bridge over I2C and a custom protocol; `BT_Version` currently focuses on the restored AI8051U `UART2(P4.2/P4.3) + HC-05` transport path with USB used only for Bluetooth command forwarding and UART2 log monitoring.
 
 ## Prompt Families
+
+## Project Skills
+
+- [karpathy-guidelines](../skills/karpathy-guidelines/SKILL.md): default behavior guardrail for write/review/refactor tasks. Use it to surface assumptions, keep changes minimal, and define verification before implementation.
+- [ai8051u-i2c-dma](../skills/ai8051u-i2c-dma/SKILL.md): use when touching AI8051U I2C DMA backends or DMA-linked buffer handling.
 
 ### Core Development
 
@@ -49,7 +54,7 @@ Preferred dependency direction:
 
 ## GP_Port Prompt Set
 
-The `External/xiaozhi-esp32/GP_Port/` directory keeps the phase-by-phase prompts for the ESP32 <-> AI8051U bridge. They are aligned to the current next step: I2C custom protocol + voice-controlled LED display.
+The `External/xiaozhi-esp32/GP_Port/` directory keeps the phase-by-phase prompts for the ESP32 <-> AI8051U bridge. On `BT_Version`, they must also account for the current verified boundary: the ESP32-side classic Bluetooth SPP backend can be kept as conditional code, but `ESP-IDF v5.4.3 + esp32s3` does not link the required `esp_spp_* / esp_bt_gap_*` symbols into a runnable image.
 
 ## Usage
 

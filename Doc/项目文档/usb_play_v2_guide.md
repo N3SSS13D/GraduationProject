@@ -92,3 +92,31 @@ A low-active key on P3.3 (INT1) toggles row-scan sending mode:
 - Parameters can be combined in any order on one PLAY line.
 - If command is invalid, firmware replies with a PLAY usage hint.
 - In legacy mode, firmware may auto-clamp too-small interval to a safe minimum to avoid scan jitter/flicker.
+
+## 6.1 Bluetooth debug command
+
+The USB parser now accepts a small structured Bluetooth command set on `BT_Version`:
+
+- `BT SEND text`
+- `BT STATUS`
+- `BT text` (legacy direct payload form, still supported)
+
+Common examples:
+
+- `BT SEND AT`
+- `BT AT+VERSION?`
+- `BT AT+UART?`
+- `BT AT+UART=115200,0,0`
+- `BT SEND LED 0`
+
+Behavior:
+
+- `BT SEND text` forwards `text` to the HC-05 on `UART2(P4.2/P4.3)` and always appends `\r\n` if missing.
+- `BT STATUS` prints the compact UART2 state summary without sending anything to the HC-05.
+- `BT text` remains available as a compatibility shortcut and behaves like `BT SEND text`.
+- If `text` starts with `AT`, firmware raises `P4.1` before sending so HC-05 `PIO11` enters AT mode.
+- If `text` does not start with `AT`, firmware lowers `P4.1` before sending so HC-05 stays in transparent transport mode.
+- If `text` is `AT+UART=<baud>,0,0`, firmware first waits for the HC-05 reply on the old baudrate and switches the local `UART2` baudrate only after the reply contains `OK`; boot-time default remains `9600 8N1`.
+- The received HC-05 reply is printed through USB serial as ASCII and HEX summaries.
+- Firmware prints compact tagged logs such as `[BT_CMD]`, `[BT_RSP]`, `[BT_STA]`, `[BT_MON]`, and `[BT_ACT]` so command flow, reply flow, periodic monitor output, and board actions are easier to distinguish.
+- RX-side debug text is captured in the UART ISR and then printed/handled by a 50ms scheduled debug task after the byte stream becomes idle, so incoming text such as `LED 0` can still light the board LED without doing heavy work inside the ISR.

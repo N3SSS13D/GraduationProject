@@ -15,10 +15,14 @@
 //<<AICUBE_USER_DEFINE_END>>
 
 
+void PORT2_Init(void);
 void PORT0_Init(void);
 void PORT1_Init(void);
 void PORT3_Init(void);
 void PORT4_Init(void);
+void PORT2_ClearDebugLeds(void);
+void PORT2_SetDebugLedDigit(uint8_t digit);
+uint8_t PORT2_GetDebugLedDigit(void);
 
 
 

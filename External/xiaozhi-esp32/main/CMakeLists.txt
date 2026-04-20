@@ -10,6 +10,7 @@ set(SOURCES "audio/audio_codec.cc"
             "audio/codecs/dummy_audio_codec.cc"
             "audio/processors/audio_debugger.cc"
             "../GP_Port/gp_led_matrix_esp32.cc"
+            "../GP_Port/gp_led_matrix_transport.cc"
             "../GP_Port/gp_debug_display.cc"
             "led/single_led.cc"
             "led/circular_strip.cc"
@@ -734,6 +735,7 @@ endif()
 idf_component_register(SRCS ${SOURCES}
                     EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS}
                     INCLUDE_DIRS ${INCLUDE_DIRS}
+                    REQUIRES bt spi_flash esp_psram esp_app_format app_update efuse
                     WHOLE_ARCHIVE
                     )
 

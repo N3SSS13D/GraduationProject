@@ -6,6 +6,7 @@
 #include "key_ctrl.h"
 #include "gp_led_action.h"
 #include "gp_led_matrix_ai8051u.h"
+#include "gp_led_matrix_bt_debug.h"
 #include "ws2812_drv.h"
 
 #define TEST_SCHED_TICK_US               1000UL
@@ -18,13 +19,12 @@
 #define TEST_DRAW_FRAME_TASK32MS_PERIOD_MS   36U
 #define TEST_DRAW_ANIM_TASK_PERIOD_MS    500U
 #define TEST_KEY_TASK_PERIOD_MS          10U
-#define TEST_DEBUG_TASK_PERIOD_MS        1000U
-#define TEST_TIMER1_US_PRESCALE_DEFAULT  39U
-#define TEST_TIMER1_PRESCALE_MIN         39U
+#define TEST_DEBUG_TASK_PERIOD_MS        50U
+#define TEST_TIMER1_US_PRESCALE_DEFAULT  0U
+#define TEST_TIMER1_PRESCALE_MIN         0U
 #define TEST_TIMER1_PRESCALE_MAX         255U
 #define TEST_TIMER1_MAX_COUNTER          65535UL
-#define TEST_TIMER1_SCALE_BASE           (TEST_TIMER1_US_PRESCALE_DEFAULT + 1UL)
-#define TEST_TIMER2_US_PRESCALE          39U
+#define TEST_TIMER1_TICK_SCALE           1024UL
 #define TEST_PRESET_MODE_COUNT           4U
 
 #define TEST_PRESET_DIAMOND_FADE         0U
@@ -39,11 +39,6 @@ static uint16_t g_testLastPwmUs = 0;
 static DrawDrv_RenderConfig_t xdata g_testRenderCfg;
 static uint8_t g_testPresetMode = TEST_PRESET_CROSS_GRADIENT;
 static volatile uint16_t g_testDbgStartUs = 0U;
-static volatile uint16_t g_testDbgLastUs = 0U;
-static volatile uint16_t g_testDbgMinUs = 0xFFFFU;
-static volatile uint16_t g_testDbgMaxUs = 0U;
-static volatile uint32_t g_testDbgSumUs = 0UL;
-static volatile uint16_t g_testDbgCnt = 0U;
 static volatile uint8_t g_testDbgPending = 0U;
 static volatile uint8_t g_testDebugMode = 0U;
 static volatile uint16_t g_testDbgRowSeq = 0U;
@@ -57,6 +52,7 @@ static GpLedMatrixAi8051uContext xdata g_testAiMatrixCtx;
 static uint32_t Test_GetIntervalByScanMode(void);
 static uint32_t Test_ClampLegacyRowIntervalUs(uint32_t intervalUs);
 static void Test_Timer1ApplyRefreshInterval(uint32_t intervalUs);
+static uint32_t Test_Timer1GetTicksPerUsScaled(uint8_t prescale);
 static void Test_KeyTaskProxy(void);
 static void Test_DrawFrameTaskProxy(void);
 static DrawDrv_Effect_t Test_GetNextOfflineEffect(DrawDrv_ContentType_t contentType, DrawDrv_Effect_t currentEffect);
@@ -200,11 +196,13 @@ static uint8_t Test_Timer1SelectPrescale(uint32_t intervalUs)
 {
     uint8_t prescale;
     uint32_t maxSingleUs;
+    uint32_t ticksPerUsScaled;
 
     prescale = TEST_TIMER1_PRESCALE_MIN;
     while (prescale < TEST_TIMER1_PRESCALE_MAX)
     {
-        maxSingleUs = (TEST_TIMER1_MAX_COUNTER * ((uint32_t)prescale + 1UL)) / TEST_TIMER1_SCALE_BASE;
+        ticksPerUsScaled = Test_Timer1GetTicksPerUsScaled(prescale);
+        maxSingleUs = (TEST_TIMER1_MAX_COUNTER * TEST_TIMER1_TICK_SCALE) / ticksPerUsScaled;
         if (intervalUs <= maxSingleUs)
         {
             break;
@@ -216,111 +214,34 @@ static uint8_t Test_Timer1SelectPrescale(uint32_t intervalUs)
     return prescale;
 }
 
-static uint16_t Test_DebugReadTimer2Us(void)
+static uint32_t Test_Timer1GetTicksPerUsScaled(uint8_t prescale)
 {
-    uint8_t hi1;
-    uint8_t lo;
-    uint8_t hi2;
+    uint32_t clocksPerUsScaled;
+    uint32_t divider;
 
-    do
+    divider = (uint32_t)prescale + 1UL;
+    clocksPerUsScaled = (((MAIN_Fosc / divider) / 1000UL) * TEST_TIMER1_TICK_SCALE + 500UL) / 1000UL;
+    if (clocksPerUsScaled == 0UL)
     {
-        hi1 = T2H;
-        lo = T2L;
-        hi2 = T2H;
-    } while (hi1 != hi2);
+        clocksPerUsScaled = 1UL;
+    }
 
-    return (uint16_t)(((uint16_t)hi2 << 8) | lo);
-}
-
-static void Test_DebugTimer2Init(void)
-{
-    DisableGlobalInt();
-
-    TIMER2_Stop();
-    TIMER2_DisableInt();
-    TIMER2_TimerMode();
-    TIMER2_1TMode();
-    TIMER2_SetPrescale(TEST_TIMER2_US_PRESCALE);
-    TIMER2_SetReload16(0U);
-    TIMER2_ClearFlag();
-    TIMER2_Run();
-
-    EnableGlobalInt();
+    return clocksPerUsScaled;
 }
 
 static void Test_DebugTask1s(void)
 {
-    uint16_t cnt;
-    uint16_t lastUs;
-    uint16_t minUs;
-    uint16_t maxUs;
-    uint32_t sumUs;
-    uint32_t avgUs;
-
-    DisableGlobalInt();
-    cnt = g_testDbgCnt;
-    lastUs = g_testDbgLastUs;
-    minUs = g_testDbgMinUs;
-    maxUs = g_testDbgMaxUs;
-    sumUs = g_testDbgSumUs;
-    g_testDbgCnt = 0U;
-    g_testDbgSumUs = 0UL;
-    g_testDbgMinUs = 0xFFFFU;
-    g_testDbgMaxUs = 0U;
-    EnableGlobalInt();
-
-    if (cnt == 0U)
-    {
-        printf("[DBG] pwm_dma_us no sample\r\n");
-        return;
-    }
-
-    avgUs = sumUs / (uint32_t)cnt;
-    printf("[DBG] pwm_dma_us last=%u min=%u max=%u avg=%lu cnt=%u\r\n",
-           (unsigned int)lastUs,
-           (unsigned int)minUs,
-           (unsigned int)maxUs,
-           (unsigned long)avgUs,
-           (unsigned int)cnt);
+    GpLedMatrixBtDebug_Task();
 }
 
 void Test_DebugMarkRowSwitchStart(void)
 {
-    g_testDbgStartUs = Test_DebugReadTimer2Us();
-    g_testDbgPending = 1U;
+    g_testDbgStartUs = 0U;
+    g_testDbgPending = 0U;
 }
 
 void Test_DebugMarkPwmSendDone(void)
 {
-    uint16_t endUs;
-    uint16_t deltaUs;
-
-    if (g_testDbgPending == 0U)
-    {
-        return;
-    }
-
-    endUs = Test_DebugReadTimer2Us();
-    if (endUs >= g_testDbgStartUs)
-    {
-        deltaUs = (uint16_t)(endUs - g_testDbgStartUs);
-    }
-    else
-    {
-        deltaUs = (uint16_t)(0x10000UL + (uint32_t)endUs - (uint32_t)g_testDbgStartUs);
-    }
-
-    g_testDbgLastUs = deltaUs;
-    if (deltaUs < g_testDbgMinUs)
-    {
-        g_testDbgMinUs = deltaUs;
-    }
-    if (deltaUs > g_testDbgMaxUs)
-    {
-        g_testDbgMaxUs = deltaUs;
-    }
-    g_testDbgSumUs += (uint32_t)deltaUs;
-    g_testDbgCnt++;
     g_testDbgPending = 0U;
 }
 
@@ -450,7 +371,7 @@ static void Test_OnSchedTickExpired(void)
 
 static void Test_Timer1ApplyRefreshInterval(uint32_t intervalUs)
 {
-    uint32_t scaledTicks;
+    uint32_t ticksPerUsScaled;
     uint32_t totalTimerTicks;
     uint32_t ticksPerCycle;
     uint32_t cycleTarget;
@@ -476,16 +397,8 @@ static void Test_Timer1ApplyRefreshInterval(uint32_t intervalUs)
         prescale = TEST_TIMER1_US_PRESCALE_DEFAULT;
     }
 
-    if (intervalUs > (0xFFFFFFFFUL / TEST_TIMER1_SCALE_BASE))
-    {
-        scaledTicks = 0xFFFFFFFFUL;
-    }
-    else
-    {
-        scaledTicks = intervalUs * TEST_TIMER1_SCALE_BASE;
-    }
-
-    totalTimerTicks = (scaledTicks + (uint32_t)prescale) / ((uint32_t)prescale + 1UL);
+    ticksPerUsScaled = Test_Timer1GetTicksPerUsScaled(prescale);
+    totalTimerTicks = (intervalUs * ticksPerUsScaled + (TEST_TIMER1_TICK_SCALE / 2UL)) / TEST_TIMER1_TICK_SCALE;
     if (totalTimerTicks == 0UL)
     {
         totalTimerTicks = 1UL;
@@ -575,7 +488,6 @@ void Test_Init(void)
 
     MidTask_Init();
     KeyCtrl_Init();
-    Test_DebugTimer2Init();
     /* Register animation task first so state update runs before frame rebuild when coincident. */
     (void)MidTask_RegisterWithId(TEST_KEY_TASK_PERIOD_MS, Test_KeyTaskProxy);
     (void)MidTask_RegisterWithId(TEST_DRAW_ANIM_TASK_PERIOD_MS, Test_DrawAnimTaskProxy);
@@ -927,40 +839,8 @@ uint8_t Test_GetScanMode(void)
 
 void PWMAT_DMA_ISR(void) interrupt DMA_PWMAT_VECTOR
 {
-    uint8_t rowA;
-    uint8_t rowB;
-    uint16_t txLen;
-    uint16_t lineSeq;
-    uint16_t lineTimeUs;
-    uint32_t intervalUs;
-    uint8_t scanMode;
-
     /* Forward DMA completion to ws2812 driver for unified state management. */
     WS2812DRV_OnDmaIsr();
-
-    if (g_testDebugMode == 0U)
-    {
-        return;
-    }
-
-    rowA = WS2812DRV_GetLastScanRowA();
-    rowB = WS2812DRV_GetLastScanRowB();
-    txLen = WS2812DRV_GetLastScanTxLen();
-    lineTimeUs = g_testDbgLastUs;
-    intervalUs = g_testRowIntervalUs;
-    scanMode = (uint8_t)WS2812DRV_GetScanMode();
-    g_testDbgRowSeq++;
-    lineSeq = g_testDbgRowSeq;
-
-    printf("[DBG_ROW] seq=%u mode=%u rowA=%u rowB=%u interval_ms=%lu interval_us=%lu tx=%u line_us=%u\r\n",
-           (unsigned int)lineSeq,
-           (unsigned int)scanMode,
-           (unsigned int)rowA,
-           (unsigned int)rowB,
-           (unsigned long)(intervalUs / 1000UL),
-           (unsigned long)intervalUs,
-           (unsigned int)txLen,
-           (unsigned int)lineTimeUs);
 }
 
 void TIMER1_ISR(void) interrupt 3

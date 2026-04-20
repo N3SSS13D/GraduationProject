@@ -1,3 +1,11 @@
+/*
+ * @file gp_led_matrix_ai8051u.h
+ * @author GitHub Copilot
+ * @date 2026-04-18
+ * @version 1.0
+ * @brief AI8051U matrix transport interface for the WS2812 driver project.
+ */
+
 #ifndef __GP_LED_MATRIX_AI8051U_H__
 #define __GP_LED_MATRIX_AI8051U_H__
 
@@ -40,7 +48,7 @@ typedef struct
     uint16_t dmaLastTxDone;
 } GpLedMatrixAi8051uContext;
 
-void GpLedMatrixAi8051u_Init(GpLedMatrixAi8051uContext xdata *context, uint8_t i2cAddress);
+void GpLedMatrixAi8051u_Init(GpLedMatrixAi8051uContext xdata *context, uint8_t transportAddress);
 void GpLedMatrixAi8051u_SetDmaMode(GpLedMatrixAi8051uContext xdata *context, uint8_t enableRx, uint8_t enableTx);
 void GpLedMatrixAi8051u_OnI2cReceive(GpLedMatrixAi8051uContext xdata *context, const uint8_t *rxBytes, uint8_t length);
 uint8_t GpLedMatrixAi8051u_PrepareTx(GpLedMatrixAi8051uContext xdata *context, uint8_t *outData, uint8_t maxLength);

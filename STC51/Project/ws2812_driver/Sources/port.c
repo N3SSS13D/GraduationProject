@@ -20,7 +20,32 @@
 
 //<<AICUBE_USER_GLOBAL_DEFINE_BEGIN>>
 // 在此添加用户全局变量定义、用户宏定义以及函数声明  
+#define PORT2_DEBUG_LED_NONE           0xFFU
+
+static uint8_t data g_port2DebugLedDigit = PORT2_DEBUG_LED_NONE;
 //<<AICUBE_USER_GLOBAL_DEFINE_END>>
+
+
+
+////////////////////////////////////////
+// P2口初始化函数
+// 入口参数: 无
+// 函数返回: 无
+////////////////////////////////////////
+void PORT2_Init(void)
+{
+    SetP2nInitLevelHigh(PIN_ALL);       //设置P2初始化电平
+    SetP2nQuasiMode(PIN_ALL);           //设置P2为准双向口模式
+
+    DisableP2nPullUp(PIN_ALL);          //关闭P2内部上拉电阻
+    DisableP2nPullDown(PIN_ALL);        //关闭P2内部下拉电阻
+    DisableP2nSchmitt(PIN_ALL);         //使能P2施密特触发
+    SetP2nSlewRateNormal(PIN_ALL);      //设置P2一般翻转速度
+    SetP2nDrivingNormal(PIN_ALL);       //设置P2一般驱动能力
+    SetP2nDigitalInput(PIN_ALL);        //使能P2数字信号输入功能
+
+    PORT2_ClearDebugLeds();
+}
 
 
 
@@ -111,6 +136,29 @@ void PORT4_Init(void)
     //<<AICUBE_USER_PORT4_INITIAL_BEGIN>>
     // 在此添加用户初始化代码  
     //<<AICUBE_USER_PORT4_INITIAL_END>>
+}
+
+void PORT2_ClearDebugLeds(void)
+{
+    P2 = PIN_ALL;
+    g_port2DebugLedDigit = PORT2_DEBUG_LED_NONE;
+}
+
+void PORT2_SetDebugLedDigit(uint8_t digit)
+{
+    if (digit > 7U)
+    {
+        PORT2_ClearDebugLeds();
+        return;
+    }
+
+    P2 = (uint8_t)(PIN_ALL & (uint8_t)(~(uint8_t)(1U << digit)));
+    g_port2DebugLedDigit = digit;
+}
+
+uint8_t PORT2_GetDebugLedDigit(void)
+{
+    return g_port2DebugLedDigit;
 }
 
 

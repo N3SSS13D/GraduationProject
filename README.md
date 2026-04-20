@@ -6,7 +6,7 @@
 
 `小智语音/调试状态 -> ESP32 动作映射 -> 本地 I2C 自定义协议 -> AI8051U 接收执行 -> WS2812 LED 矩阵显示`
 
-当前 `BT_Version` 分支在保持上述稳定版实现不变的前提下，额外用于评估“以 BLE 传输替换 I2C”的迁移方案。
+当前 `BT_Version` 分支在保持上述稳定版实现不变的前提下，额外用于实现和验证“AI8051U UART2 + 外挂蓝牙模块”的替代链路。
 
 当前主线由两部分组成：
 
@@ -24,7 +24,7 @@
 - 已稳定运行 PWM + DMA 双通道输出。
 - 已完成 74HC595 + PMOS 行扫描、尾波复位和节拍调度收口。
 - 已支持 `normal_pair` 与 `legacy_shift` 两类扫描/发送模式。
-- 已支持 USB/串口调试命令：颜色、图案、间隔、渲染模式切换。
+- 已支持 USB/串口调试命令：颜色、图案、间隔和渲染模式切换。
 - 已支持 AI8051U I2C 从机、协议解析、动作执行、ACK/错误状态回包。
 - 当前默认采用 START/STOP 保留在 ISR、RX/TX 双向 DMA 负责包数据搬运的 I2C 后端。
 
@@ -81,16 +81,19 @@ GraduationProject/
 - 小智与 AI8051U I2C 协议说明：[Doc/项目文档/xiaozhi_ai8051u_i2c_interface_protocol.md](Doc/项目文档/xiaozhi_ai8051u_i2c_interface_protocol.md)
 - 小智移植与联调总结：[Doc/项目文档/xiaozhi_esp32_porting_summary.md](Doc/项目文档/xiaozhi_esp32_porting_summary.md)
 - 蓝牙替代 I2C 方案：[Doc/项目文档/bluetooth_replacement_plan.md](Doc/项目文档/bluetooth_replacement_plan.md)
+- HC-05 / UART2 结构说明：[Doc/项目文档/bt_version_hc05_uart2_architecture.md](Doc/项目文档/bt_version_hc05_uart2_architecture.md)
+- 联调自动化工具：[tools/ws2812_dev_cycle.md](tools/ws2812_dev_cycle.md)
 - GP_Port 总览：[External/xiaozhi-esp32/GP_Port/gp_port_project_overview.md](External/xiaozhi-esp32/GP_Port/gp_port_project_overview.md)
 - 调试界面与截图说明：[External/xiaozhi-esp32/GP_Port/gp_debug_feature_usage.md](External/xiaozhi-esp32/GP_Port/gp_debug_feature_usage.md)
 - MCP 工具与本地桥接说明：[External/xiaozhi-esp32/GP_Port/gp_mcp_tools.md](External/xiaozhi-esp32/GP_Port/gp_mcp_tools.md)
 
 ## BT_Version 规划目标
 
-- 保留现有动作对象、矩阵协议语义和 AI8051U 执行路径，只替换 ESP32 与 AI8051U 之间的物理传输层。
-- 由于 `lichuang-dev` 使用的 `ESP32-S3` 不支持经典蓝牙 SPP，因此蓝牙版本默认采用 BLE GATT 自定义服务方案。
-- AI8051U 侧优先采用 UART 对接外部 BLE 透明传输模块，避免在 8051 侧直接实现完整 BLE 协议栈。
-- 详细设计、迁移步骤和验证策略见 [Doc/项目文档/bluetooth_replacement_plan.md](Doc/项目文档/bluetooth_replacement_plan.md)。
+- 保留现有动作对象、矩阵协议语义和 AI8051U 执行路径，只替换 AI8051U 一侧的物理链路为 `UART2 + HC-05`。
+- AI8051U 侧当前已关闭原矩阵链路 I2C 初始化，并改为 `P4.2=RX / P4.3=TX` 的 UART2 收发路径。
+- ESP32 侧当前已增加矩阵传输抽象层，并补充了经典蓝牙 SPP 传输后端代码；但在 `ESP-IDF v5.4.3 + esp32s3` 目标下，链接阶段缺少 `esp_spp_* / esp_bt_gap_*` 经典蓝牙符号，因此当前板型无法把该后端真正落地为可运行固件。
+- 因此，`lichuang-dev` 目前仍以 I2C 作为可构建、可运行的矩阵链路；若必须保留 `HC-05`，需要改用支持经典蓝牙的 ESP32 目标芯片或外部经典蓝牙主机。
+- 详细设计、模块设置和验证策略见 [Doc/项目文档/bt_version_hc05_uart2_architecture.md](Doc/项目文档/bt_version_hc05_uart2_architecture.md) 和 [Doc/项目文档/bluetooth_replacement_plan.md](Doc/项目文档/bluetooth_replacement_plan.md)。
 
 ## 构建与验证
 
@@ -105,6 +108,7 @@ GraduationProject/
 1. 使用 ESP-IDF 插件打开 `External/xiaozhi-esp32/`。
 2. 选择 `lichuang-dev` 并执行构建。
 3. 运行 `GP_Port/gp_mcp_endpoint_client.py`，联调 `/snapshot`、`/control/snapshot` 和设备侧 MCP 工具。
+4. 需要重复联调时，可直接运行 `tools/ws2812_dev_cycle.ps1` 或 VS Code 任务 `WS2812: Dev Cycle` / `WS2812: Dev Cycle Watch`。
 
 ## 提交边界
 
@@ -115,5 +119,3 @@ GraduationProject/
 - `__pycache__/`
 - `*.pyc`
 - 临时导出截图、测试图片和临时日志
-
-
