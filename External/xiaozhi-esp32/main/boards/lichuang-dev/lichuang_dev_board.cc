@@ -223,11 +223,30 @@ public:
         return response;
     }
 
+    bool ProbeAtWithRetry(uint8_t max_attempts) {
+        uint8_t attempt = 0;
+
+        for (attempt = 0; attempt < max_attempts; ++attempt) {
+            if (ReplyContainsOk(SendCommand("AT"))) {
+                ESP_LOGI(TAG, "[BT_CFG] probe=ok attempt=%u", static_cast<unsigned int>(attempt + 1));
+                return true;
+            }
+            ESP_LOGW(TAG, "[BT_CFG] probe retry=%u", static_cast<unsigned int>(attempt + 1));
+            vTaskDelay(pdMS_TO_TICKS(kBtConfigSettleDelayMs));
+        }
+
+        return false;
+    }
+
     bool SendAndVerify(const std::string& command, const std::string& query) {
         const bool ok = ReplyContainsOk(SendCommand(command));
         vTaskDelay(pdMS_TO_TICKS(kBtConfigSettleDelayMs));
         SendCommand(query);
         return ok;
+    }
+
+    bool SwitchLocalBaudrate(uint32_t baudrate) {
+        return ConfigureLocalUart(baudrate);
     }
 
     bool SwitchRemoteAndLocalBaud(uint32_t baudrate) {
@@ -1000,7 +1019,14 @@ cleanup:
             return GP_MATRIX_BT_UART_DATA_BAUDRATE;
         }
 
-        sequence_ok &= ReplyContainsOk(configurator.SendCommand("AT"));
+        if (!configurator.ProbeAtWithRetry(3)) {
+            ESP_LOGI(TAG, "[BT_CFG] probe timeout, skip AT setup and switch local baud to data mode");
+            if (!configurator.SwitchLocalBaudrate(GP_MATRIX_BT_UART_DATA_BAUDRATE)) {
+                ESP_LOGW(TAG, "[BT_CFG] local baud switch failed after probe timeout");
+            }
+            return configurator.GetCurrentBaudrate();
+        }
+
         configurator.SendCommand("AT+VERSION?");
         sequence_ok &= configurator.SendAndVerify("AT+ROLE=1", "AT+ROLE?");
         sequence_ok &= configurator.SendAndVerify(std::string("AT+NAME=") + GP_MATRIX_BT_LOCAL_NAME,

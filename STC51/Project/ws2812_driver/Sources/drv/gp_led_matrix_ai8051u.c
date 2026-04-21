@@ -633,6 +633,8 @@ void GpLedMatrixAi8051u_Poll(GpLedMatrixAi8051uContext xdata *context)
         return;
     }
 
+    UART2_ServiceRx();
+
     if (UART2_TakeRxOverflow() != 0U)
     {
         printf("[BT_WARN] uart2_rx_overflow\r\n");

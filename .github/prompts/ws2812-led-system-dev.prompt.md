@@ -12,7 +12,8 @@ Current workflow:
 - `AI side`: `External/xiaozhi-esp32/`
 - `LED side`: `STC51/Project/ws2812_driver/`
 - transport: `AI side -> HC-05 -> LED side UART2(P4.2/P4.3)`
-- default HC-05 setup flow: keep all AT commands and queries at `38400` in strict set-then-query order, bind the AI side to fixed slave address `98:D3:02:96:A2:B1` with `AT+BIND`, then make `AT+RESET` and the local baud switch to `115200` the final two steps, with `XiaoZhi -> WS2812`.
+- default HC-05 setup flow: first probe with `AT` at `38400`; if there is still no reply after `3` attempts, switch the local UART directly to `115200` and skip the remaining setup; if the probe succeeds, keep all AT commands and queries at `38400` in strict set-then-query order, bind the AI side to fixed slave address `98:D3:02:96:A2:B1` with `AT+BIND`, then make `AT+RESET` and the local baud switch to `115200` the final two steps, with `XiaoZhi -> WS2812`.
+- LED-side UART2 should default to DMA-based TX/RX with task-driven batch consumption instead of byte-by-byte UART interrupts.
 
 Read first:
 

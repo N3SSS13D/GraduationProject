@@ -16,6 +16,7 @@
 #define GP_MATRIX_BT_TASK_IDLE_TICKS     2U
 #define GP_MATRIX_BT_BAUD_SWITCH_DELAY_MS 120U
 #define GP_MATRIX_BT_COMMAND_GAP_MS      80U
+#define GP_MATRIX_BT_AT_RETRY_COUNT      3U
 
 static char xdata g_gpMatrixBtCommand[GP_MATRIX_BT_COMMAND_BUFFER_SIZE];
 static char xdata g_gpMatrixBtReply[GP_MATRIX_BT_REPLY_BUFFER_SIZE];
@@ -45,6 +46,7 @@ static uint8_t GpLedMatrixBtDebug_ReplyContainsOk(const char *replyBuffer, uint8
 static void GpLedMatrixBtDebug_HandleReceivedText(char *text);
 static uint8_t GpLedMatrixBtDebug_ReadReply(char *replyBuffer, uint8_t maxLength, uint16_t timeoutMs);
 static void GpLedMatrixBtDebug_SendText(const char *payload);
+static uint8_t GpLedMatrixBtDebug_ProbeAtWithRetry(void);
 static void GpLedMatrixBtDebug_RunAutoSetup(void);
 
 static uint8_t GpLedMatrixBtDebug_IsSpace(uint8_t value)
@@ -374,6 +376,7 @@ static uint8_t GpLedMatrixBtDebug_ReadReply(char *replyBuffer, uint8_t maxLength
     receivedAny = 0U;
     for (waitMs = 0U; waitMs < timeoutMs; ++waitMs)
     {
+        UART2_ServiceRx();
         receivedThisTick = 0U;
         while (UART2_TryPopByte(&rxByte) != 0U)
         {
@@ -538,6 +541,26 @@ static void GpLedMatrixBtDebug_SendText(const char *payload)
     UART2_DebugResetRecentRx();
 }
 
+static uint8_t GpLedMatrixBtDebug_ProbeAtWithRetry(void)
+{
+    uint8_t attempt;
+
+    for (attempt = 0U; attempt < GP_MATRIX_BT_AT_RETRY_COUNT; ++attempt)
+    {
+        GpLedMatrixBtDebug_SendText("AT");
+        if (GpLedMatrixBtDebug_ReplyContainsOk(g_gpMatrixBtReply, g_gpMatrixBtLastRxBytes) != 0U)
+        {
+            printf("[BT_CFG] startup_at=ok attempt=%u\r\n", (unsigned int)(attempt + 1U));
+            return 1U;
+        }
+
+        printf("[BT_CFG] startup_at=retry attempt=%u\r\n", (unsigned int)(attempt + 1U));
+        delay_ms(GP_MATRIX_BT_COMMAND_GAP_MS);
+    }
+
+    return 0U;
+}
+
 static void GpLedMatrixBtDebug_RunAutoSetup(void)
 {
     printf("[BT_CFG] startup=begin\r\n");
@@ -554,8 +577,20 @@ static void GpLedMatrixBtDebug_RunAutoSetup(void)
         printf("[BT_CFG] local_baud_switch_failed=38400\r\n");
     }
 
-    GpLedMatrixBtDebug_SendText("AT");
-    delay_ms(GP_MATRIX_BT_COMMAND_GAP_MS);
+    if (GpLedMatrixBtDebug_ProbeAtWithRetry() == 0U)
+    {
+        if (UART2_SetBaudrate(115200UL) != 0U)
+        {
+            printf("[BT_CFG] startup=skip-at local_baud=115200\r\n");
+        }
+        else
+        {
+            printf("[BT_CFG] startup=skip-at local_baud_switch_failed=115200\r\n");
+        }
+        printf("[BT_CFG] startup=end\r\n");
+        return;
+    }
+
     GpLedMatrixBtDebug_SendText("AT+VERSION?");
     delay_ms(GP_MATRIX_BT_COMMAND_GAP_MS);
     GpLedMatrixBtDebug_SendText("AT+ROLE=0");
@@ -601,6 +636,8 @@ void GpLedMatrixBtDebug_Task(void)
     {
         return;
     }
+
+    UART2_ServiceRx();
 
     if (UART2_DebugHasRecentRx() == 0U)
     {

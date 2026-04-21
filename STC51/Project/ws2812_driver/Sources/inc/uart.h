@@ -16,6 +16,7 @@ uint32_t UART2_GetBaudrate(void);
 uint8_t UART2_SetBaudrate(uint32_t baudrate);
 void UART2_SetBtAtMode(uint8_t enable);
 uint8_t UART2_GetBtAtMode(void);
+void UART2_ServiceRx(void);
 void UART2_ResetRxRing(void);
 uint8_t UART2_GetRxOverflow(void);
 uint8_t UART2_TakeRxOverflow(void);
