@@ -58,6 +58,6 @@
 
 ### 统一验证入口
 
-- AI端与 LED端 联调优先使用：`tools/ws2812_dev_cycle.ps1`
+- AI端与 LED端 联调优先使用：`tools/ws2812_dev_cycle.py`
 - LED端 Keil 工程：`STC51/Project/ws2812_driver/ws2812_driver.uvproj`
 - AI端 MCP/截图脚本：`External/xiaozhi-esp32/GP_Port/gp_mcp_endpoint_client.py`

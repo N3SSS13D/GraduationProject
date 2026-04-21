@@ -20,6 +20,7 @@ model: "GPT-5 (copilot)"
 - 将 `AI端` 的语音结果、调试结果或截图控制请求映射为稳定动作对象。
 - 保持 `AI端` 输出与 `LED端` 协议字段一致。
 - 优先复用现有 `voice_color_result`、矩阵驱动和调试界面路径。
+- 若任务涉及 HC-05，默认配置流程为所有 AT 指令与查询都在 `38400` 下按“设置一条、查询一条”完成，AI端 使用固定地址 `98:D3:02:96:A2:B1` 对应的 `AT+BIND` 绑定 LED端，最后两步固定为 `AT+RESET` 和本地切到 `115200` 数据模式，并把每一步回包打印到 monitor。
 
 执行要求：
 
@@ -32,7 +33,7 @@ model: "GPT-5 (copilot)"
 
 验证入口：
 
-- `tools/ws2812_dev_cycle.ps1`
+- `tools/ws2812_dev_cycle.py`
 - `External/xiaozhi-esp32/GP_Port/gp_mcp_endpoint_client.py`
 
 输出格式：

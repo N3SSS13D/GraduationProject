@@ -11,7 +11,7 @@
 - 调试界面：`GP_Port/ui/`
 - 板级接入：`main/boards/lichuang-dev/`
 - 问题说明：`Doc/项目文档/problem_tracking.md`
-- 联调工具：`tools/ws2812_dev_cycle.ps1`
+- 联调工具：`tools/ws2812_dev_cycle.py`
 
 查看规则：
 
@@ -44,7 +44,7 @@ Core paths:
 - `GP_Port/ui/`
 - `main/boards/lichuang-dev/`
 - `Doc/项目文档/problem_tracking.md`
-- `tools/ws2812_dev_cycle.ps1`
+- `tools/ws2812_dev_cycle.py`
 
 Rules:
 

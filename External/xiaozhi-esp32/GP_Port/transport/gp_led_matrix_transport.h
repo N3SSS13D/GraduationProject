@@ -25,11 +25,13 @@ public:
     virtual std::string DescribeLink() const = 0;
 };
 
-/* Create the BT SPP transport used by BT_Version. Unsupported targets return nullptr. */
-std::unique_ptr<GpMatrixTransport> CreateGpMatrixBtSppTransport(const std::string& local_name,
-                                                                const std::string& remote_name,
-                                                                const std::string& remote_address,
-                                                                const std::string& pin_code,
-                                                                uint32_t connect_timeout_ms);
+/* Create the HC-05 UART transport used by BT_Version on GPIO10/GPIO11. */
+std::unique_ptr<GpMatrixTransport> CreateGpMatrixBtUartTransport(int uart_port,
+                                                                 int tx_gpio,
+                                                                 int rx_gpio,
+                                                                 uint32_t baudrate,
+                                                                 const std::string& local_name,
+                                                                 const std::string& remote_name,
+                                                                 const std::string& pin_code);
 
 #endif

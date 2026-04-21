@@ -103,6 +103,7 @@ private:
     lv_obj_t* touch_panel_ = nullptr;
     lv_obj_t* preset_value_label_ = nullptr;
     lv_obj_t* effect_value_label_ = nullptr;
+    lv_obj_t* color_value_label_ = nullptr;
     lv_obj_t* snapshot_button_ = nullptr;
     lv_timer_t* debug_animation_timer_ = nullptr;
     GpColorDebugState current_state_;

@@ -2,6 +2,7 @@
 #define _BOARD_CONFIG_H_
 
 #include <driver/gpio.h>
+#include <driver/uart.h>
 
 #define AUDIO_INPUT_SAMPLE_RATE  24000
 #define AUDIO_OUTPUT_SAMPLE_RATE 24000
@@ -40,6 +41,15 @@
 #define GP_MATRIX_I2C_ADDRESS 0x31
 /* Match the XiaoZhi online path with the AI8051U offline default to avoid a visible brightness drop. */
 #define GP_MATRIX_DEFAULT_BRIGHTNESS 200U
+#define GP_MATRIX_BT_UART_PORT UART_NUM_1
+#define GP_MATRIX_BT_UART_TX_PIN GPIO_NUM_10
+#define GP_MATRIX_BT_UART_RX_PIN GPIO_NUM_11
+#define GP_MATRIX_BT_UART_AT_BAUDRATE 38400
+#define GP_MATRIX_BT_UART_DATA_BAUDRATE 115200
+#define GP_MATRIX_BT_LOCAL_NAME "XiaoZhi"
+#define GP_MATRIX_BT_REMOTE_NAME "WS2812"
+#define GP_MATRIX_BT_REMOTE_ADDRESS "98:D3:02:96:A2:B1"
+#define GP_MATRIX_BT_PIN_CODE "19220309"
 #define GP_DEBUG_SNAPSHOT_DEFAULT_UPLOAD_URL "http://49.140.69.242:8765/snapshot"
 
 /* Camera pins */

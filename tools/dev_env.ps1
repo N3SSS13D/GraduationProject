@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$IdfPath = 'S:\Embedded\ESP\v5.4.3\esp-idf',
-    [string]$KeilUv4Path = 'S:\Embedded\Keil\UV4\UV4.exe',
+    [string]$KeilUv4Path = 'S:\Embedded\Keil\UV4\uVision.com',
     [string]$McpPython = 'D:\GraduationProject\External\xiaozhi-esp32\.venv\Scripts\python.exe',
     [string]$McpUrl = '',
     [string]$EspPort = '',
@@ -64,4 +64,4 @@ if (-not [string]::IsNullOrWhiteSpace($env:WS2812_AI8051_COM_PORT)) {
     Write-EnvironmentLine -Name 'WS2812_AI8051_COM_PORT' -Value $env:WS2812_AI8051_COM_PORT
 }
 
-Write-Host 'Next step: run .\tools\ws2812_dev_cycle.ps1 in the same PowerShell session.'
+Write-Host 'Next step: run .\.venv\Scripts\python.exe .\tools\ws2812_dev_cycle.py in the same PowerShell session.'

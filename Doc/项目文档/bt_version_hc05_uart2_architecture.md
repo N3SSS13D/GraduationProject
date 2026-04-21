@@ -60,20 +60,23 @@
 
 当前固件默认传输串口参数：
 
-- 波特率：`9600`
+- AT 配置阶段：`38400`
+- 数据传输阶段：`115200`
 - 数据位：`8`
 - 校验位：`None`
 - 停止位：`1`
 
-当前 AI8051U 不再在初始化阶段自动发送任何 `AT+ROLE`、`AT+CMODE`、`AT+UART` 等额外配置指令，而是通过 USB 调试桥按需转发。
+当前流程调整为“上电自动配置 + 运行期保留调试桥”：
 
-当前行为仅保留：
+- AI端 在板级启动阶段先以 `38400 8N1` 完成全部 HC-05 AT 指令与查询，按“设置一条、查询一条”的顺序依次配置主机参数，并使用固定从机地址 `98:D3:02:96:A2:B1` 对应的 `AT+BIND=98D3,02,96A2B1` 完成绑定；随后才发送 `AT+RESET`，并且只有 `AT+RESET` 返回 `OK` 后，本地 UART 才切到 `115200`。
+- LED端 在初始化阶段先以 `38400 8N1` 自动完成全部 HC-05 AT 指令与查询，按“设置一条、查询一条”的顺序依次配置从机参数和串口参数；随后才发送 `AT+RESET`，并且只有 `AT+RESET` 返回 `OK` 后，本地 UART2 才切到 `115200`。
+
+当前行为保留：
 
 - 通过 USB 串口发送结构化蓝牙调试命令：`BT SEND <text>`、`BT STATUS`，以及兼容形式 `BT <text>`。
 - AI8051U 将 `BT SEND <text>` 或 `BT <text>` 中的 `text` 按 `\r\n` 结尾原样转发到 HC-05。
-- 若 `text` 以 `AT` 开头，则 AI8051U 先把 `P4.1` 拉高，进入 HC-05 AT 模式后再发送。
-- 若 `text` 不以 `AT` 开头，则 AI8051U 把 `P4.1` 拉低，恢复普通透明传输模式。
-- 若发送的是 `AT+UART=<baud>,0,0`，AI8051U 会先在旧波特率下等待 HC-05 返回 `OK`，确认成功后再把本地 `UART2` 同步切换到 `<baud>`，默认目标仍是 `115200` 可调。
+- 当前 AT 指令链路不再依赖 `P4.1 -> HC-05 PIO11`，即使该脚未连接，也按纯 UART AT 流程执行。
+- 若发送的是 `AT+UART=<baud>,0,0`，AI8051U 会先在旧波特率下等待 HC-05 返回 `OK`，随后追加一次 `AT+RESET`；只有 `AT+RESET` 也返回 `OK` 后，本地 `UART2` 才同步切换到 `<baud>`。
 - `BT STATUS` 不会向 HC-05 发数据，只会通过 USB 打印当前 UART2 波特率、AT 模式状态、发送结果、接收字节数和溢出标记。
 - UART2 接收调试当前采用“中断抓取 + 调试任务处理”的方式：中断仅保存最近接收数据并置调试缓存，50ms 调试任务在检测到接收稳定后统一打印收到的文本/HEX，并对 `LED x`、`LED CLEAR` 这类文本命令执行板级 LED 控制。
 
@@ -155,11 +158,11 @@ UART2 当前使用 Timer2 作为波特率发生器，因此 Timer2 不能再被 
 
 1. AI8051U 上电后是否打印 `BT_INIT`，且不再初始化矩阵链路 I2C。
 2. UART2 引脚是否确认为 `P4.2/P4.3`。
-3. `P4.1` 是否已连接到 HC-05 `PIO11`，且 `BT AT...` 发送前会进入 AT 模式。
-4. HC-05 串口参数是否与固件启动默认 `9600 8N1` 一致。
+3. 当前 AT 配置流程是否已完全基于纯 UART，且不再依赖 `P4.1 -> PIO11` 连线。
+4. HC-05 串口参数是否与固件启动默认 `38400 8N1` 一致。
 5. 通过 USB 串口命令 `BT SEND AT` 是否能把 `AT\r\n` 原样发送到 HC-05，并把响应返回到 USB 串口。
 6. 通过 USB 串口命令 `BT SEND AT+VERSION?`、`BT SEND AT+ADDR?`、`BT SEND AT+NAME?`、`BT SEND AT+PSWD?`、`BT SEND AT+UART?` 是否能把 HC-05 查询结果回显到 USB 串口。
-7. 通过 USB 串口命令 `BT SEND AT+UART=115200,0,0` 之后，AI8051U 本地 UART2 是否已同步切换到 `115200`。
+7. 通过 USB 串口命令 `BT SEND AT+UART=115200,0,0` 之后，AI8051U 是否会继续发送 `AT+RESET`，并且只有收到 reset 的 `OK` 后，本地 UART2 才切换到 `115200`。
 8. USB 调试日志是否已包含 UART2 当前波特率、AT 模式状态，以及本次发送/接收是否成功。
 9. 串口透明传输下，完整协议包是否能触发 ACK 回包。
 10. 接收缓存溢出或长时间未收齐整包时，是否能安全丢弃当前组包。
@@ -172,10 +175,9 @@ UART2 当前使用 Timer2 作为波特率发生器，因此 Timer2 不能再被 
 - `BT SEND <text>`：主调试入口，`text` 会按 `\r\n` 结尾原样发送给 HC-05，并把接收到的响应打印回 USB 串口。
 - `BT STATUS`：只打印当前 UART2 状态，不向 HC-05 发送数据。
 - `BT <text>`：兼容形式，行为与 `BT SEND <text>` 相同。
-- `BT SEND AT`、`BT SEND AT+VERSION?`、`BT SEND AT+UART?` 等命令会在发送前自动把 `P4.1` 拉高。
-- `BT SEND hello`、`BT SEND LED 0` 等普通透明传输文本会在发送前自动把 `P4.1` 拉低。
-- `BT SEND AT+UART=115200,0,0` 会在指令发出后让 AI8051U 本地 UART2 同步切换到新的波特率。
-- 推荐测试序列：`BT SEND AT`、`BT SEND AT+VERSION?`、`BT SEND AT+UART?`、`BT SEND AT+UART=115200,0,0`、`BT STATUS`。
+- `BT SEND <text>` 的发送流程不再依赖 `P4.1` 切换 HC-05 模式，AT 指令与普通透明传输都走同一条 UART2 物理链路。
+- `BT SEND AT+UART=115200,0,0` 会先等待当前指令回 `OK`，随后追加一次 `AT+RESET`；只有 reset 也回 `OK` 后，AI8051U 本地 UART2 才切换到新的波特率。
+- 推荐测试序列：`BT SEND AT`、`BT SEND AT+VERSION?`、`BT SEND AT+UART?`、`BT SEND AT+UART=115200,0,0`、`BT STATUS`；其中 `BT SEND AT+UART=115200,0,0` 后应额外观察 reset 回包。
 - 接收调试缓存已扩展到 `48` 字节，UART2 主接收环形缓冲扩展到 `128` 字节，USB AT 调试回包等待时间保持 `800ms`，降低 AT 配置阶段的丢包和误判风险。
 - 每次发送、回包或监视输出后都会打印 `[BT_CMD]`、`[BT_RSP]`、`[BT_STA]`、`[BT_MON]`、`[BT_ACT]` 等日志，分别用于区分命令、响应、状态、监视流量和 LED 动作。
 

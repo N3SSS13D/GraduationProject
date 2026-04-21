@@ -207,9 +207,9 @@
 
 ## 6. 当前默认配置
 
-- 默认 AI8051U I2C 后端：保留 START/STOP 框架中断处理，并默认启用 RX/TX 双向 DMA 进行包数据搬运。
-- 默认 DMA 方向策略：`RX DMA=on`，`TX DMA=on`；如需回退或做对比测试，可通过 `GpLedMatrixAi8051u_SetDmaMode()` 单独关闭某个方向。
-- 默认 DMA 策略切换接口：`GpLedMatrixAi8051u_SetDmaMode()`。
+- `BT_Version` 当前默认矩阵链路：`UART2(P4.2/P4.3) + HC-05`，由字节流组包器直接接收协议帧。
+- 旧 I2C + DMA 自建兼容接口已从 `BT_Version` 当前实现中移除，不再提供运行时切换入口。
+- 保留旧 I2C 行为的说明仅适用于历史稳定版，不应再作为 `BT_Version` 的当前设计依据。
 - 默认显示发送模式：`normal_pair`
 - 默认渲染模式：16x64
 - 默认换行间隔：2000us

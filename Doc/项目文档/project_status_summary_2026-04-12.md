@@ -140,8 +140,8 @@
 - AI8051U 侧矩阵链路已从稳定版 I2C 从机切换为 `UART2(P4.2/P4.3) + HC-05` 串口透明传输。
 - AI8051U 侧原矩阵链路 I2C 初始化、超时和 DMA 接入已在 `BT_Version` 中关闭，不再作为当前矩阵入口。
 - AI8051U 侧当前固定使用 `UART2(P4.2/P4.3) + HC-05` 的 `9600 8N1` 透明传输，不再在上电阶段主动发送 HC-05 AT 探测或配置命令。
-- ESP32 侧已新增 `gp_led_matrix_transport.h/.cc` 传输抽象层，并保留 I2C 后端与条件编译的经典蓝牙 SPP 后端。
-- 板级 `lichuang-dev` 当前仍默认走 I2C 矩阵链路；仅当目标为具备经典蓝牙能力的 `ESP32` 且显式选择 SPP 传输时，才启用 HC-05 SPP 路径。
+- ESP32 侧已新增自建矩阵传输层，当前按职责整理到 `GP_Port/transport/`，并仅保留经典蓝牙 SPP 自建后端。
+- 板级 `lichuang-dev` 的自建矩阵入口已整理为统一蓝牙传输初始化；若目标缺少经典蓝牙能力，则当前入口会保持不可用状态而不再回退到旧自建 I2C 链路。
 
 ### 9.2 当前能力边界
 
@@ -151,6 +151,6 @@
 
 ### 9.3 本轮验证结果
 
-- 相关实现文件诊断状态：`gp_led_matrix_transport.cc`、`gp_led_matrix_ai8051u.c`、`Kconfig.projbuild` 均无错误。
+- 相关实现文件诊断状态：`GP_Port/transport/gp_led_matrix_transport.cc`、`gp_led_matrix_ai8051u.c`、`Kconfig.projbuild` 均无错误。
 - 小智侧已完成一次 `esp32s3` 构建验证，当前改造未破坏现有可构建路径。
 - STC 侧 `ws2812_driver.uvproj` 已完成 Keil rebuild，结果为 `0 Error(s), 0 Warning(s)`。

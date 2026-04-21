@@ -26,6 +26,7 @@
 #include <lvgl.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstring>
@@ -33,6 +34,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <vector>
 #include <string_view>
 
 #define TAG "LichuangDevBoard"
@@ -43,6 +45,11 @@ constexpr const char* kSnapshotSettingsNamespace = "debug_snapshot";
 constexpr const char* kSnapshotUploadUrlKey = "upload_url";
 constexpr const char* kSerialSnapCommand = "snap";
 constexpr const char* kSerialSnapUrlCommand = "snap_url";
+constexpr uint32_t kBtConfigReplyTimeoutMs = 1200;
+constexpr uint32_t kBtConfigInquiryTimeoutMs = 5000;
+constexpr uint32_t kBtConfigLinkTimeoutMs = 5000;
+constexpr uint32_t kBtConfigIdleBreakMs = 60;
+constexpr uint32_t kBtConfigSettleDelayMs = 120;
 }
 
 namespace {
@@ -71,6 +78,250 @@ std::string TrimAsciiWhitespace(std::string text) {
 bool StartsWithCommand(const std::string& text, std::string_view prefix) {
     return (text.size() >= prefix.size()) && (text.compare(0, prefix.size(), prefix.data()) == 0);
 }
+
+std::string SanitizeAsciiForLog(std::string text) {
+    for (char& ch : text) {
+        const unsigned char ascii = static_cast<unsigned char>(ch);
+        if ((ascii < 0x20U) && (ch != '\r') && (ch != '\n') && (ch != '\t')) {
+            ch = '.';
+        }
+    }
+    return text;
+}
+
+bool ReplyContainsOk(const std::string& response) {
+    return response.find("OK") != std::string::npos;
+}
+
+void LogBtConfigResponse(const std::string& response) {
+    std::string remaining = SanitizeAsciiForLog(response);
+    size_t offset = 0;
+
+    if (remaining.empty()) {
+        ESP_LOGW(TAG, "[BT_CFG] << <no response>");
+        return;
+    }
+
+    while (offset < remaining.size()) {
+        size_t line_end = remaining.find_first_of("\r\n", offset);
+        std::string line;
+
+        if (line_end == std::string::npos) {
+            line = TrimAsciiWhitespace(remaining.substr(offset));
+            offset = remaining.size();
+        } else {
+            line = TrimAsciiWhitespace(remaining.substr(offset, line_end - offset));
+            offset = remaining.find_first_not_of("\r\n", line_end);
+            if (offset == std::string::npos) {
+                offset = remaining.size();
+            }
+        }
+
+        if (!line.empty()) {
+            ESP_LOGI(TAG, "[BT_CFG] << %s", line.c_str());
+        }
+    }
+}
+
+std::optional<std::string> NormalizeHc05Address(const std::string& address_text) {
+    std::string hex_digits;
+
+    for (char ch : address_text) {
+        if (std::isxdigit(static_cast<unsigned char>(ch)) == 0) {
+            continue;
+        }
+        hex_digits.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(ch))));
+    }
+
+    if (hex_digits.size() != 12U) {
+        return std::nullopt;
+    }
+
+    return hex_digits.substr(0, 4) + "," + hex_digits.substr(4, 2) + "," + hex_digits.substr(6, 6);
+}
+
+class Hc05UartConfigurator {
+public:
+    Hc05UartConfigurator(int uart_port, int tx_gpio, int rx_gpio, uint32_t baudrate)
+        : uart_port_(static_cast<uart_port_t>(uart_port)),
+          tx_gpio_(tx_gpio),
+          rx_gpio_(rx_gpio),
+          current_baudrate_(baudrate) {
+    }
+
+    ~Hc05UartConfigurator() {
+        Close();
+    }
+
+    bool Open() {
+        esp_err_t err;
+
+        err = uart_driver_install(uart_port_, 1024, 1024, 0, nullptr, 0);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "[BT_CFG] uart_driver_install failed: %s", esp_err_to_name(err));
+            return false;
+        }
+
+        open_ = true;
+        err = uart_set_pin(uart_port_, tx_gpio_, rx_gpio_, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "[BT_CFG] uart_set_pin failed: %s", esp_err_to_name(err));
+            Close();
+            return false;
+        }
+
+        if (!ConfigureLocalUart(current_baudrate_)) {
+            Close();
+            return false;
+        }
+
+        ESP_LOGI(TAG,
+                 "[BT_CFG] uart ready: port=%d tx=%d rx=%d baud=%lu",
+                 static_cast<int>(uart_port_),
+                 tx_gpio_,
+                 rx_gpio_,
+                 static_cast<unsigned long>(current_baudrate_));
+        return true;
+    }
+
+    void Close() {
+        if (!open_) {
+            return;
+        }
+
+        uart_driver_delete(uart_port_);
+        open_ = false;
+    }
+
+    uint32_t GetCurrentBaudrate() const {
+        return current_baudrate_;
+    }
+
+    std::string SendCommand(const std::string& command, uint32_t timeout_ms = kBtConfigReplyTimeoutMs) {
+        std::string wire_text = command;
+        int written = 0;
+
+        if (!open_) {
+            return {};
+        }
+
+        wire_text.append("\r\n");
+        uart_flush_input(uart_port_);
+        ESP_LOGI(TAG, "[BT_CFG] >> %s", command.c_str());
+
+        written = uart_write_bytes(uart_port_, wire_text.data(), wire_text.size());
+        if (written != static_cast<int>(wire_text.size())) {
+            ESP_LOGW(TAG,
+                     "[BT_CFG] short write: expected=%u actual=%d",
+                     static_cast<unsigned int>(wire_text.size()),
+                     written);
+        }
+
+        uart_wait_tx_done(uart_port_, pdMS_TO_TICKS(timeout_ms));
+        const std::string response = ReadResponse(timeout_ms);
+        LogBtConfigResponse(response);
+        return response;
+    }
+
+    bool SendAndVerify(const std::string& command, const std::string& query) {
+        const bool ok = ReplyContainsOk(SendCommand(command));
+        vTaskDelay(pdMS_TO_TICKS(kBtConfigSettleDelayMs));
+        SendCommand(query);
+        return ok;
+    }
+
+    bool SwitchRemoteAndLocalBaud(uint32_t baudrate) {
+        std::string command = "AT+UART=" + std::to_string(static_cast<unsigned long>(baudrate)) + ",0,0";
+        const bool ok = ReplyContainsOk(SendCommand(command));
+        bool reset_ok = false;
+
+        if (!ok) {
+            ESP_LOGW(TAG, "[BT_CFG] remote baud switch rejected: %lu", static_cast<unsigned long>(baudrate));
+            return false;
+        }
+
+        reset_ok = ReplyContainsOk(SendCommand("AT+RESET"));
+        if (!reset_ok) {
+            ESP_LOGW(TAG, "[BT_CFG] remote reset rejected before baud switch: %lu", static_cast<unsigned long>(baudrate));
+            return false;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(kBtConfigSettleDelayMs));
+        if (!ConfigureLocalUart(baudrate)) {
+            return false;
+        }
+        return true;
+    }
+
+    bool BindRemoteAddress(const std::string& address) {
+        return SendAndVerify("AT+BIND=" + address, "AT+BIND?");
+    }
+
+private:
+    bool ConfigureLocalUart(uint32_t baudrate) {
+        uart_config_t config = {};
+        esp_err_t err;
+
+        config.baud_rate = static_cast<int>(baudrate);
+        config.data_bits = UART_DATA_8_BITS;
+        config.parity = UART_PARITY_DISABLE;
+        config.stop_bits = UART_STOP_BITS_1;
+        config.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
+        config.rx_flow_ctrl_thresh = 0;
+        config.source_clk = UART_SCLK_DEFAULT;
+
+        err = uart_param_config(uart_port_, &config);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "[BT_CFG] uart_param_config failed: %s", esp_err_to_name(err));
+            return false;
+        }
+
+        err = uart_flush_input(uart_port_);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "[BT_CFG] uart_flush_input failed: %s", esp_err_to_name(err));
+            return false;
+        }
+
+        current_baudrate_ = baudrate;
+        ESP_LOGI(TAG, "[BT_CFG] local baud=%lu", static_cast<unsigned long>(baudrate));
+        return true;
+    }
+
+    std::string ReadResponse(uint32_t timeout_ms) {
+        std::array<uint8_t, 96> chunk = {};
+        std::string response;
+        TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeout_ms);
+        TickType_t last_rx_tick = 0;
+        bool received_any = false;
+
+        while (xTaskGetTickCount() < deadline) {
+            const int bytes_read = uart_read_bytes(uart_port_,
+                                                   chunk.data(),
+                                                   chunk.size(),
+                                                   pdMS_TO_TICKS(20));
+            if (bytes_read > 0) {
+                response.append(reinterpret_cast<const char*>(chunk.data()),
+                                static_cast<size_t>(bytes_read));
+                last_rx_tick = xTaskGetTickCount();
+                received_any = true;
+                continue;
+            }
+
+            if (received_any &&
+                ((xTaskGetTickCount() - last_rx_tick) >= pdMS_TO_TICKS(kBtConfigIdleBreakMs))) {
+                break;
+            }
+        }
+
+        return response;
+    }
+
+    uart_port_t uart_port_;
+    int tx_gpio_ = UART_PIN_NO_CHANGE;
+    int rx_gpio_ = UART_PIN_NO_CHANGE;
+    uint32_t current_baudrate_ = 0;
+    bool open_ = false;
+};
 
 std::optional<uint32_t> ParseRgb888(const std::string& text) {
     unsigned int rgb = 0;
@@ -233,6 +484,10 @@ private:
     static constexpr uint32_t kSerialCommandTaskStackWords = 4096;
     static constexpr UBaseType_t kSerialCommandTaskPriority = 1;
     static constexpr size_t kSerialCommandBufferSize = 256;
+    static constexpr uint32_t kBtBridgeTaskStackWords = 4096;
+    static constexpr UBaseType_t kBtBridgeTaskPriority = 1;
+    static constexpr uint32_t kBtBridgeStartDelayMs = 1200;
+    static constexpr uint32_t kBtBridgeTickMs = 1000;
 
     struct DebugCommand {
         enum class Type : uint8_t {
@@ -257,6 +512,7 @@ private:
     std::mutex debug_snapshot_mutex_;
     std::mutex debug_snapshot_upload_mutex_;
     bool debug_snapshot_upload_in_progress_ = false;
+    uint32_t bt_transport_baudrate_ = GP_MATRIX_BT_UART_DATA_BAUDRATE;
 
     static std::string GetCompiledDebugSnapshotUploadUrl() {
         return TrimAsciiWhitespace(GP_DEBUG_SNAPSHOT_DEFAULT_UPLOAD_URL);
@@ -691,6 +947,84 @@ cleanup:
         }
     }
 
+    static void RunBluetoothBridgeTask(void* task_parameter) {
+        auto* self = static_cast<LichuangDevBoard*>(task_parameter);
+        uint8_t led_index = 0U;
+
+        if ((self == nullptr) || (self->led_matrix_ == nullptr)) {
+            vTaskDelete(nullptr);
+            return;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(kBtBridgeStartDelayMs));
+        self->led_matrix_->RunStartupLinkTest();
+
+        while (true) {
+            self->led_matrix_->SendBtDebugLedCommand(led_index);
+            led_index = static_cast<uint8_t>((led_index + 1U) % 8U);
+            vTaskDelay(pdMS_TO_TICKS(kBtBridgeTickMs));
+        }
+    }
+
+    void InitializeBluetoothBridgeTask() {
+        BaseType_t task_created;
+
+        task_created = xTaskCreate(
+            &LichuangDevBoard::RunBluetoothBridgeTask,
+            "bt_led_bridge",
+            kBtBridgeTaskStackWords,
+            this,
+            kBtBridgeTaskPriority,
+            nullptr);
+        if (task_created != pdPASS) {
+            ESP_LOGW(TAG, "Failed to create Bluetooth bridge task");
+        }
+    }
+
+    uint32_t ConfigureBluetoothModule() {
+        Hc05UartConfigurator configurator(GP_MATRIX_BT_UART_PORT,
+                                          GP_MATRIX_BT_UART_TX_PIN,
+                                          GP_MATRIX_BT_UART_RX_PIN,
+                                          GP_MATRIX_BT_UART_AT_BAUDRATE);
+        bool sequence_ok = true;
+        std::optional<std::string> remote_address;
+
+        if (!configurator.Open()) {
+            ESP_LOGW(TAG, "[BT_CFG] configure skipped: uart init failed");
+            return GP_MATRIX_BT_UART_DATA_BAUDRATE;
+        }
+
+        remote_address = NormalizeHc05Address(GP_MATRIX_BT_REMOTE_ADDRESS);
+        if (!remote_address.has_value()) {
+            ESP_LOGW(TAG, "[BT_CFG] invalid remote address: %s", GP_MATRIX_BT_REMOTE_ADDRESS);
+            return GP_MATRIX_BT_UART_DATA_BAUDRATE;
+        }
+
+        sequence_ok &= ReplyContainsOk(configurator.SendCommand("AT"));
+        configurator.SendCommand("AT+VERSION?");
+        sequence_ok &= configurator.SendAndVerify("AT+ROLE=1", "AT+ROLE?");
+        sequence_ok &= configurator.SendAndVerify(std::string("AT+NAME=") + GP_MATRIX_BT_LOCAL_NAME,
+                                                  "AT+NAME?");
+        sequence_ok &= configurator.SendAndVerify(std::string("AT+PSWD=") + GP_MATRIX_BT_PIN_CODE,
+                                                  "AT+PSWD?");
+        sequence_ok &= configurator.SendAndVerify("AT+CMODE=0", "AT+CMODE?");
+
+        ESP_LOGI(TAG, "[BT_CFG] remote=%s addr=%s", GP_MATRIX_BT_REMOTE_NAME, remote_address->c_str());
+        sequence_ok &= configurator.BindRemoteAddress(*remote_address);
+        sequence_ok &= configurator.SendAndVerify("AT+UART=" + std::to_string(static_cast<unsigned long>(GP_MATRIX_BT_UART_DATA_BAUDRATE)) + ",0,0",
+                                                  "AT+UART?");
+        sequence_ok &= configurator.SwitchRemoteAndLocalBaud(GP_MATRIX_BT_UART_DATA_BAUDRATE);
+        ESP_LOGI(TAG,
+                 "[BT_CFG] sequence=%s final_baud=%lu local=%s remote=%s addr=%s pin=%s",
+                 sequence_ok ? "ok" : "partial",
+                 static_cast<unsigned long>(configurator.GetCurrentBaudrate()),
+                 GP_MATRIX_BT_LOCAL_NAME,
+                 GP_MATRIX_BT_REMOTE_NAME,
+                 remote_address->c_str(),
+                 GP_MATRIX_BT_PIN_CODE);
+        return configurator.GetCurrentBaudrate();
+    }
+
     void InitializeI2c() {
         /* Audio codec, touch panel, camera SCCB, and the PCA9557 all share this local I2C bus. */
         i2c_master_bus_config_t i2c_bus_cfg = {
@@ -971,18 +1305,23 @@ cleanup:
         auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display_);
         std::unique_ptr<GpMatrixTransport> transport;
 
-        transport = CreateGpMatrixBtSppTransport("XiaoZhi-Matrix",
-                                                 "HC-05",
-                                                 "",
-                                                 "1234",
-                                                 12000);
+        bt_transport_baudrate_ = ConfigureBluetoothModule();
+
+        transport = CreateGpMatrixBtUartTransport(GP_MATRIX_BT_UART_PORT,
+                                                  GP_MATRIX_BT_UART_TX_PIN,
+                                                  GP_MATRIX_BT_UART_RX_PIN,
+                                                  bt_transport_baudrate_,
+                                                  GP_MATRIX_BT_LOCAL_NAME,
+                                                  GP_MATRIX_BT_REMOTE_NAME,
+                                                  GP_MATRIX_BT_PIN_CODE);
 
         led_matrix_ = std::make_unique<GpLedMatrixEsp32>(std::move(transport), GP_MATRIX_DEFAULT_BRIGHTNESS);
         if (debug_display == nullptr) {
+            InitializeBluetoothBridgeTask();
             return;
         }
 
-        debug_display->ApplyAiLinkStatus(false, "HC-05 SPP\nwaiting connect");
+        debug_display->ApplyAiLinkStatus(false, "Bluetooth init\nXiaoZhi to WS2812");
         led_matrix_->SetLinkStatusCallback([debug_display](bool online, const std::string& status_text) {
             Application::GetInstance().Schedule([debug_display, online, status_text]() {
                 debug_display->ApplyAiLinkStatus(online, status_text);
@@ -994,6 +1333,7 @@ cleanup:
         debug_display->SetDebugSnapshotCallback([this]() {
             return QueueDebugSnapshotCapture(50);
         });
+        InitializeBluetoothBridgeTask();
     }
 
 public:

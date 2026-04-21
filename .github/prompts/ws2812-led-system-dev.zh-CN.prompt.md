@@ -12,6 +12,7 @@ model: "GPT-5 (copilot)"
 - `AI端`：`External/xiaozhi-esp32/`
 - `LED端`：`STC51/Project/ws2812_driver/`
 - 通信链路：`AI端动作对象 -> AI端蓝牙传输 -> HC-05 -> LED端 UART2 -> WS2812`
+- HC-05 默认配置流：所有 AT 指令与查询都在 `38400` 下按“设置一条、查询一条”完成，AI端 使用固定地址 `98:D3:02:96:A2:B1` 对应的 `AT+BIND` 绑定 LED端，最后两步固定为 `AT+RESET` 和本地切到 `115200` 数据模式，名称统一为 `XiaoZhi -> WS2812`。
 
 优先查看路径：
 
@@ -22,7 +23,7 @@ model: "GPT-5 (copilot)"
 - AI端调试界面：`External/xiaozhi-esp32/GP_Port/ui/`
 - LED端协议执行：`STC51/Project/ws2812_driver/Sources/drv/gp_led_matrix_ai8051u.c`
 - LED端头文件：`STC51/Project/ws2812_driver/Sources/inc/`
-- 联调脚本：`tools/ws2812_dev_cycle.ps1`
+- 联调脚本：`tools/ws2812_dev_cycle.py`
 
 执行要求：
 
@@ -37,7 +38,7 @@ model: "GPT-5 (copilot)"
 默认验证：
 
 - 改动 LED端 源码后，执行 `STC51/Project/ws2812_driver/ws2812_driver.uvproj` 的 Keil rebuild。
-- 改动 AI端、MCP 或联调边界后，优先执行 `tools/ws2812_dev_cycle.ps1`。
+- 改动 AI端 或联调边界后，优先执行 `tools/ws2812_dev_cycle.py`。
 - 改动 LED端 蓝牙链路时，优先追加 `-RunAi8051BtDebug`。
 
 输出格式：

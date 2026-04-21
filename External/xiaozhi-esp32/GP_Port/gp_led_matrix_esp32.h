@@ -47,6 +47,9 @@ public:
     /* Send one packed glyph-row buffer for subtitle-style rendering. */
     bool ShowGlyphRows(const uint16_t* rows, size_t row_count, uint8_t glyph_count, uint8_t glyph_width, uint8_t glyph_spacing);
 
+    /* Send one LED debug text step over the HC-05 transparent UART link. */
+    bool SendBtDebugLedCommand(uint8_t led_index);
+
 private:
     using Rgb332Frame = std::array<uint8_t, GP_MATRIX_RGB332_FRAME_SIZE>;
 
@@ -56,6 +59,7 @@ private:
     uint32_t failure_count_;
     uint32_t verified_count_;
     uint32_t no_reply_count_;
+    bool link_verified_;
     bool remote_override_active_;
     bool has_last_action_;
     bool has_last_state_;
@@ -73,6 +77,7 @@ private:
     bool ReadReply(uint8_t expected_sequence, uint8_t expected_command, GpMatrixStatusCode& reply_status);
     bool SendCommand(uint8_t command, const uint8_t* payload, size_t payload_length, bool ack_required = false);
     bool SendState(DeviceState state, const Rgb332Frame& frame, GpMatrixMode mode = kGpMatrixModeSolidFrame);
+    std::string BuildHeartbeatStatusText(uint8_t led_index) const;
     std::string BuildStatusText(bool online,
                                 uint8_t command,
                                 uint8_t sequence,

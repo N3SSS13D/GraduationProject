@@ -89,6 +89,7 @@ GpLedMatrixEsp32::GpLedMatrixEsp32(std::unique_ptr<GpMatrixTransport> transport,
       failure_count_(0),
       verified_count_(0),
       no_reply_count_(0),
+    link_verified_(false),
       remote_override_active_(false),
       has_last_action_(false),
       has_last_state_(false),
@@ -108,11 +109,11 @@ void GpLedMatrixEsp32::RunStartupLinkTest() {
     };
     const TickType_t delay_ticks = pdMS_TO_TICKS(kStartupLinkTestIntervalMs);
 
-    NotifyLinkStatus(false, "AI8051U TEST\nrgb self-check");
+    NotifyLinkStatus(false, "Bluetooth test\nmatrix self-check");
     for (const auto& action : actions) {
         if (!ShowAction(action)) {
             ESP_LOGW(TAG, "Startup link test action failed");
-            NotifyLinkStatus(false, "AI8051U FAIL\nstartup self-check");
+            NotifyLinkStatus(false, "Bluetooth waiting\nstartup self-check");
             break;
         }
         vTaskDelay(delay_ticks);
@@ -120,11 +121,11 @@ void GpLedMatrixEsp32::RunStartupLinkTest() {
 
     if (!ShowAction(BuildReleaseAction())) {
         ESP_LOGW(TAG, "Startup link test release failed");
-        NotifyLinkStatus(false, "AI8051U FAIL\nrelease self-check");
+        NotifyLinkStatus(false, "Bluetooth waiting\nrelease self-check");
         return;
     }
 
-    NotifyLinkStatus(true, "AI8051U OK\nstartup self-check");
+    NotifyLinkStatus(true, "Bluetooth connected\nstartup self-check");
 }
 
 void GpLedMatrixEsp32::SetBrightness(uint8_t brightness) {
@@ -295,6 +296,32 @@ bool GpLedMatrixEsp32::ShowGlyphRows(const uint16_t* rows, size_t row_count, uin
     return SendCommand(kGpMatrixCommandScrollGlyphCommit, nullptr, 0);
 }
 
+bool GpLedMatrixEsp32::SendBtDebugLedCommand(uint8_t led_index) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    char buffer[16] = {0};
+    int text_length;
+
+    if (transport_ == nullptr) {
+        link_verified_ = false;
+        NotifyLinkStatus(false, "Bluetooth offline\nuart not ready");
+        return false;
+    }
+
+    text_length = std::snprintf(buffer, sizeof(buffer), "LED %u\r\n", static_cast<unsigned int>(led_index % 8U));
+    if ((text_length <= 0) || (static_cast<size_t>(text_length) >= sizeof(buffer))) {
+        return false;
+    }
+
+    if (!transport_->WritePacket(reinterpret_cast<const uint8_t*>(buffer), static_cast<size_t>(text_length), 100)) {
+        link_verified_ = false;
+        NotifyLinkStatus(false, "Bluetooth offline\nLED send failed");
+        return false;
+    }
+
+    NotifyLinkStatus(link_verified_, BuildHeartbeatStatusText(static_cast<uint8_t>(led_index % 8U)));
+    return true;
+}
+
 bool GpLedMatrixEsp32::SendCommand(uint8_t command, const uint8_t* payload, size_t payload_length, bool ack_required) {
     std::vector<uint8_t> buffer(GP_MATRIX_PACKET_HEADER_SIZE + payload_length + 1);
     GpMatrixStatusCode reply_status;
@@ -318,6 +345,7 @@ bool GpLedMatrixEsp32::SendCommand(uint8_t command, const uint8_t* payload, size
     last_payload_summary_ = BuildPayloadSummary(command, payload, payload_length);
 
     if ((transport_ == nullptr) || !transport_->WritePacket(buffer.data(), buffer.size(), 100)) {
+        link_verified_ = false;
         failure_count_++;
         ESP_LOGW(TAG, "Matrix transport write failed for command 0x%02x", command);
         NotifyLinkStatus(false, BuildStatusText(false, command, sequence, payload_length, ESP_FAIL, kGpMatrixStatusInternalError, false));
@@ -331,6 +359,7 @@ bool GpLedMatrixEsp32::SendCommand(uint8_t command, const uint8_t* payload, size
 
     reply_valid = ReadReply(sequence, command, reply_status);
     if (!reply_valid) {
+        link_verified_ = false;
         no_reply_count_++;
         failure_count_++;
         NotifyLinkStatus(false, BuildStatusText(false, command, sequence, payload_length, ESP_ERR_TIMEOUT, kGpMatrixStatusInternalError, false));
@@ -339,11 +368,13 @@ bool GpLedMatrixEsp32::SendCommand(uint8_t command, const uint8_t* payload, size
 
     verified_count_++;
     if (reply_status != kGpMatrixStatusOk) {
+        link_verified_ = false;
         failure_count_++;
         NotifyLinkStatus(false, BuildStatusText(false, command, sequence, payload_length, ESP_FAIL, reply_status, true));
         return false;
     }
 
+    link_verified_ = true;
     NotifyLinkStatus(true, BuildStatusText(true, command, sequence, payload_length, ESP_OK, reply_status, true));
     return true;
 }
@@ -487,7 +518,7 @@ std::string GpLedMatrixEsp32::BuildStatusText(bool online,
     const char* err_text = "fail";
 
     if (err == ESP_ERR_TIMEOUT) {
-        err_text = "tmout";
+        err_text = "timeout";
     } else if (err == ESP_OK) {
         err_text = "ok";
     }
@@ -495,7 +526,7 @@ std::string GpLedMatrixEsp32::BuildStatusText(bool online,
     if (online) {
         std::snprintf(buffer,
                       sizeof(buffer),
-                      "ONLINE\n%s s%02u r%02u\n%s",
+                      "Bluetooth connected\n%s s%02u r%02u\n%s",
                       CommandShortName(command),
                       static_cast<unsigned int>(sequence),
                       static_cast<unsigned int>(reply_status),
@@ -504,7 +535,7 @@ std::string GpLedMatrixEsp32::BuildStatusText(bool online,
         if (reply_valid) {
             std::snprintf(buffer,
                           sizeof(buffer),
-                          "ERROR\n%s s%02u r%02u\n%s",
+                          "Bluetooth error\n%s s%02u r%02u\n%s",
                           CommandShortName(command),
                           static_cast<unsigned int>(sequence),
                           static_cast<unsigned int>(reply_status),
@@ -512,7 +543,7 @@ std::string GpLedMatrixEsp32::BuildStatusText(bool online,
         } else {
             std::snprintf(buffer,
                           sizeof(buffer),
-                          "NO-REPLY\n%s s%02u %s\n%s",
+                          "Bluetooth waiting\n%s s%02u %s\n%s",
                           CommandShortName(command),
                           static_cast<unsigned int>(sequence),
                           err_text,
@@ -521,6 +552,17 @@ std::string GpLedMatrixEsp32::BuildStatusText(bool online,
     }
 
     (void)payload_length;
+    return buffer;
+}
+
+std::string GpLedMatrixEsp32::BuildHeartbeatStatusText(uint8_t led_index) const {
+    char buffer[64] = {0};
+
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "%s\nLED %u",
+                  link_verified_ ? "Bluetooth connected" : "Bluetooth waiting",
+                  static_cast<unsigned int>(led_index));
     return buffer;
 }
 

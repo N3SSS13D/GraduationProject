@@ -34,7 +34,7 @@
 
 ### 联调与文档
 
-- 联调脚本：`tools/ws2812_dev_cycle.ps1`
+- 联调脚本：`tools/ws2812_dev_cycle.py`
 - Prompt 索引：`.github/prompts/README.md`
 - GP_Port 总览：`External/xiaozhi-esp32/GP_Port/gp_port_project_overview.md`
 
@@ -70,7 +70,7 @@
 
 ### 联调
 
-- 首选自动化入口：`tools/ws2812_dev_cycle.ps1`
+- 首选自动化入口：`tools/ws2812_dev_cycle.py`
 - VS Code 任务：`WS2812: Dev Cycle`、`WS2812: Dev Cycle Watch`
 
 ## 提交边界

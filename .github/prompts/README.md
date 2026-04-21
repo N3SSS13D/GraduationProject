@@ -12,7 +12,7 @@
 - 总问题说明：`Doc/项目文档/problem_tracking.md`
 - 蓝牙结构说明：`Doc/项目文档/bt_version_hc05_uart2_architecture.md`
 - 蓝牙替代方案：`Doc/项目文档/bluetooth_replacement_plan.md`
-- 联调脚本：`tools/ws2812_dev_cycle.ps1`
+- 联调脚本：`tools/ws2812_dev_cycle.py`
 - AI端矩阵驱动：`External/xiaozhi-esp32/GP_Port/gp_led_matrix_esp32.h/.cc`
 - AI端蓝牙传输：`External/xiaozhi-esp32/GP_Port/transport/`
 - AI端调试界面：`External/xiaozhi-esp32/GP_Port/ui/`

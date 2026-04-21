@@ -3,6 +3,8 @@
 #include "lvgl_theme.h"
 
 #include <algorithm>
+#include <cctype>
+#include <cstring>
 #include <cstdlib>
 #include <cstdio>
 
@@ -17,24 +19,21 @@ constexpr uint32_t kAiLinkOnlineColor = 0x22C55E;
 constexpr uint32_t kAiLinkOfflineColor = 0xEF4444;
 constexpr uint32_t kAiLinkBusyColor = 0xF59E0B;
 constexpr uint32_t kAiLinkNeutralColor = 0x64748B;
-constexpr int kAiLinkPanelWidth = 148;
-constexpr int kAiLinkPanelHeight = 52;
+constexpr int kAiLinkPanelHeight = 78;
 constexpr int kDebugMenuMargin = 8;
 constexpr int kDebugMenuHeaderHeight = 30;
 constexpr int kDebugMenuContentPadding = 8;
 constexpr int kDebugMenuContentGap = 8;
-constexpr int kDebugPreviewHeight = 64;
+constexpr int kDebugPreviewHeight = 48;
 constexpr int kTouchPanelMinHeight = 100;
 constexpr int kMenuEntryWidth = 42;
 constexpr int kMenuEntryHeight = 28;
 constexpr int kMenuEntryMargin = 10;
-constexpr int kDebugMenuButtonWidth = 28;
-constexpr int kDebugMenuButtonHeight = 22;
-constexpr int kDebugMenuValueLabelWidth = 50;
-constexpr int kDebugPreviewTopInset = 18;
+constexpr int kDebugMenuButtonWidth = 24;
+constexpr int kDebugMenuButtonHeight = 20;
+constexpr int kDebugPreviewTopInset = 8;
 constexpr int kDebugSnapshotButtonSize = 24;
-constexpr int kTouchControlRowHeight = 28;
-constexpr int kTouchControlLabelWidth = 62;
+constexpr int kTouchControlRowHeight = 40;
 constexpr int kDebugPageCount = 2;
 
 struct DebugMenuLayout {
@@ -79,7 +78,7 @@ DebugMenuLayout ComputeDebugMenuLayout(int width, int height) {
     layout.content_width = layout.menu_width - kDebugMenuContentPadding * 2;
     layout.content_height = layout.menu_height - kDebugMenuHeaderHeight - kDebugMenuContentPadding - 8;
     layout.content_top = kDebugMenuHeaderHeight + 8;
-    layout.right_width = std::clamp(layout.content_width / 3, 90, 108);
+    layout.right_width = std::clamp((layout.content_width * 2) / 5, 124, 140);
     layout.left_width = std::max(layout.content_width - layout.right_width - kDebugMenuContentGap, 120);
     layout.left_x = kDebugMenuContentPadding;
     layout.right_x = layout.left_x + layout.left_width + kDebugMenuContentGap;
@@ -196,6 +195,34 @@ float TriangleWave(uint64_t elapsed_us, uint32_t period_ms) {
     const float progress = static_cast<float>(elapsed_us % period_us) / static_cast<float>(period_us);
     return progress < 0.5f ? progress * 2.0f : (1.0f - progress) * 2.0f;
 }
+
+bool ContainsAsciiNoCase(const std::string& text, const char* keyword) {
+    const size_t keyword_length = std::strlen(keyword);
+
+    if (keyword_length == 0U || text.size() < keyword_length) {
+        return false;
+    }
+
+    for (size_t offset = 0; offset + keyword_length <= text.size(); ++offset) {
+        bool match = true;
+
+        for (size_t index = 0; index < keyword_length; ++index) {
+            const char left = static_cast<char>(std::tolower(static_cast<unsigned char>(text[offset + index])));
+            const char right = static_cast<char>(std::tolower(static_cast<unsigned char>(keyword[index])));
+
+            if (left != right) {
+                match = false;
+                break;
+            }
+        }
+
+        if (match) {
+            return true;
+        }
+    }
+
+    return false;
+}
 }
 
 GpDebugLcdDisplay::GpDebugLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel,
@@ -205,7 +232,7 @@ GpDebugLcdDisplay::GpDebugLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd
     current_state_.dot_size_px = kDebugDotDefaultSize;
     current_state_.label = "touch";
     current_state_.source = "touch";
-    ai_link_status_text_ = "AI8051U INIT";
+    ai_link_status_text_ = "Bluetooth init";
     menu_button_contexts_[0] = {this, MenuAction::kOpenDebug};
     menu_button_contexts_[1] = {this, MenuAction::kCloseDebug};
     touch_button_contexts_[0] = {this, TouchAdjust::kPrevPreset};
@@ -358,12 +385,6 @@ void GpDebugLcdDisplay::CreateDebugOverlay() {
     lv_obj_clear_flag(debug_preview_panel_, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_pos(debug_preview_panel_, layout.right_x, layout.content_top);
 
-    lv_obj_t* preview_label = lv_label_create(debug_preview_panel_);
-    lv_obj_set_width(preview_label, layout.right_width - 8);
-    ApplyDebugTextStyle(preview_label, 0x94A3B8, LV_TEXT_ALIGN_CENTER, 200);
-    lv_label_set_text(preview_label, "Dot");
-    lv_obj_align(preview_label, LV_ALIGN_TOP_MID, 0, 8);
-
     debug_dot_ = lv_obj_create(debug_preview_panel_);
     lv_obj_remove_style_all(debug_dot_);
     ClearDebugImageStyle(debug_dot_);
@@ -390,7 +411,7 @@ void GpDebugLcdDisplay::CreateLinkStatusOverlay() {
     link_status_panel_ = lv_obj_create(debug_menu_panel_);
     lv_obj_remove_style_all(link_status_panel_);
     ClearDebugImageStyle(link_status_panel_);
-    lv_obj_set_size(link_status_panel_, layout.right_width, kAiLinkPanelHeight + 18);
+    lv_obj_set_size(link_status_panel_, layout.right_width, kAiLinkPanelHeight);
     lv_obj_set_style_radius(link_status_panel_, 14, 0);
     lv_obj_set_style_bg_opa(link_status_panel_, LV_OPA_80, 0);
     lv_obj_set_style_bg_color(link_status_panel_, lv_color_hex(0x101418), 0);
@@ -410,8 +431,9 @@ void GpDebugLcdDisplay::CreateLinkStatusOverlay() {
     lv_obj_set_pos(status_title_row, 10, 8);
 
     lv_obj_t* status_title = lv_label_create(status_title_row);
-    ApplyDebugTextStyle(status_title, 0x94A3B8, LV_TEXT_ALIGN_CENTER, 190);
-    lv_label_set_text(status_title, "Link");
+    ApplyDebugTextStyle(status_title, 0x94A3B8, LV_TEXT_ALIGN_LEFT, 180);
+    lv_label_set_text(status_title, "Bluetooth");
+    lv_obj_align(status_title, LV_ALIGN_LEFT_MID, 0, 0);
 
     link_status_dot_ = lv_obj_create(status_title_row);
     lv_obj_remove_style_all(link_status_dot_);
@@ -424,14 +446,14 @@ void GpDebugLcdDisplay::CreateLinkStatusOverlay() {
     lv_obj_t* status_row = lv_obj_create(link_status_panel_);
     lv_obj_remove_style_all(status_row);
     ClearDebugImageStyle(status_row);
-    lv_obj_set_size(status_row, layout.right_width - 20, 40);
+    lv_obj_set_size(status_row, layout.right_width - 20, 50);
     lv_obj_clear_flag(status_row, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_pos(status_row, 10, 28);
 
     link_status_label_ = lv_label_create(status_row);
     lv_obj_set_width(link_status_label_, layout.right_width - 20);
     lv_label_set_long_mode(link_status_label_, LV_LABEL_LONG_WRAP);
-    ApplyDebugTextStyle(link_status_label_, 0xF8FAFC, LV_TEXT_ALIGN_CENTER, 185);
+    ApplyDebugTextStyle(link_status_label_, 0xF8FAFC, LV_TEXT_ALIGN_LEFT, 155);
 
     RefreshAiLinkStatus();
 }
@@ -486,13 +508,13 @@ void GpDebugLcdDisplay::CreateTouchOverlay() {
 
     lv_obj_t* title_label = lv_label_create(touch_panel_);
     lv_label_set_long_mode(title_label, LV_LABEL_LONG_CLIP);
-    ApplyDebugTextStyle(title_label, 0xCBD5E1, LV_TEXT_ALIGN_LEFT, 175);
-    lv_label_set_text(title_label, "LED Control");
+    ApplyDebugTextStyle(title_label, 0xCBD5E1, LV_TEXT_ALIGN_LEFT, 170);
+    lv_label_set_text(title_label, "LEDmatrix");
     lv_obj_set_width(title_label, inner_width);
     lv_obj_set_pos(title_label, 0, 4);
 
     auto create_control_row = [&](const char* name, TouchButtonContext* prev_context,
-                                  TouchButtonContext* next_context, lv_obj_t** value_label, int y) {
+                                  TouchButtonContext* next_context, lv_obj_t** value_label, int y, bool with_buttons) {
         lv_obj_t* row = lv_obj_create(touch_panel_);
         lv_obj_remove_style_all(row);
         ClearDebugImageStyle(row);
@@ -502,31 +524,40 @@ void GpDebugLcdDisplay::CreateTouchOverlay() {
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
 
         lv_obj_t* label = lv_label_create(row);
-        lv_obj_set_width(label, kTouchControlLabelWidth);
+        lv_obj_set_width(label, row_width);
         lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
-        ApplyDebugTextStyle(label, 0x94A3B8, LV_TEXT_ALIGN_LEFT, 170);
+        ApplyDebugTextStyle(label, 0x94A3B8, LV_TEXT_ALIGN_LEFT, 150);
         lv_label_set_text(label, name);
-        lv_obj_set_pos(label, 0, 4);
+        lv_obj_set_pos(label, 0, 0);
 
-        create_touch_button(row, "<", prev_context, row_width - (kDebugMenuButtonWidth * 2 + kDebugMenuValueLabelWidth + 12), 0);
+        if (with_buttons) {
+            create_touch_button(row, "<", prev_context, 0, 18);
 
-        *value_label = lv_label_create(row);
-        lv_obj_set_width(*value_label, kDebugMenuValueLabelWidth);
-        lv_label_set_long_mode(*value_label, LV_LABEL_LONG_CLIP);
-        ApplyDebugTextStyle(*value_label, 0xF8FAFC, LV_TEXT_ALIGN_CENTER, 168);
-        lv_obj_set_pos(*value_label, row_width - (kDebugMenuButtonWidth + kDebugMenuValueLabelWidth + 6), 4);
+            *value_label = lv_label_create(row);
+            lv_obj_set_width(*value_label, row_width - (kDebugMenuButtonWidth * 2 + 12));
+            lv_label_set_long_mode(*value_label, LV_LABEL_LONG_CLIP);
+            ApplyDebugTextStyle(*value_label, 0xF8FAFC, LV_TEXT_ALIGN_CENTER, 150);
+            lv_obj_set_pos(*value_label, kDebugMenuButtonWidth + 6, 20);
 
-        create_touch_button(row, ">", next_context, row_width - kDebugMenuButtonWidth, 0);
+            create_touch_button(row, ">", next_context, row_width - kDebugMenuButtonWidth, 18);
+        } else {
+            *value_label = lv_label_create(row);
+            lv_obj_set_width(*value_label, row_width);
+            lv_label_set_long_mode(*value_label, LV_LABEL_LONG_CLIP);
+            ApplyDebugTextStyle(*value_label, 0xF8FAFC, LV_TEXT_ALIGN_LEFT, 150);
+            lv_obj_set_pos(*value_label, 0, 20);
+        }
     };
 
-    create_control_row("Pattern", &touch_button_contexts_[0], &touch_button_contexts_[1], &preset_value_label_, 28);
-    create_control_row("Effect", &touch_button_contexts_[2], &touch_button_contexts_[3], &effect_value_label_, 60);
+    create_control_row("Pattern", &touch_button_contexts_[0], &touch_button_contexts_[1], &preset_value_label_, 28, true);
+    create_control_row("Effect", &touch_button_contexts_[2], &touch_button_contexts_[3], &effect_value_label_, 72, true);
+    create_control_row("Color", nullptr, nullptr, &color_value_label_, 116, false);
 
     debug_info_label_ = lv_label_create(touch_panel_);
     lv_obj_set_width(debug_info_label_, inner_width);
     lv_label_set_long_mode(debug_info_label_, LV_LABEL_LONG_WRAP);
-    ApplyDebugTextStyle(debug_info_label_, 0xE2E8F0, LV_TEXT_ALIGN_LEFT, 160);
-    lv_obj_set_pos(debug_info_label_, 0, 96);
+    ApplyDebugTextStyle(debug_info_label_, 0xE2E8F0, LV_TEXT_ALIGN_LEFT, 145);
+    lv_obj_set_pos(debug_info_label_, 0, 162);
 
     RefreshTouchState();
     RefreshInfoPage();
@@ -578,7 +609,7 @@ void GpDebugLcdDisplay::ApplyAiLinkStatus(bool online, const std::string& status
     }
 
     ai_link_online_ = online;
-    ai_link_status_text_ = status_text.empty() ? "AI8051U" : status_text;
+    ai_link_status_text_ = status_text.empty() ? "Bluetooth waiting" : status_text;
     RefreshAiLinkStatus();
     RefreshInfoPage();
 }
@@ -674,9 +705,9 @@ void GpDebugLcdDisplay::RefreshAiLinkStatus() {
     }
 
     dot_color = ai_link_online_ ? kAiLinkOnlineColor : kAiLinkOfflineColor;
-    if (ai_link_status_text_.find("TEST") != std::string::npos) {
+    if (ContainsAsciiNoCase(ai_link_status_text_, "test")) {
         dot_color = kAiLinkBusyColor;
-    } else if (ai_link_status_text_.find("INIT") != std::string::npos) {
+    } else if (ContainsAsciiNoCase(ai_link_status_text_, "init") || ContainsAsciiNoCase(ai_link_status_text_, "waiting")) {
         dot_color = kAiLinkNeutralColor;
     }
 
@@ -685,12 +716,13 @@ void GpDebugLcdDisplay::RefreshAiLinkStatus() {
 }
 
 void GpDebugLcdDisplay::RefreshTouchState() {
-    if ((preset_value_label_ == nullptr) || (effect_value_label_ == nullptr)) {
+    if ((preset_value_label_ == nullptr) || (effect_value_label_ == nullptr) || (color_value_label_ == nullptr)) {
         return;
     }
 
     lv_label_set_text(preset_value_label_, GetPresetName(current_state_.preset));
     lv_label_set_text(effect_value_label_, GetAnimationName(current_state_.animation));
+    lv_label_set_text(color_value_label_, current_state_.rgb888_text.empty() ? "#808080" : current_state_.rgb888_text.c_str());
 }
 
 void GpDebugLcdDisplay::RefreshInfoPage() {
@@ -702,10 +734,7 @@ void GpDebugLcdDisplay::RefreshInfoPage() {
 
     std::snprintf(buffer,
         sizeof(buffer),
-        "Preset  %s\nEffect  %s\nColor   %s\nSource  %s\n\nSwipe right to return to controls.",
-        GetPresetName(current_state_.preset),
-        GetAnimationName(current_state_.animation),
-        current_state_.rgb888_text.empty() ? "#808080" : current_state_.rgb888_text.c_str(),
+        "Source  %s\nStatus  right panel",
         current_state_.source.empty() ? "touch" : current_state_.source.c_str());
     lv_label_set_text(debug_info_label_, buffer);
 }

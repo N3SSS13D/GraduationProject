@@ -13,7 +13,7 @@
 
 验证入口：
 
-- `tools/ws2812_dev_cycle.ps1`
+- `tools/ws2812_dev_cycle.py`
 - `-RunAi8051BtDebug`
 - `External/xiaozhi-esp32/GP_Port/gp_mcp_endpoint_client.py`
 

@@ -22,10 +22,11 @@ Requirements:
 3. Keep action delivery bounded, traceable, and validation-friendly.
 4. Touch MCP or snapshot tooling only when directly required by the task.
 5. Run the available build or integration validation after changes.
+6. For HC-05 tasks, assume all AT commands and queries finish at `38400` in strict set-then-query order, use `AT+BIND` with fixed slave address `98:D3:02:96:A2:B1` on the AI side, then make `AT+RESET` and the local switch to `115200` the final two steps, with reply logging visible in monitor.
 
 Useful tools:
 
-- `tools/ws2812_dev_cycle.ps1`
+- `tools/ws2812_dev_cycle.py`
 - `External/xiaozhi-esp32/GP_Port/gp_mcp_endpoint_client.py`
 
 Output format:

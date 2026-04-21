@@ -21,7 +21,7 @@
 ### 快速路径
 
 - 板级接入：`../main/boards/lichuang-dev/`
-- 联调脚本：`../../tools/ws2812_dev_cycle.ps1`
+- 联调脚本：`../../tools/ws2812_dev_cycle.py`
 - 问题说明：`../../Doc/项目文档/problem_tracking.md`
 
 ## English

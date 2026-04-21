@@ -14,8 +14,8 @@
 #define GP_MATRIX_BT_REPLY_TIMEOUT_MS    800U
 #define GP_MATRIX_BT_REPLY_IDLE_MS       12U
 #define GP_MATRIX_BT_TASK_IDLE_TICKS     2U
-#define GP_MATRIX_BT_AT_MODE_SETTLE_MS   120U
 #define GP_MATRIX_BT_BAUD_SWITCH_DELAY_MS 120U
+#define GP_MATRIX_BT_COMMAND_GAP_MS      80U
 
 static char xdata g_gpMatrixBtCommand[GP_MATRIX_BT_COMMAND_BUFFER_SIZE];
 static char xdata g_gpMatrixBtReply[GP_MATRIX_BT_REPLY_BUFFER_SIZE];
@@ -45,6 +45,7 @@ static uint8_t GpLedMatrixBtDebug_ReplyContainsOk(const char *replyBuffer, uint8
 static void GpLedMatrixBtDebug_HandleReceivedText(char *text);
 static uint8_t GpLedMatrixBtDebug_ReadReply(char *replyBuffer, uint8_t maxLength, uint16_t timeoutMs);
 static void GpLedMatrixBtDebug_SendText(const char *payload);
+static void GpLedMatrixBtDebug_RunAutoSetup(void);
 
 static uint8_t GpLedMatrixBtDebug_IsSpace(uint8_t value)
 {
@@ -220,6 +221,7 @@ static void GpLedMatrixBtDebug_PrintUsage(void)
 {
     printf("[BT_HELP] BT SEND <text>\r\n");
     printf("[BT_HELP] BT STATUS\r\n");
+    printf("[BT_HELP] startup auto setup uses 38400 -> role/name/pswd -> 115200\r\n");
     printf("[BT_HELP] BT AT+UART=115200,0,0\r\n");
 }
 
@@ -420,6 +422,7 @@ static void GpLedMatrixBtDebug_SendText(const char *payload)
     uint32_t nextBaudrate;
     uint8_t hasNextBaudrate;
     uint8_t canSwitchLocalBaud;
+    uint8_t resetReplyLength;
 
     textLength = GpLedMatrixBtDebug_CopyText(g_gpMatrixBtCommand,
                                              GP_MATRIX_BT_COMMAND_BUFFER_SIZE,
@@ -433,15 +436,7 @@ static void GpLedMatrixBtDebug_SendText(const char *payload)
     }
 
     isAtCommand = GpLedMatrixBtDebug_IsAtCommand(g_gpMatrixBtCommand);
-    if (isAtCommand != 0U)
-    {
-        UART2_SetBtAtMode(1U);
-        delay_ms(GP_MATRIX_BT_AT_MODE_SETTLE_MS);
-    }
-    else
-    {
-        UART2_SetBtAtMode(0U);
-    }
+    UART2_SetBtAtMode(0U);
 
     printf("[BT_CMD] mode=%s text=%s\r\n",
            (isAtCommand != 0U) ? "AT" : "DATA",
@@ -487,6 +482,39 @@ static void GpLedMatrixBtDebug_SendText(const char *payload)
                                                                 g_gpMatrixBtLastRxBytes);
         if (canSwitchLocalBaud != 0U)
         {
+            delay_ms(GP_MATRIX_BT_COMMAND_GAP_MS);
+            UART2_ResetRxRing();
+            UART2_DebugResetRecentRx();
+            g_gpMatrixBtLastTxOk = UART2_SendText("AT+RESET\r\n");
+            if (g_gpMatrixBtLastTxOk == 0U)
+            {
+                GpLedMatrixBtDebug_PrintStatus("reset-tx-timeout");
+                return;
+            }
+
+            resetReplyLength = GpLedMatrixBtDebug_ReadReply(g_gpMatrixBtReply,
+                                                            GP_MATRIX_BT_REPLY_BUFFER_SIZE,
+                                                            GP_MATRIX_BT_REPLY_TIMEOUT_MS);
+            if (resetReplyLength == 0U)
+            {
+                printf("[BT_RSP] reset_timeout=%u\r\n", (unsigned int)GP_MATRIX_BT_REPLY_TIMEOUT_MS);
+                GpLedMatrixBtDebug_PrintStatus("reset-no-reply");
+                return;
+            }
+
+            GpLedMatrixBtDebug_FormatAscii(g_gpMatrixBtReply, resetReplyLength);
+            GpLedMatrixBtDebug_FormatHex(g_gpMatrixBtReply, resetReplyLength);
+            printf("[BT_CMD] mode=AT text=AT+RESET\r\n");
+            printf("[BT_RSP] len=%u ascii=%s\r\n", (unsigned int)resetReplyLength, g_gpMatrixBtAscii);
+            printf("[BT_RSP] hex=%s\r\n", g_gpMatrixBtHex);
+            if (GpLedMatrixBtDebug_ReplyContainsOk(g_gpMatrixBtReply, resetReplyLength) == 0U)
+            {
+                printf("[BT_CFG] local_baud_hold=%lu reason=reset_reply_not_ok\r\n",
+                       (unsigned long)UART2_GetBaudrate());
+                GpLedMatrixBtDebug_PrintStatus("reset-reply-not-ok");
+                return;
+            }
+
             UART2_ResetRxRing();
             delay_ms(GP_MATRIX_BT_BAUD_SWITCH_DELAY_MS);
             if (UART2_SetBaudrate(nextBaudrate) != 0U)
@@ -510,6 +538,44 @@ static void GpLedMatrixBtDebug_SendText(const char *payload)
     UART2_DebugResetRecentRx();
 }
 
+static void GpLedMatrixBtDebug_RunAutoSetup(void)
+{
+    printf("[BT_CFG] startup=begin\r\n");
+
+    UART2_SetBtAtMode(0U);
+    UART2_ResetRxRing();
+    UART2_DebugResetRecentRx();
+    if (UART2_SetBaudrate(38400UL) != 0U)
+    {
+        printf("[BT_CFG] local_baud=38400\r\n");
+    }
+    else
+    {
+        printf("[BT_CFG] local_baud_switch_failed=38400\r\n");
+    }
+
+    GpLedMatrixBtDebug_SendText("AT");
+    delay_ms(GP_MATRIX_BT_COMMAND_GAP_MS);
+    GpLedMatrixBtDebug_SendText("AT+VERSION?");
+    delay_ms(GP_MATRIX_BT_COMMAND_GAP_MS);
+    GpLedMatrixBtDebug_SendText("AT+ROLE=0");
+    delay_ms(GP_MATRIX_BT_COMMAND_GAP_MS);
+    GpLedMatrixBtDebug_SendText("AT+ROLE?");
+    delay_ms(GP_MATRIX_BT_COMMAND_GAP_MS);
+    GpLedMatrixBtDebug_SendText("AT+NAME=WS2812");
+    delay_ms(GP_MATRIX_BT_COMMAND_GAP_MS);
+    GpLedMatrixBtDebug_SendText("AT+NAME?");
+    delay_ms(GP_MATRIX_BT_COMMAND_GAP_MS);
+    GpLedMatrixBtDebug_SendText("AT+PSWD=19220309");
+    delay_ms(GP_MATRIX_BT_COMMAND_GAP_MS);
+    GpLedMatrixBtDebug_SendText("AT+PSWD?");
+    delay_ms(GP_MATRIX_BT_COMMAND_GAP_MS);
+    GpLedMatrixBtDebug_SendText("AT+UART=115200,0,0");
+    delay_ms(GP_MATRIX_BT_COMMAND_GAP_MS);
+    GpLedMatrixBtDebug_SendText("AT+UART?");
+    printf("[BT_CFG] startup=end\r\n");
+}
+
 void GpLedMatrixBtDebug_SetReady(uint8_t ready)
 {
     g_gpMatrixBtReady = ready;
@@ -519,9 +585,10 @@ void GpLedMatrixBtDebug_PrintInit(void)
 {
     PORT2_ClearDebugLeds();
     UART2_SetBtAtMode(0U);
-    printf("[BT_INIT] uart2=P42(RX),P43(TX) at=P41 baud=%lu default_at=9600\r\n",
+    printf("[BT_INIT] uart2=P42(RX),P43(TX) at=P41 baud=%lu startup_at=38400 data=115200\r\n",
            (unsigned long)UART2_GetBaudrate());
     GpLedMatrixBtDebug_PrintStatus("init");
+    GpLedMatrixBtDebug_RunAutoSetup();
 }
 
 void GpLedMatrixBtDebug_Task(void)

@@ -12,6 +12,7 @@ Current workflow:
 - `AI side`: `External/xiaozhi-esp32/`
 - `LED side`: `STC51/Project/ws2812_driver/`
 - transport: `AI side -> HC-05 -> LED side UART2(P4.2/P4.3)`
+- default HC-05 setup flow: keep all AT commands and queries at `38400` in strict set-then-query order, bind the AI side to fixed slave address `98:D3:02:96:A2:B1` with `AT+BIND`, then make `AT+RESET` and the local baud switch to `115200` the final two steps, with `XiaoZhi -> WS2812`.
 
 Read first:
 
@@ -20,7 +21,7 @@ Read first:
 - `External/xiaozhi-esp32/GP_Port/gp_led_matrix_esp32.h/.cc`
 - `External/xiaozhi-esp32/GP_Port/transport/`
 - `STC51/Project/ws2812_driver/Sources/`
-- `tools/ws2812_dev_cycle.ps1`
+- `tools/ws2812_dev_cycle.py`
 
 Requirements:
 
@@ -34,7 +35,7 @@ Requirements:
 Default validation:
 
 - Rebuild `STC51/Project/ws2812_driver/ws2812_driver.uvproj` after LED-side source changes.
-- Use `tools/ws2812_dev_cycle.ps1` for integration work.
+- Use `tools/ws2812_dev_cycle.py` for integration work.
 - Use `-RunAi8051BtDebug` when the LED-side Bluetooth path changes.
 
 Output format:

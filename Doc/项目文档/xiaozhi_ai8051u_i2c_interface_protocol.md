@@ -79,7 +79,7 @@
 
 - 当前 AI8051U 侧已补充 I2C DMA 后端，寄存器使用遵循 `DMA_I2CT_*`、`DMA_I2CR_*` 与 `DMA_I2C_*` 的手册定义。
 - 当前默认采用双向 DMA 策略：START/STOP 与超时边界仍由从机 ISR 管理，命令包主体通过 I2CR DMA 写入 `rxBuffer`，应答包通过 I2CT DMA 从 `txBuffer` 自动搬运。
-- `GpLedMatrixAi8051u_SetDmaMode(context, enableRx, enableTx)` 可按方向分别开关 DMA，便于做兼容性回退或联调对比。
+- `BT_Version` 当前已删除 `GpLedMatrixAi8051u_SetDmaMode(...)` 这类旧 I2C 兼容接口；本文档保留它们仅用于稳定版 `I2C_Version` 的历史说明。
 - 验证时除功能正确外，还要重点检查 `RXLOSS`、`TXOVW`、DMA 完成长度以及回包内容是否与协议包长度一致。
 
 ## 4. 协议包格式
