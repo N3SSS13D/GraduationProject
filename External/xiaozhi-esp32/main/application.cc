@@ -8,7 +8,7 @@
 #include "assets/lang_config.h"
 #include "mcp_server.h"
 #include "assets.h"
-#include "gp_debug_display.h"
+#include "ui/gp_debug_display.h"
 #include "gp_led_matrix_esp32.h"
 #include "settings.h"
 

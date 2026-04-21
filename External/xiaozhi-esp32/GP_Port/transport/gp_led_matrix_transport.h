@@ -1,9 +1,6 @@
 /*
  * @file gp_led_matrix_transport.h
- * @author GitHub Copilot
- * @date 2026-04-18
- * @version 1.0
- * @brief Matrix transport abstraction for I2C and classic Bluetooth SPP backends.
+ * @brief Matrix transport abstraction for the BT_Version local link.
  */
 
 #ifndef GP_LED_MATRIX_TRANSPORT_H_
@@ -14,21 +11,21 @@
 #include <memory>
 #include <string>
 
-#include <driver/i2c_master.h>
-
 class GpMatrixTransport {
 public:
     virtual ~GpMatrixTransport() = default;
 
+    /* Send one complete protocol packet through the active transport backend. */
     virtual bool WritePacket(const uint8_t* data, size_t length, uint32_t timeout_ms) = 0;
+
+    /* Read one complete protocol packet through the active transport backend. */
     virtual bool ReadPacket(uint8_t* data, size_t length, uint32_t timeout_ms) = 0;
+
+    /* Return a short human-readable description of the active link. */
     virtual std::string DescribeLink() const = 0;
 };
 
-std::unique_ptr<GpMatrixTransport> CreateGpMatrixI2cTransport(i2c_master_bus_handle_t i2c_bus,
-                                                              uint8_t address,
-                                                              uint32_t scl_speed_hz = 100000);
-
+/* Create the BT SPP transport used by BT_Version. Unsupported targets return nullptr. */
 std::unique_ptr<GpMatrixTransport> CreateGpMatrixBtSppTransport(const std::string& local_name,
                                                                 const std::string& remote_name,
                                                                 const std::string& remote_address,

@@ -90,7 +90,7 @@ static void GpLedMatrixAi8051u_ResetContext(GpLedMatrixAi8051uContext xdata *con
         context->glyphBuffer[g_gpMatrixLoopIndex] = 0U;
     }
 
-    context->i2cAddress = transportAddress;
+    context->transportEndpoint = transportAddress;
     context->brightness = 200U;
     context->mode = (uint8_t)kGpMatrixModeSolidFrame;
     context->lastSequence = 0U;
@@ -101,17 +101,11 @@ static void GpLedMatrixAi8051u_ResetContext(GpLedMatrixAi8051uContext xdata *con
     context->packetReplyPrepared = 0U;
     context->txLength = 0U;
     context->txPending = 0U;
-    context->dmaRxEnabled = 0U;
-    context->dmaTxEnabled = 0U;
-    context->dmaRxActive = 0U;
-    context->dmaTxActive = 0U;
-    context->dmaLastRxDone = 0U;
-    context->dmaLastTxDone = 0U;
     GpLedMatrixAi8051u_ResetFrameTransfer(context);
     GpLedMatrixAi8051u_ResetGlyphTransfer(context);
 }
 
-static void GpLedMatrixAi8051u_DisableI2cBackend(void)
+static void GpLedMatrixAi8051u_ShutdownLegacyI2cHardware(void)
 {
     DMA_I2C_DisableDMA();
     DMA_I2C_DisableTx();
@@ -600,49 +594,11 @@ void GpLedMatrixAi8051u_Init(GpLedMatrixAi8051uContext xdata *context, uint8_t t
     GpLedAction_Init();
     GpLedAction_SetBrightness(context->brightness);
 
-    GpLedMatrixAi8051u_DisableI2cBackend();
+    GpLedMatrixAi8051u_ShutdownLegacyI2cHardware();
     GpLedMatrixAi8051u_ResetPacketAssembly();
     UART2_Init();
     GpLedMatrixBtDebug_SetReady(1U);
     GpLedMatrixBtDebug_PrintInit();
-}
-
-void GpLedMatrixAi8051u_SetDmaMode(GpLedMatrixAi8051uContext xdata *context, uint8_t enableRx, uint8_t enableTx)
-{
-    if (context == 0)
-    {
-        return;
-    }
-
-    context->dmaRxEnabled = (enableRx != 0U) ? 1U : 0U;
-    context->dmaTxEnabled = (enableTx != 0U) ? 1U : 0U;
-    context->dmaRxActive = 0U;
-    context->dmaTxActive = 0U;
-}
-
-void GpLedMatrixAi8051u_OnI2cReceive(GpLedMatrixAi8051uContext xdata *context, const uint8_t *rxBytes, uint8_t length)
-{
-    if ((context == 0) || (rxBytes == 0) || (length == 0U))
-    {
-        return;
-    }
-    if (length > GP_MATRIX_AI8051U_RX_BUFFER_SIZE)
-    {
-        return;
-    }
-    if (context->packetPending != 0U)
-    {
-        return;
-    }
-
-    for (g_gpMatrixLoopIndex = 0U; g_gpMatrixLoopIndex < length; ++g_gpMatrixLoopIndex)
-    {
-        context->rxBuffer[g_gpMatrixLoopIndex] = rxBytes[g_gpMatrixLoopIndex];
-    }
-
-    context->packetLength = length;
-    context->packetPending = 1U;
-    context->packetReplyPrepared = 0U;
 }
 
 uint8_t GpLedMatrixAi8051u_PrepareTx(GpLedMatrixAi8051uContext xdata *context, uint8_t *outData, uint8_t maxLength)

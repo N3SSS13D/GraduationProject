@@ -4,15 +4,18 @@
 
 ### 设计目标
 
-协议以 ESP32 为 I2C 主机、AI8051U 为 I2C 从机，当前优先服务本地通信闭环，兼顾四类数据：状态提示、动作控制、16x16 RGB332 帧、16 行字模数据。协议既要能承载完整图像，也要能支持后续 ACK、状态回传和联调诊断。
+当前协议服务于 `AI端 -> 蓝牙 -> LED端` 主链路，承载四类数据：状态提示、动作控制、16x16 RGB332 帧、16 行字模数据。协议需要同时满足本地调试、ACK 回包和链路诊断。
 
-- 当前联调默认从机地址固定为 `0x31`。
-- 当前联调硬件连线固定为：小智 `IO1=SDA`、`IO2=SCL`；AI8051U `P2.4=SCL`、`P2.3=SDA`。
-- 当前样机若采用 `ESP32 3.3V 上拉 + AI8051U 5V 从机` 的直连方式，软件侧建议矩阵链路保持在 `100kHz`，硬件侧长期方案建议补双向电平转换。
+当前默认链路：
+
+- `AI端`：`External/xiaozhi-esp32/GP_Port/`
+- 蓝牙传输：经典蓝牙 SPP -> HC-05
+- `LED端`：`STC51/Project/ws2812_driver/`
+- 本地链路诊断端点标识：`0x31`
 
 ### 包结构
 
-每个 I2C 发送单元为一包，格式如下：
+每个发送单元为一包，格式如下：
 
 | 字段 | 长度 | 说明 |
 | --- | --- | --- |
@@ -29,7 +32,7 @@
 说明：
 
 - 多字节字段统一按 little-endian 手工序列化，不依赖编译器结构体内存布局。
-- 当前优先支持本地 I2C 动作控制，后续再向 MCP 上行/下行映射扩展。
+- 当前优先支持 `AI端` 与 `LED端` 的本地蓝牙闭环，再向更高层桥接扩展。
 
 ### 命令集合
 
@@ -38,7 +41,7 @@
 | `Ping` | `0x01` | 通链探测 |
 | `SetBrightness` | `0x02` | 设置整体亮度 |
 | `SetMode` | `0x03` | 设置播放模式 |
-| `StateHint` | `0x04` | 同步小智当前状态 |
+| `StateHint` | `0x04` | 同步 `AI端` 当前状态 |
 | `SetAction` | `0x05` | 下发本地动作描述（图案、效果、颜色、方向等） |
 | `FrameStart` | `0x10` | 开始一次 RGB332 帧传输 |
 | `FrameChunk` | `0x11` | 分片发送 RGB332 帧 |
@@ -47,14 +50,14 @@
 | `ScrollGlyphChunk` | `0x21` | 分片发送字模数据 |
 | `ScrollGlyphCommit` | `0x22` | 提交并进入滚动显示 |
 | `Heartbeat` | `0x30` | 保活 |
-| `Status` | `0x31` | AI8051U 回传状态 |
-| `Error` | `0x7f` | AI8051U 回传错误 |
+| `Status` | `0x31` | `LED端` 回传状态 |
+| `Error` | `0x7f` | `LED端` 回传错误 |
 
 ### 图像负载
 
-#### 动作负载（MCP 语义裁剪版）
+#### 动作负载
 
-`SetAction` 负载是一个固定长度动作对象，用于在不依赖外部 MCP 桥接的情况下，先打通本地 I2C 控制链。其字段覆盖：
+`SetAction` 负载是一个固定长度动作对象，用于在不依赖额外桥接改造的情况下，直接打通 `AI端` 到 `LED端` 的动作链。其字段覆盖：
 
 - `source`：本地来源或 MCP 来源
 - `content`：纯色、图案、字模、状态或帧缓冲
@@ -67,7 +70,7 @@
 - `scroll_step` / `anim_step` / `gradient_span`
 - `flags`：是否使用次色、是否进入远程模式、是否释放远程模式
 
-这套动作对象是对 MCP 工具结果的二进制裁剪映射，优先适配本地通信，后续再扩展外部 MCP 接入。
+这套动作对象是对 `AI端` 结果对象的二进制裁剪映射，优先适配当前本地蓝牙通信。
 
 #### RGB332 帧
 
@@ -90,6 +93,13 @@
 4. 如果使用滚动字模，先完整下发字模，再以 `SetMode` 或 `ScrollGlyphCommit` 切换显示模式。
 5. 对需要确认执行结果的关键命令启用 `ACK_REQUIRED`，并在主机侧同步读取 `Status/Error` 回包。
 
+### 当前验证重点
+
+1. `AI端` 动作对象字段与 `GpMatrixActionPayload` 保持一致。
+2. 蓝牙链路下的 `sequence`、`payload_length` 和 `checksum` 必须稳定。
+3. `LED端` 在完整收包后先准备 ACK，再进入动作执行。
+4. 分片帧和字模传输不得阻塞 WS2812 刷新热路径。
+
 ### 错误码建议
 
 - `0x00`：成功
@@ -104,7 +114,7 @@
 
 ### Intent
 
-The protocol assumes ESP32 as the I2C master and AI8051U as the I2C slave. It supports state hints, full RGB332 frames, glyph-row transfers, and future status/error reporting.
+The protocol is for the current `AI side -> Bluetooth -> LED side` workflow. It supports state hints, action payloads, full RGB332 frames, glyph-row transfers, and `Status / Error` replies.
 
 ### Packet layout
 
@@ -119,6 +129,6 @@ The protocol assumes ESP32 as the I2C master and AI8051U as the I2C slave. It su
 ### Next extension points
 
 1. Add frame retry after `BadChecksum` or `BadSequence`.
-2. Add optional heartbeat watchdog on the AI8051U side so the gradient fallback can be restored automatically after link loss.
-3. Extend the local `SetAction` mapping to MCP tools after the local I2C loop is stable.
+2. Add optional heartbeat watchdog on the LED side so fallback behavior can be restored automatically after link loss.
+3. Keep `SetAction` aligned with the AI-side debug and voice result objects.
 4. Add free-text subtitle delivery on top of the existing glyph-transfer path.

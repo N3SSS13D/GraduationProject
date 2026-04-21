@@ -2,11 +2,11 @@
 
 ## 中文
 
-本文档说明当前 `lichuang-dev` 上已经稳定运行的调试界面、截图链路和 MCP 调试能力。以下内容以当前可稳定显示且不会崩溃的单页调试菜单实现为准。
+本文档说明当前 `AI端` 调试界面、截图链路和 MCP 调试能力。以下内容以 `lichuang-dev` 上已稳定运行的单页调试菜单实现为准。
 
 ### 1. 菜单结构
 
-- 默认界面保持原有小智聊天/状态界面。
+- 默认界面保持原有 `AI端` 主界面。
 - 主界面右下角提供 `DBG` 入口按钮。
 - 点击 `DBG` 后进入独立调试菜单；点击 `Back` 返回主界面。
 - 调试菜单隐藏时，所有调试控件一起隐藏，不参与主界面绘制路径。
@@ -27,11 +27,11 @@
 - 触摸按钮只在点击时触发矩阵状态下发，不做后台轮询。
 - 调试菜单显示/隐藏通过异步切换处理，避免点击事件重入影响 LVGL。
 - 触摸产生的矩阵更新与截图任务通过板级工作队列在后台执行，避免把重任务放进 LVGL 点击回调。
-- AI8051U 收到完整协议包后先准备 ACK，再由主循环执行具体 LED 动作，减少小智侧读回超时。
+- `LED端` 收到完整协议包后先准备 ACK，再由主循环执行具体 LED 动作，减少 `AI端` 读回超时。
 
 ### 4. 语音调试用法
 
-设备支持根据语音中的颜色意图更新调试圆点，并把同一份状态同步到 LED 矩阵。
+`AI端` 支持根据语音中的颜色意图更新调试圆点，并把同一份状态同步到 `LED端` 矩阵。
 
 可表达的信息包括：
 
@@ -50,7 +50,7 @@
 
 ### 5. 设备侧 MCP 工具
 
-当前 `lichuang-dev` 固件已注册以下调试相关 MCP 工具：
+当前 `AI端` 固件已注册以下调试相关 MCP 工具：
 
 - `self.calculator.calculate`
 - `self.screen.debug_dot.show`
@@ -76,7 +76,7 @@
 补充说明：
 
 - 语音说出 `吉林大学校徽`、`吉大校徽` 或 `JLU_emblem` 时，会直接选中对应校徽图案。
-- 每次触摸切换后，屏幕圆点和 AI8051U LED 矩阵会同步更新。
+- 每次触摸切换后，屏幕圆点和 `LED端` 矩阵会同步更新。
 - 截图进度、成功和失败信息统一输出到串口日志，不再占用屏幕菜单空间。
 - 点击 `S` 后，设备会冻结按键当下的同一帧，先释放 LVGL 快照资源，再在后台完成 PNG 编码和 HTTP 上传。
 - 当前截图链路不再依赖官方语音 MCP 桥接上的反向 `tools/call` 携带图像数据。
@@ -172,27 +172,27 @@ python GP_Port/gp_mcp_endpoint_client.py \
 - 可成功连接官方桥接地址。
 - 可完成 `initialize` 握手。
 - 本地脚本握手后会持续等待，同时接受主机 `/control/snapshot` 请求。
-- 可返回 `tools/list`，包含计算器和调试圆点工具。
+- 可返回 `tools/list`，包含计算器、调试圆点和截图相关工具。
 - 设备触摸 `S` 走本地 HTTP `/snapshot` 上传链路。
 - 主机触发截图走 `/control/snapshot` -> MCP `self.screen.debug_snapshot.capture` -> 设备执行上传。
 
 ## English
 
-This document describes the stable debug UI, snapshot flow, and MCP-side debugging capabilities on `lichuang-dev`.
+This document describes the stable `AI side` debug UI, snapshot flow, and MCP-side debugging capabilities on `lichuang-dev`.
 
 ### Menu Structure
 
-- The original XiaoZhi interface remains the default main screen.
+- The original AI-side main screen remains the default main screen.
 - A `DBG` button opens the secondary debug menu.
 - The stable debug menu uses a single-page layout, not swipeable sub-pages.
-- Closing the menu returns to the original XiaoZhi screen.
+- Closing the menu returns to the original AI-side screen.
 
 ### Stable Layout
 
 - Fixed header: `Back / Debug Menu / S`.
 - Left side: touch controls for `Pattern` and `Effect`.
 - Right-top: centered dot preview.
-- Right-middle: AI8051U link panel with a status dot after `Link`.
+- Right-middle: LED-side link panel with a status dot after `Link`.
 - Lower area: summary text for the current debug state.
 
 ### Runtime Strategy
@@ -200,7 +200,7 @@ This document describes the stable debug UI, snapshot flow, and MCP-side debuggi
 - Debug widgets stay hidden by default.
 - Dot animation runs only while the debug menu is visible.
 - Heavy matrix updates and snapshot work run through a board-side worker queue.
-- The AI8051U prepares ACK data immediately after a full packet is captured, while LED execution stays in the main loop.
+- The LED side prepares ACK data immediately after a full packet is captured, while LED execution stays in the main loop.
 
 ### Snapshot Flow
 

@@ -1,114 +1,77 @@
 # GraduationProject
 
-## 项目概述
+## 项目定位
 
-本仓库用于毕业设计开发，当前已经形成稳定的 I2C 联调版本，核心闭环为：
+本仓库当前主线聚焦 `BT_Version`，目标是把 `AI端` 的动作结果通过经典蓝牙链路发送到 `LED端`，再由 `LED端` 执行 WS2812 显示。
 
-`小智语音/调试状态 -> ESP32 动作映射 -> 本地 I2C 自定义协议 -> AI8051U 接收执行 -> WS2812 LED 矩阵显示`
+- `AI端`：`External/xiaozhi-esp32/`
+- `LED端`：`STC51/Project/ws2812_driver/`
 
-当前 `BT_Version` 分支在保持上述稳定版实现不变的前提下，额外用于实现和验证“AI8051U UART2 + 外挂蓝牙模块”的替代链路。
+当前默认关注的闭环是：
 
-当前主线由两部分组成：
+`AI端动作对象 -> AI端蓝牙传输 -> HC-05 -> LED端协议执行 -> WS2812 矩阵显示`
 
-1. `STC51/Project/ws2812_driver/`
-   - AI8051U 侧 WS2812 复用扫描显示系统。
-   - 已具备稳定的 PWM + DMA、74HC595 行选、PMOS 高侧切换、USB 调试和 I2C 从机链路。
-2. `External/xiaozhi-esp32/`
-   - 小智 ESP32 参考工程及本项目扩展。
-   - 已完成 `GP_Port/` 下的 I2C 协议、矩阵驱动、调试界面、截图工具和联调脚本集成。
+已解决问题与已知限制统一记录在：`Doc/项目文档/problem_tracking.md`
 
-## 当前稳定版能力
+## 目录索引
 
-### STC51 / AI8051U / WS2812 侧
+### AI端
 
-- 已稳定运行 PWM + DMA 双通道输出。
-- 已完成 74HC595 + PMOS 行扫描、尾波复位和节拍调度收口。
-- 已支持 `normal_pair` 与 `legacy_shift` 两类扫描/发送模式。
-- 已支持 USB/串口调试命令：颜色、图案、间隔和渲染模式切换。
-- 已支持 AI8051U I2C 从机、协议解析、动作执行、ACK/错误状态回包。
-- 当前默认采用 START/STOP 保留在 ISR、RX/TX 双向 DMA 负责包数据搬运的 I2C 后端。
+- 主工程：`External/xiaozhi-esp32/`
+- 矩阵驱动：`External/xiaozhi-esp32/GP_Port/gp_led_matrix_esp32.h/.cc`
+- 蓝牙传输：`External/xiaozhi-esp32/GP_Port/transport/`
+- 调试界面：`External/xiaozhi-esp32/GP_Port/ui/`
+- 板级接入：`External/xiaozhi-esp32/main/boards/lichuang-dev/`
+- MCP / 截图工具：`External/xiaozhi-esp32/GP_Port/gp_mcp_endpoint_client.py`
 
-### XiaoZhi / ESP32 / GP_Port 侧
+### LED端构建
 
-- 已接通共享协议头 `gp_led_matrix_protocol.h`。
-- 已完成 ESP32 侧矩阵驱动 `gp_led_matrix_esp32.h/.cc`。
-- 已完成 AI8051U 接口层 `gp_led_matrix_ai8051u.h/.c` 和动作执行层对接。
-- 已支持语音颜色结果与调试圆点状态同步到 LED 矩阵。
-- 已支持矩阵预设：`diamond`、`cross`、`JLU_emblem`、`scroll_subtitle`。
-- 已支持“未指定预设时默认纯色满屏”和“仅在显式图像更新时通信”策略。
-- 已支持图案背景色独立控制，选中预设后不再轮播旧测试图案。
-- 已支持稳定版调试菜单：`DBG` 入口、固定标题栏 `Back / Debug Menu / S`、单页触摸控制区、圆点预览区、链路状态区和摘要信息区。
-- 已支持设备侧截图：按下 `S` 冻结当前帧、后台编码 PNG、通过本地 HTTP `/snapshot` 上传。
-- 已支持主机侧通过 `/control/snapshot` 触发设备执行截图。
-- 已支持本地 Python MCP 联调脚本输出桥接状态、HTTP 状态和最近一次保存结果。
+- 工程入口：`STC51/Project/ws2812_driver/ws2812_driver.uvproj`
+- 应用层：`STC51/Project/ws2812_driver/Sources/app/`
+- 中间层：`STC51/Project/ws2812_driver/Sources/mid/`
+- 驱动层：`STC51/Project/ws2812_driver/Sources/drv/`
+- 共享头文件：`STC51/Project/ws2812_driver/Sources/inc/`
 
-## 仓库结构
+### 联调与文档
 
-```text
-GraduationProject/
-|-- README.md
-|-- Doc/
-|   `-- 项目文档/
-|       |-- project_status_summary_2026-04-12.md
-|       |-- usb_play_v2_guide.md
-|       |-- ws2812_driver_current_implementation.md
-|       |-- xiaozhi_ai8051u_i2c_interface_protocol.md
-|       `-- xiaozhi_esp32_porting_summary.md
-|-- External/
-|   `-- xiaozhi-esp32/
-|       |-- main/                      # 小智应用、板级与设备抽象
-|       `-- GP_Port/                   # 本项目扩展协议、驱动、联调脚本和说明
-|-- STC51/
-|   `-- Project/
-|       `-- ws2812_driver/
-|           |-- Sources/
-|           |   |-- app/               # 扫描调度与应用层流程
-|           |   |-- mid/               # 渲染、动画、按键控制
-|           |   |-- drv/               # WS2812 / 74HC595 / I2C 驱动
-|           |   |-- inc/               # 共享头文件与配置
-|           |   |-- timer.c            # 定时器与节拍控制
-|           |   |-- usblib.c           # USB 命令入口
-|           |   `-- main.c             # MCU 入口与初始化
-|           `-- ws2812_driver.uvproj
-`-- .github/
-    `-- prompts/                       # 项目开发 prompt 集合
-```
+- 联调脚本：`tools/ws2812_dev_cycle.ps1`
+- Prompt 索引：`.github/prompts/README.md`
+- GP_Port 总览：`External/xiaozhi-esp32/GP_Port/gp_port_project_overview.md`
 
-## 关键文档入口
+## 当前主线
 
-- 项目阶段总览：[Doc/项目文档/project_status_summary_2026-04-12.md](Doc/项目文档/project_status_summary_2026-04-12.md)
-- WS2812 驱动实现说明：[Doc/项目文档/ws2812_driver_current_implementation.md](Doc/项目文档/ws2812_driver_current_implementation.md)
-- 小智与 AI8051U I2C 协议说明：[Doc/项目文档/xiaozhi_ai8051u_i2c_interface_protocol.md](Doc/项目文档/xiaozhi_ai8051u_i2c_interface_protocol.md)
-- 小智移植与联调总结：[Doc/项目文档/xiaozhi_esp32_porting_summary.md](Doc/项目文档/xiaozhi_esp32_porting_summary.md)
-- 蓝牙替代 I2C 方案：[Doc/项目文档/bluetooth_replacement_plan.md](Doc/项目文档/bluetooth_replacement_plan.md)
-- HC-05 / UART2 结构说明：[Doc/项目文档/bt_version_hc05_uart2_architecture.md](Doc/项目文档/bt_version_hc05_uart2_architecture.md)
-- 联调自动化工具：[tools/ws2812_dev_cycle.md](tools/ws2812_dev_cycle.md)
-- GP_Port 总览：[External/xiaozhi-esp32/GP_Port/gp_port_project_overview.md](External/xiaozhi-esp32/GP_Port/gp_port_project_overview.md)
-- 调试界面与截图说明：[External/xiaozhi-esp32/GP_Port/gp_debug_feature_usage.md](External/xiaozhi-esp32/GP_Port/gp_debug_feature_usage.md)
-- MCP 工具与本地桥接说明：[External/xiaozhi-esp32/GP_Port/gp_mcp_tools.md](External/xiaozhi-esp32/GP_Port/gp_mcp_tools.md)
+- AI端重点：动作对象映射、蓝牙传输、调试界面、截图工具、性能优化。
+- LED端重点：UART2 收包、协议解析、ACK 回包、动作执行、渲染性能优化。
+- 当前分支不再把已解决的自建 I2C 兼容问题作为 prompt 主体；历史问题统一查阅 `Doc/项目文档/problem_tracking.md`。
 
-## BT_Version 规划目标
+## 关键文档
 
-- 保留现有动作对象、矩阵协议语义和 AI8051U 执行路径，只替换 AI8051U 一侧的物理链路为 `UART2 + HC-05`。
-- AI8051U 侧当前已关闭原矩阵链路 I2C 初始化，并改为 `P4.2=RX / P4.3=TX` 的 UART2 收发路径。
-- ESP32 侧当前已增加矩阵传输抽象层，并补充了经典蓝牙 SPP 传输后端代码；但在 `ESP-IDF v5.4.3 + esp32s3` 目标下，链接阶段缺少 `esp_spp_* / esp_bt_gap_*` 经典蓝牙符号，因此当前板型无法把该后端真正落地为可运行固件。
-- 因此，`lichuang-dev` 目前仍以 I2C 作为可构建、可运行的矩阵链路；若必须保留 `HC-05`，需要改用支持经典蓝牙的 ESP32 目标芯片或外部经典蓝牙主机。
-- 详细设计、模块设置和验证策略见 [Doc/项目文档/bt_version_hc05_uart2_architecture.md](Doc/项目文档/bt_version_hc05_uart2_architecture.md) 和 [Doc/项目文档/bluetooth_replacement_plan.md](Doc/项目文档/bluetooth_replacement_plan.md)。
+- 问题说明与约束：`Doc/项目文档/problem_tracking.md`
+- 蓝牙链路结构：`Doc/项目文档/bt_version_hc05_uart2_architecture.md`
+- 蓝牙替代方案：`Doc/项目文档/bluetooth_replacement_plan.md`
+- WS2812 当前实现：`Doc/项目文档/ws2812_driver_current_implementation.md`
+- GP_Port 总览：`External/xiaozhi-esp32/GP_Port/gp_port_project_overview.md`
+- 调试界面说明：`External/xiaozhi-esp32/GP_Port/gp_debug_feature_usage.md`
+- MCP 工具说明：`External/xiaozhi-esp32/GP_Port/gp_mcp_tools.md`
 
-## 构建与验证
+## 构建与验证入口
 
-### STC51 工程
+### LED端
 
-1. 使用 Keil 打开 `STC51/Project/ws2812_driver/ws2812_driver.uvproj`。
-2. 执行编译，必要时通过 STC ISP 下载固件。
-3. 通过 USB 或串口命令验证颜色、图案、间隔和渲染模式切换。
+1. 打开 `STC51/Project/ws2812_driver/ws2812_driver.uvproj`
+2. 执行 Keil rebuild
+3. 通过 USB 调试命令或联调脚本验证日志与回包
 
-### ESP32 工程
+### AI端构建
 
-1. 使用 ESP-IDF 插件打开 `External/xiaozhi-esp32/`。
-2. 选择 `lichuang-dev` 并执行构建。
-3. 运行 `GP_Port/gp_mcp_endpoint_client.py`，联调 `/snapshot`、`/control/snapshot` 和设备侧 MCP 工具。
-4. 需要重复联调时，可直接运行 `tools/ws2812_dev_cycle.ps1` 或 VS Code 任务 `WS2812: Dev Cycle` / `WS2812: Dev Cycle Watch`。
+1. 打开 `External/xiaozhi-esp32/`
+2. 执行 ESP-IDF 构建与监视
+3. 需要截图或 MCP 联调时运行 `External/xiaozhi-esp32/GP_Port/gp_mcp_endpoint_client.py`
+
+### 联调
+
+- 首选自动化入口：`tools/ws2812_dev_cycle.ps1`
+- VS Code 任务：`WS2812: Dev Cycle`、`WS2812: Dev Cycle Watch`
 
 ## 提交边界
 
@@ -118,4 +81,4 @@ GraduationProject/
 - `*.uvopt`
 - `__pycache__/`
 - `*.pyc`
-- 临时导出截图、测试图片和临时日志
+- 临时截图、测试图片、临时日志

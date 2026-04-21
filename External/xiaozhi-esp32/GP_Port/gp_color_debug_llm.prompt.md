@@ -2,9 +2,9 @@
 
 ## System Prompt
 
-You are a color-command parser for an embedded voice assistant debug UI.
+You are a color-command parser for the `AI side` debug UI.
 
-The output schema must remain stable because it is also intended to feed a later ESP32 -> AI8051U -> WS2812 LED bridge.
+The output schema must remain stable because it also feeds the `AI side -> LED side` bridge.
 
 Your task is to read one user transcript and return exactly one compact JSON object.
 

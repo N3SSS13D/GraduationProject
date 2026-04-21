@@ -10,7 +10,7 @@
 #include <string>
 
 #include "device_state.h"
-#include "gp_debug_display.h"
+#include "ui/gp_debug_display.h"
 #include "led/led.h"
 #include "gp_led_matrix_protocol.h"
 
@@ -20,15 +20,31 @@ class GpLedMatrixEsp32 : public Led {
 public:
     using LinkStatusCallback = std::function<void(bool online, const std::string& status_text)>;
 
+    /* Create the ESP32-side matrix driver around the active transport backend. */
     GpLedMatrixEsp32(std::unique_ptr<GpMatrixTransport> transport, uint8_t brightness = 0x40);
 
+    /* Keep the standard LED interface satisfied without auto-overwriting explicit matrix content. */
     void OnStateChanged() override;
+
+    /* Send a short startup self-check sequence through the active matrix transport. */
     void RunStartupLinkTest();
+
+    /* Update the default matrix brightness used for later action generation. */
     void SetBrightness(uint8_t brightness);
+
+    /* Register the UI callback used to show current matrix link state. */
     void SetLinkStatusCallback(LinkStatusCallback callback);
+
+    /* Convert one GP debug-menu state object into a matrix action and send it. */
     bool ShowDebugState(const GpColorDebugState& state);
+
+    /* Send one already-built matrix action payload to the AI8051U side. */
     bool ShowAction(const GpMatrixActionPayload& action);
+
+    /* Send one full RGB332 frame through the current matrix transport. */
     bool ShowRgb332Frame(const uint8_t* frame, size_t length, GpMatrixMode mode = kGpMatrixModeSolidFrame);
+
+    /* Send one packed glyph-row buffer for subtitle-style rendering. */
     bool ShowGlyphRows(const uint16_t* rows, size_t row_count, uint8_t glyph_count, uint8_t glyph_width, uint8_t glyph_spacing);
 
 private:

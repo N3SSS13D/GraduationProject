@@ -22,7 +22,7 @@ typedef struct
     uint8_t txBuffer[GP_MATRIX_AI8051U_TX_BUFFER_SIZE];
     uint8_t frameBuffer[GP_MATRIX_RGB332_FRAME_SIZE];
     uint8_t glyphBuffer[GP_MATRIX_MAX_GLYPH_TRANSFER_BYTES];
-    uint8_t i2cAddress;
+    uint8_t transportEndpoint;
     uint8_t brightness;
     uint8_t mode;
     uint8_t lastSequence;
@@ -33,10 +33,6 @@ typedef struct
     uint8_t packetReplyPrepared;
     uint8_t txLength;
     uint8_t txPending;
-    uint8_t dmaRxEnabled;
-    uint8_t dmaTxEnabled;
-    uint8_t dmaRxActive;
-    uint8_t dmaTxActive;
     uint8_t glyphCount;
     uint8_t glyphWidth;
     uint8_t glyphSpacing;
@@ -44,16 +40,21 @@ typedef struct
     uint16_t receivedBytes;
     uint16_t glyphExpectedBytes;
     uint16_t glyphReceivedBytes;
-    uint16_t dmaLastRxDone;
-    uint16_t dmaLastTxDone;
 } GpLedMatrixAi8051uContext;
 
+/* Initialize the matrix protocol runtime and enable the active UART2 transport path. */
 void GpLedMatrixAi8051u_Init(GpLedMatrixAi8051uContext xdata *context, uint8_t transportAddress);
-void GpLedMatrixAi8051u_SetDmaMode(GpLedMatrixAi8051uContext xdata *context, uint8_t enableRx, uint8_t enableTx);
-void GpLedMatrixAi8051u_OnI2cReceive(GpLedMatrixAi8051uContext xdata *context, const uint8_t *rxBytes, uint8_t length);
+
+/* Copy the prepared ACK or error reply into the caller buffer. */
 uint8_t GpLedMatrixAi8051u_PrepareTx(GpLedMatrixAi8051uContext xdata *context, uint8_t *outData, uint8_t maxLength);
+
+/* Poll UART2, assemble protocol packets, execute actions, and flush reply packets. */
 void GpLedMatrixAi8051u_Poll(GpLedMatrixAi8051uContext xdata *context);
+
+/* Re-render the currently buffered RGB332 frame through the LED action layer. */
 void GpLedMatrixAi8051u_RenderFrame(GpLedMatrixAi8051uContext xdata *context);
+
+/* Load glyph-row data into the local context for later scroll-glyph execution. */
 void GpLedMatrixAi8051u_LoadGlyphRows(GpLedMatrixAi8051uContext xdata *context,
                                       const uint16_t *rows,
                                       uint8_t glyphCount,

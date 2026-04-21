@@ -2,16 +2,19 @@
 
 ## 中文
 
-### 现有交互模式
+### 当前定位
 
-1. ESP32 通过 WebSocket 或 MQTT 建立会话。
-2. 设备主动上报控制类 JSON，例如 `listen`、`abort`、`mcp`。
-3. 服务端回推 `stt`、`tts`、`llm`、`mcp`、`custom` 等消息。
-4. 本次扩展复用 `custom` 通道做颜色分析，不改动音频链路。
+本协议说明 `AI端` 如何通过现有 JSON 控制流，把语音颜色意图整理成 `voice_color_result`，再同步给本地调试界面和 `LED端` 动作桥接。
+
+当前原则：
+
+1. 不改音频链路，只复用 `custom` 消息通道。
+2. `AI端` 只负责生成结构化颜色/效果结果。
+3. `LED端` 复用同一份结果做颜色、预设和动画下发。
 
 ### 颜色分析请求
 
-设备在收到 `stt` 文本后，如果判断为颜色调试意图，会发送：
+`AI端` 在收到 `stt` 文本后，如果判断为颜色调试意图，会发送：
 
 ```json
 {
@@ -59,7 +62,7 @@
 
 ## English
 
-The device keeps the existing JSON control flow and adds one `custom` request/response pair for voice-driven color debugging.
+The `AI side` keeps the existing JSON control flow and adds one `custom` request/response pair for voice-driven color debugging. The returned state is then reused by the local debug UI and the LED-side action bridge.
 
 - Request action: `voice_color_analyze`
 - Response action: `voice_color_result`
@@ -68,6 +71,7 @@ The device keeps the existing JSON control flow and adds one `custom` request/re
 
 ## 服务端接入建议
 
-1. 服务端收到 `voice_color_analyze` 后，将 `transcript` 和 [GP_Port/gp_color_debug_llm.prompt.md](GP_Port/gp_color_debug_llm.prompt.md) 组合成一次大模型调用。
+1. 服务端收到 `voice_color_analyze` 后，将 `transcript` 和 `GP_Port/gp_color_debug_llm.prompt.md` 组合成一次大模型调用。
 2. 要求大模型只返回单个 JSON 对象，不带代码块或解释。
-3. 服务端校验字段后，再封装进 `{"type":"custom","payload":...}` 回给设备。
+3. 服务端校验字段后，再封装进 `{"type":"custom","payload":...}` 回给 `AI端`。
+4. `AI端` 收到结果后，应复用同一份结构同步本地调试界面和 `LED端` 协议动作，而不是再维护一套独立测试数据。

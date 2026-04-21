@@ -1,7 +1,8 @@
-#include "gp_led_matrix_transport.h"
+#include "transport/gp_led_matrix_transport.h"
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -24,7 +25,6 @@
 #endif
 
 #include "gp_led_matrix_protocol.h"
-#include "i2c_device.h"
 
 #define TAG "GpMatrixTransport"
 
@@ -34,32 +34,6 @@ constexpr EventBits_t kBtConnectedBit = BIT1;
 constexpr uint32_t kBtSppDefaultScn = 1;
 constexpr uint32_t kBtDiscoveryDuration = 10;
 constexpr size_t kBtMaxPacketBytes = GP_MATRIX_PACKET_HEADER_SIZE + GP_MATRIX_MAX_CHUNK_DATA + 8U;
-
-class GpMatrixI2cTransport final : public GpMatrixTransport, protected I2cDevice {
-public:
-    GpMatrixI2cTransport(i2c_master_bus_handle_t i2c_bus, uint8_t address, uint32_t scl_speed_hz)
-        : I2cDevice(i2c_bus, address, scl_speed_hz),
-          address_(address) {
-    }
-
-    bool WritePacket(const uint8_t* data, size_t length, uint32_t timeout_ms) override {
-        return i2c_master_transmit(i2c_device_, data, length, timeout_ms) == ESP_OK;
-    }
-
-    bool ReadPacket(uint8_t* data, size_t length, uint32_t timeout_ms) override {
-        return i2c_master_receive(i2c_device_, data, length, timeout_ms) == ESP_OK;
-    }
-
-    std::string DescribeLink() const override {
-        char text[24] = {0};
-
-        std::snprintf(text, sizeof(text), "I2C 0x%02X", static_cast<unsigned int>(address_));
-        return text;
-    }
-
-private:
-    uint8_t address_;
-};
 
 #if defined(SOC_BT_CLASSIC_SUPPORTED) && SOC_BT_CLASSIC_SUPPORTED
 class GpMatrixBtSppTransport final : public GpMatrixTransport {
@@ -407,12 +381,6 @@ private:
 GpMatrixBtSppTransport* GpMatrixBtSppTransport::instance_ = nullptr;
 bool GpMatrixBtSppTransport::bt_stack_initialized_ = false;
 #endif
-}
-
-std::unique_ptr<GpMatrixTransport> CreateGpMatrixI2cTransport(i2c_master_bus_handle_t i2c_bus,
-                                                              uint8_t address,
-                                                              uint32_t scl_speed_hz) {
-    return std::make_unique<GpMatrixI2cTransport>(i2c_bus, address, scl_speed_hz);
 }
 
 std::unique_ptr<GpMatrixTransport> CreateGpMatrixBtSppTransport(const std::string& local_name,

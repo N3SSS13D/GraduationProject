@@ -1,73 +1,44 @@
 ---
-name: WS2812 AI 控制桥接（中文）
-description: "实现一个小智 AI 控制功能，将 AI 指令映射为显示动作"
-argument-hint: "AI 功能需求（例如：命令解析、动作映射、优先级策略、异常兜底）"
+name: AI端动作映射（中文）
+description: "实现一个 AI端 功能，把语音或调试结果映射为可发送到 LED端 的动作对象"
+argument-hint: "功能需求（例如：命令解析、动作映射、优先级、截图联动）"
 agent: agent
 model: "GPT-5 (copilot)"
 ---
-基于参数，仅实现一个“AI 控制功能”。
+仅实现一个 `AI端` 相关功能。
+
+关注路径：
+
+- `External/xiaozhi-esp32/GP_Port/gp_led_matrix_esp32.h/.cc`
+- `External/xiaozhi-esp32/GP_Port/transport/`
+- `External/xiaozhi-esp32/GP_Port/ui/`
+- `External/xiaozhi-esp32/main/boards/lichuang-dev/`
+- `External/xiaozhi-esp32/GP_Port/gp_led_matrix_protocol.h`
 
 目标：
-- 构建小智 AI 输入与显示动作之间的清晰接口层。
-- 保证显示刷新时序不受 AI 消息抖动影响。
 
-范围（AI 接口层）：
-- 输入命令格式与解析
-- 命令到显示动作映射
-- 参数校验与降级兜底
-- 与本地效果任务的队列/仲裁策略
-
-当前结构（落位要求）：
-- App：`Sources/app/`（根据语音/AI结果做业务决策）
-- Mid：`Sources/mid/`（动作标准化、仲裁、状态机）
-- Drv：`Sources/drv/`（调用显示驱动执行动作）
-- Shared：`Sources/inc/`（共享动作定义与声明）
-- 外设入口：`Sources/*.c`、`Sources/lib/`（仅底层 glue 逻辑）
-
-本 prompt 不做：
-- 大型上位机或 UI 工程
-- 重写扫描驱动时序核心
-- 一次实现过多 AI 平台能力
+- 将 `AI端` 的语音结果、调试结果或截图控制请求映射为稳定动作对象。
+- 保持 `AI端` 输出与 `LED端` 协议字段一致。
+- 优先复用现有 `voice_color_result`、矩阵驱动和调试界面路径。
 
 执行要求：
-1. 先分析 `Sources/app`、`Sources/mid`、`Sources/drv` 与 `External/xiaozhi-esp32/GP_Port/` 的可复用边界。
-2. 定义稳定 AI-显示 API 边界，优先对齐 `voice_color_result` 与 `gp_led_matrix_protocol.h`。
-3. 增加严格边界检查与非法命令处理。
-4. 在命令突发时保持显示刷新确定性。
-5. 补充命令示例与集成说明。
-6. 协议解析与动作仲裁放在 `mid/`，App 仅负责业务编排与策略。
 
-当前阶段重点：
-- 现有目标不是直接把 AI 消息塞进 8051 驱动，而是形成“语音动作对象 -> 本地传输协议 -> 8051 显示动作”的稳定桥接层；稳定版为 I2C，`BT_Version` 当前 AI8051U 侧保持 `UART2 + HC-05` 的最小蓝牙传输链路。
-- 当前优先支持本地通信闭环，不依赖外部 MCP 桥接；待本地链路稳定后再扩展 MCP 接入。
-- 小智侧现有 `GP_Port` 资产已提供协议、驱动骨架和 MCP 联调参考，应优先复用。
-- 当现有 `voice_color_result` 或本地语音测试圆点路径发生颜色/效果变化时，应直接把同一份状态同步到 LED 矩阵，不要额外分叉一条仅测试用的新流程。
-- 稳定版需保持 AI8051U 的 I2C 电气假设明确；`BT_Version` 当前需保持 `UART2 P4.2/P4.3`、`9600 8N1`、HC-05 文本转发以及 Timer2 仅用于 UART2 波特率生成的假设明确。
-- 应将原有 demo 动画整理为可调用矩阵预设，例如 `diamond`、`cross`、`JLU_emblem`、`scroll_subtitle`，并支持通过语音直接引用这些预设名，例如“吉林大学校徽”。
-- 当语音未指定预设图案时，矩阵默认优先显示纯色满屏，而不是只通过背景色变化表达同步状态。
-- 当语音已指定某个预设图案时，只显示该预设，不再自动轮播其他图案。
-- 图案背景色应通过独立背景色指令进行修改，纯色显示命令不能隐式改写背景色。
-- 小智在线控制 LED 时，默认亮度应与 AI8051U 离线默认亮度保持一致，除非用户显式修改亮度。
-- 应提供设备侧调试截图能力，可通过 MCP 调试接口启动设备侧截图任务并返回执行摘要；实际图像数据通过本地 HTTP 上传端点传回开发机，而不是在 MCP 返回里内联 JPEG/Base64。
-- 本地 Python MCP 联调脚本应支持免参数直连预设端点，并默认把抓取到的截图保存到项目目录中。
-- 当使用设备侧 `Snap` 按键时，应先把按键时刻的屏幕帧冻结到独立 LVGL 快照缓冲区，尽快释放 LVGL 侧缓冲，再在后台完成 PNG 编码，并优先通过本地 HTTP 上传端点把图像直接发送到开发机；不要继续依赖官方语音 MCP 桥接上的反向 `tools/call` 作为按键截图回传通道。
-- 调试菜单中的截图进度、成功/失败等状态应优先输出到串口日志，不要长期占用小屏幕菜单空间。
-- 本地 Python MCP 脚本除默认接收设备侧 HTTP 截图上传外，还应提供本地 HTTP 控制端口，由开发机通过 `POST /control/snapshot` 请求脚本调用设备侧 `self.screen.debug_snapshot.capture`。
-- 本地 Python MCP 脚本的职责边界应明确：它可以在收到本地主机 HTTP 控制请求后代发设备侧 MCP 工具调用，但不再保留串口触发链路，也不暴露本地截图 Base64 sink 工具。
-- 每次小智端和 MCP 脚本修改后，必须按以下顺序执行联调：
-	1. 小智侧先编译、下载程序到设备并打开监控。
-	2. 终止旧的本地 MCP Python 脚本。
-	3. 重新运行本地 MCP Python 脚本，使其进入等待被调用状态，并确认本地 HTTP 截图接收端已启动。
-	4. 通过主机 HTTP 控制端口和设备侧触摸 `Snap`，分别验证 `/control/snapshot` 与 `/snapshot` 两条链路。
-	5. 通过本地脚本状态端和设备串口返回信息检查调用结果。
-	6. LED 驱动侧先关闭 serial monitor，再使用 Keil 编译程序，不手动下载。
-	7. 等待 20 秒后重新打开串口，接收调试信息。
-	8. 根据调试信息持续改进，直到达到目标行为。
-- 上述流程的推荐自动化入口：`tools/ws2812_dev_cycle.ps1`。当需要脚本主动触发 `/control/snapshot` 验证时，额外使用 `-ValidateSnapshotControl`。
+1. 只分析 `AI端` 相关目录和必要的 `LED端` 协议头。
+2. 中文说明统一使用 `AI端` 和 `LED端` 命名。
+3. 优先改动动作映射、协议拼包、调试工具接入，不重写无关 UI 或底层驱动。
+4. 命令突发时保持动作下发有边界、可追踪、可验证。
+5. 若涉及截图或 MCP，说明脚本路径和调用路径。
+6. 修改后执行可用的构建或联调验证。
+
+验证入口：
+
+- `tools/ws2812_dev_cycle.ps1`
+- `External/xiaozhi-esp32/GP_Port/gp_mcp_endpoint_client.py`
 
 输出格式：
-- "Assumptions"
-- "Plan"
-- "Files changed"
-- "Verification"
-- "Next steps"
+
+- `Assumptions`
+- `Plan`
+- `Files changed`
+- `Verification`
+- `Next steps`

@@ -9,7 +9,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#include "gp_led_matrix_transport.h"
+#include "transport/gp_led_matrix_transport.h"
 
 #define TAG "GpLedMatrix"
 

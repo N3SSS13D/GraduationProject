@@ -5,7 +5,8 @@
 #define GP_MATRIX_PROTOCOL_MAGIC1 0x50U
 #define GP_MATRIX_PROTOCOL_VERSION 0x01U
 
-#define GP_MATRIX_DEFAULT_I2C_ADDRESS 0x31U
+/* Reserved endpoint identifier kept for local link diagnostics on the active transport. */
+#define GP_MATRIX_TRANSPORT_ENDPOINT_ID 0x31U
 
 #define GP_MATRIX_PROTOCOL_FLAG_ACK_REQUIRED 0x01U
 #define GP_MATRIX_PROTOCOL_FLAG_LOCAL_ONLY 0x02U

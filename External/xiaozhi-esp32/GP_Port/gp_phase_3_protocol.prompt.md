@@ -1,16 +1,17 @@
-# Phase 3 Prompt: Protocol Refinement
+# Phase 3 Prompt: Bluetooth Transport And Protocol
 
 ## 中文
-请细化 `GP_Port/gp_led_matrix_protocol.h` 和协议规范文档，确保命令集合、分包策略、校验、错误码、状态回传与 `test_image.h` 的数据格式映射保持一致。如果协议变更影响 ESP32 驱动或 AI8051U 接口文档，请同步更新。
+请围绕当前蓝牙主线细化传输与协议，优先修改：
 
-本阶段必须额外覆盖：
+- `GP_Port/gp_led_matrix_protocol.h`
+- `GP_Port/transport/`
+- 协议说明文档
 
-- 语音控灯场景下的颜色、亮度、动画、文本或图案参数表达。
-- ACK、超时重试、状态回读、序号管理和心跳机制。
-- 与 AI8051U 显示动作接口的最小稳定边界。
-- 以本地动作对象为优先输入，暂不把外部 MCP 桥接作为协议设计前提。
+本阶段重点：
+
+- 分包、校验、ACK、错误码、状态回传
+- `AI端` 与 `LED端` 字段保持一致
+- 蓝牙链路下的超时、重试和日志可追踪性
 
 ## English
-Refine `GP_Port/gp_led_matrix_protocol.h` and the protocol spec so that command set, chunking strategy, checksum rules, error handling, and payload mapping stay aligned with `test_image.h`.
-
-Also cover the minimal stable action model for voice-controlled color, brightness, animation, text/pattern delivery, plus ACK, retry, status-readback, sequence, and heartbeat handling, with local action delivery as the primary integration target.
+Refine the Bluetooth-oriented transport and protocol path, focusing on packet framing, checksum, ACK, error handling, status replies, and consistency between the AI side and the LED side.

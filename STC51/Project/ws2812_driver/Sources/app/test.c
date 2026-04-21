@@ -483,7 +483,7 @@ void Test_Init(void)
     WS2812DRV_Init();
     (void)WS2812DRV_SetDisplayMode(WS2812DRV_MODE_16X16);
     DrawDrv_Init();
-    GpLedMatrixAi8051u_Init(&g_testAiMatrixCtx, GP_MATRIX_DEFAULT_I2C_ADDRESS);
+    GpLedMatrixAi8051u_Init(&g_testAiMatrixCtx, GP_MATRIX_TRANSPORT_ENDPOINT_ID);
     Test_LoadDefaultRenderConfig();
 
     MidTask_Init();

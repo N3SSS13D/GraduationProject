@@ -1,64 +1,67 @@
 # GraduationProject Prompt Catalog
 
-## Current Structure Mapping
+## 当前主线
 
-- App layer: `STC51/Project/ws2812_driver/Sources/app/`
-- Mid layer: `STC51/Project/ws2812_driver/Sources/mid/`
-- Driver layer: `STC51/Project/ws2812_driver/Sources/drv/`
-- Shared headers and config: `STC51/Project/ws2812_driver/Sources/inc/`
-- MCU glue / generated peripheral entry: `STC51/Project/ws2812_driver/Sources/*.c` and `STC51/Project/ws2812_driver/Sources/lib/`
-- XiaoZhi integration assets: `External/xiaozhi-esp32/GP_Port/`
+- 当前分支：`BT_Version`
+- 当前目标：围绕 `AI端 -> 经典蓝牙链路 -> LED端` 做增量开发。
+- 中文命名统一：`AI端` 指 `External/xiaozhi-esp32/`，`LED端` 指 `STC51/Project/ws2812_driver/`。
+- 已解决问题与已知限制统一记录在：`Doc/项目文档/problem_tracking.md`
 
-Preferred dependency direction:
+## 快速路径
 
-- STC side: `app -> mid -> drv -> MCU glue`
-- Cross-project bridge: XiaoZhi AI result -> `GP_Port` action/protocol layer -> AI8051U execution layer
+- 总问题说明：`Doc/项目文档/problem_tracking.md`
+- 蓝牙结构说明：`Doc/项目文档/bt_version_hc05_uart2_architecture.md`
+- 蓝牙替代方案：`Doc/项目文档/bluetooth_replacement_plan.md`
+- 联调脚本：`tools/ws2812_dev_cycle.ps1`
+- AI端矩阵驱动：`External/xiaozhi-esp32/GP_Port/gp_led_matrix_esp32.h/.cc`
+- AI端蓝牙传输：`External/xiaozhi-esp32/GP_Port/transport/`
+- AI端调试界面：`External/xiaozhi-esp32/GP_Port/ui/`
+- AI端板级接入：`External/xiaozhi-esp32/main/boards/lichuang-dev/`
+- LED端协议执行：`STC51/Project/ws2812_driver/Sources/drv/gp_led_matrix_ai8051u.c`
+- LED端头文件：`STC51/Project/ws2812_driver/Sources/inc/`
 
-## Current Repository Status
+## 阅读规则
 
-- The STC side already has a stable WS2812 scan/output path with PWM + DMA, 74HC595 row selection, and USB debug commands.
-- The XiaoZhi snapshot already includes `GP_Port` protocol notes, an ESP32 driver skeleton, an AI8051U interface design, and MCP debug tooling.
-- The stable milestone is the complete voice-to-LED bridge over I2C and a custom protocol; `BT_Version` currently focuses on the restored AI8051U `UART2(P4.2/P4.3) + HC-05` transport path with USB used only for Bluetooth command forwarding and UART2 log monitoring.
+- AI端功能只看 `External/xiaozhi-esp32/GP_Port/` 和对应 board/build 文件。
+- LED端功能只看 `STC51/Project/ws2812_driver/Sources/` 下相关目录。
+- Prompt 或 README 维护只看 `.github/prompts/`、`External/xiaozhi-esp32/GP_Port/*.prompt.md` 和直接相关文档。
+- 不要默认扫描无关第三方目录。
 
-## Prompt Families
+## Prompt 入口
 
-## Project Skills
+### 通用开发
 
-- [karpathy-guidelines](../skills/karpathy-guidelines/SKILL.md): default behavior guardrail for write/review/refactor tasks. Use it to surface assumptions, keep changes minimal, and define verification before implementation.
-- [ai8051u-i2c-dma](../skills/ai8051u-i2c-dma/SKILL.md): use when touching AI8051U I2C DMA backends or DMA-linked buffer handling.
-
-### Core Development
-
-- [ws2812-led-system-dev.prompt.md](./ws2812-led-system-dev.prompt.md)
 - [ws2812-led-system-dev.zh-CN.prompt.md](./ws2812-led-system-dev.zh-CN.prompt.md)
+- [ws2812-led-system-dev.prompt.md](./ws2812-led-system-dev.prompt.md)
 
-### Display Driver
+### AI端动作与接入
 
-- [ws2812-display-driver.prompt.md](./ws2812-display-driver.prompt.md)
-- [ws2812-display-driver.zh-CN.prompt.md](./ws2812-display-driver.zh-CN.prompt.md)
-
-### Animation Effects
-
-- [ws2812-animation-effects.prompt.md](./ws2812-animation-effects.prompt.md)
-- [ws2812-animation-effects.zh-CN.prompt.md](./ws2812-animation-effects.zh-CN.prompt.md)
-
-### AI Control Bridge
-
-- [ws2812-ai-control.prompt.md](./ws2812-ai-control.prompt.md)
 - [ws2812-ai-control.zh-CN.prompt.md](./ws2812-ai-control.zh-CN.prompt.md)
+- [ws2812-ai-control.prompt.md](./ws2812-ai-control.prompt.md)
 
-### Code Review
+### LED端驱动与效果
 
-- [ws2812-code-review.prompt.md](./ws2812-code-review.prompt.md)
+- [ws2812-display-driver.zh-CN.prompt.md](./ws2812-display-driver.zh-CN.prompt.md)
+- [ws2812-display-driver.prompt.md](./ws2812-display-driver.prompt.md)
+- [ws2812-animation-effects.zh-CN.prompt.md](./ws2812-animation-effects.zh-CN.prompt.md)
+- [ws2812-animation-effects.prompt.md](./ws2812-animation-effects.prompt.md)
+
+### 审查
+
 - [ws2812-code-review.zh-CN.prompt.md](./ws2812-code-review.zh-CN.prompt.md)
+- [ws2812-code-review.prompt.md](./ws2812-code-review.prompt.md)
 
-## GP_Port Prompt Set
+### GP_Port 阶段 Prompt
 
-The `External/xiaozhi-esp32/GP_Port/` directory keeps the phase-by-phase prompts for the ESP32 <-> AI8051U bridge. On `BT_Version`, they must also account for the current verified boundary: the ESP32-side classic Bluetooth SPP backend can be kept as conditional code, but `ESP-IDF v5.4.3 + esp32s3` does not link the required `esp_spp_* / esp_bt_gap_*` symbols into a runnable image.
+- `External/xiaozhi-esp32/GP_Port/gp_project_master.prompt.md`
+- `External/xiaozhi-esp32/GP_Port/gp_phase_1_architecture.prompt.md`
+- `External/xiaozhi-esp32/GP_Port/gp_phase_2_esp32_interface.prompt.md`
+- `External/xiaozhi-esp32/GP_Port/gp_phase_3_protocol.prompt.md`
+- `External/xiaozhi-esp32/GP_Port/gp_phase_4_ai8051u.prompt.md`
+- `External/xiaozhi-esp32/GP_Port/gp_phase_5_validation.prompt.md`
 
-## Usage
+## 使用要求
 
-1. Open Chat input and type `/`.
-2. Choose the prompt that matches one narrow task.
-3. Keep each iteration focused on a single driver, protocol, integration, or review step.
-4. When the task touches voice control, also read `Doc/项目文档/project_status_summary_2026-04-12.md` first.
+1. 先选一个最窄的任务入口，不要一次覆盖架构、协议、驱动和验证。
+2. 已解决问题不要写回 prompt，统一写入 `Doc/项目文档/problem_tracking.md`。
+3. 改动前先给出假设和验证标准；改动后直接执行可用验证。

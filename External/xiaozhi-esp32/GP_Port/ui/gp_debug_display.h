@@ -43,14 +43,22 @@ public:
     using MatrixDebugStateCallback = std::function<bool(const GpColorDebugState& state)>;
     using DebugSnapshotCallback = std::function<std::string()>;
 
+    /* Create the custom LVGL debug display wrapper used by the lichuang-dev board. */
     GpDebugLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel,
         int width, int height, int offset_x, int offset_y,
         bool mirror_x, bool mirror_y, bool swap_xy);
     ~GpDebugLcdDisplay() override;
 
+    /* Apply one debug-menu color state to the local UI preview and status widgets. */
     void ApplyColorDebugState(const GpColorDebugState& state);
+
+    /* Refresh the AI link indicator shown inside the custom debug menu. */
     void ApplyAiLinkStatus(bool online, const std::string& status_text);
+
+    /* Register the callback used to push debug-menu color changes to the matrix layer. */
     void SetMatrixDebugStateCallback(MatrixDebugStateCallback callback);
+
+    /* Register the callback used by the local Snap button in the custom menu. */
     void SetDebugSnapshotCallback(DebugSnapshotCallback callback);
 
 private:

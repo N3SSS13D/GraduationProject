@@ -2,9 +2,9 @@
 #include "codecs/box_audio_codec.h"
 #include "display/lcd_display.h"
 #include "display/emote_display.h"
-#include "gp_debug_display.h"
+#include "ui/gp_debug_display.h"
 #include "gp_led_matrix_esp32.h"
-#include "gp_led_matrix_transport.h"
+#include "transport/gp_led_matrix_transport.h"
 #include "application.h"
 #include "button.h"
 #include "config.h"
@@ -970,34 +970,19 @@ cleanup:
     void InitializeLedMatrix() {
         auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display_);
         std::unique_ptr<GpMatrixTransport> transport;
-        bool using_bt_spp = false;
 
-    #if CONFIG_GP_MATRIX_TRANSPORT_BT_SPP
-        transport = CreateGpMatrixBtSppTransport(CONFIG_GP_MATRIX_BT_LOCAL_NAME,
-                                                 CONFIG_GP_MATRIX_BT_REMOTE_NAME,
-                                                 CONFIG_GP_MATRIX_BT_REMOTE_ADDR,
-                                                 CONFIG_GP_MATRIX_BT_PIN_CODE,
-                                                 CONFIG_GP_MATRIX_BT_CONNECT_TIMEOUT_MS);
-        using_bt_spp = (transport != nullptr);
-    #else
-        transport = CreateGpMatrixI2cTransport(i2c_bus_, GP_MATRIX_I2C_ADDRESS, 100000);
-    #endif
-
-        if (transport == nullptr) {
-            ESP_LOGW(TAG, "Falling back to I2C matrix transport");
-            transport = CreateGpMatrixI2cTransport(i2c_bus_, GP_MATRIX_I2C_ADDRESS, 100000);
-        }
+        transport = CreateGpMatrixBtSppTransport("XiaoZhi-Matrix",
+                                                 "HC-05",
+                                                 "",
+                                                 "1234",
+                                                 12000);
 
         led_matrix_ = std::make_unique<GpLedMatrixEsp32>(std::move(transport), GP_MATRIX_DEFAULT_BRIGHTNESS);
         if (debug_display == nullptr) {
             return;
         }
 
-        if (using_bt_spp) {
-            debug_display->ApplyAiLinkStatus(false, "HC-05 SPP\nwaiting connect");
-        } else {
-            debug_display->ApplyAiLinkStatus(false, "AI8051U INIT\nwaiting image update");
-        }
+        debug_display->ApplyAiLinkStatus(false, "HC-05 SPP\nwaiting connect");
         led_matrix_->SetLinkStatusCallback([debug_display](bool online, const std::string& status_text) {
             Application::GetInstance().Schedule([debug_display, online, status_text]() {
                 debug_display->ApplyAiLinkStatus(online, status_text);
