@@ -15,6 +15,8 @@
 #include "system_info.h"
 
 #include <esp_log.h>
+#include <esp_heap_caps.h>
+#include <esp_http_server.h>
 #include <esp_lcd_panel_vendor.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -24,6 +26,7 @@
 #include <esp_lcd_touch_ft5x06.h>
 #include <esp_lvgl_port.h>
 #include <lvgl.h>
+#include <web_socket.h>
 
 #include <algorithm>
 #include <array>
@@ -43,8 +46,16 @@ namespace {
 constexpr const char* kSnapshotPrefix = "xiaozhi_screen";
 constexpr const char* kSnapshotSettingsNamespace = "debug_snapshot";
 constexpr const char* kSnapshotUploadUrlKey = "upload_url";
+constexpr const char* kDebugWebsocketSettingsNamespace = "debug_ws";
+constexpr const char* kDebugWebsocketUrlKey = "url";
+constexpr const char* kDebugPreviewUploadPath = "/debug/preview_image";
+constexpr const char* kDebugPreviewStatusPath = "/debug/preview_status";
 constexpr const char* kSerialSnapCommand = "snap";
 constexpr const char* kSerialSnapUrlCommand = "snap_url";
+constexpr const char* kSerialDebugWebsocketCommand = "debug_ws";
+constexpr const char* kDebugWebsocketDefaultUrl = "ws://49.140.69.242:8766/debug";
+constexpr uint16_t kDebugPreviewServerPort = 8781;
+constexpr size_t kDebugPreviewMaxImageBytes = 256U * 1024U;
 constexpr uint32_t kBtConfigReplyTimeoutMs = 1200;
 constexpr uint32_t kBtConfigInquiryTimeoutMs = 5000;
 constexpr uint32_t kBtConfigLinkTimeoutMs = 5000;
@@ -352,6 +363,84 @@ std::optional<uint32_t> ParseRgb888(const std::string& text) {
     return std::nullopt;
 }
 
+std::optional<std::array<uint8_t, GP_MATRIX_RGB332_FRAME_SIZE>> ParseRgb332FrameHex(const std::string& text) {
+    std::array<uint8_t, GP_MATRIX_RGB332_FRAME_SIZE> frame = {};
+    std::string hex_digits;
+
+    hex_digits.reserve(text.size());
+    for (char ch : text) {
+        if (std::isxdigit(static_cast<unsigned char>(ch)) != 0) {
+            hex_digits.push_back(ch);
+        }
+    }
+
+    if (hex_digits.size() != (GP_MATRIX_RGB332_FRAME_SIZE * 2U)) {
+        return std::nullopt;
+    }
+
+    for (size_t index = 0; index < frame.size(); ++index) {
+        unsigned int value = 0;
+
+        if (std::sscanf(hex_digits.substr(index * 2U, 2U).c_str(), "%2x", &value) != 1) {
+            return std::nullopt;
+        }
+        frame[index] = static_cast<uint8_t>(value & 0xFFU);
+    }
+
+    return frame;
+}
+
+std::optional<std::array<uint16_t, GP_MATRIX_HEIGHT>> ParseMatrixBitmapRowsHex(const std::string& text) {
+    std::array<uint16_t, GP_MATRIX_HEIGHT> rows = {};
+    std::string hex_digits;
+
+    hex_digits.reserve(text.size());
+    for (char ch : text) {
+        if (std::isxdigit(static_cast<unsigned char>(ch)) != 0) {
+            hex_digits.push_back(ch);
+        }
+    }
+
+    if (hex_digits.size() != (GP_MATRIX_HEIGHT * 4U)) {
+        return std::nullopt;
+    }
+
+    for (size_t index = 0; index < rows.size(); ++index) {
+        unsigned int value = 0;
+
+        if (std::sscanf(hex_digits.substr(index * 4U, 4U).c_str(), "%4x", &value) != 1) {
+            return std::nullopt;
+        }
+        rows[index] = static_cast<uint16_t>(value & 0xFFFFU);
+    }
+
+    return rows;
+}
+
+uint8_t Rgb888ToRgb332(uint32_t rgb888) {
+    const uint8_t red = static_cast<uint8_t>((rgb888 >> 16) & 0xFFU);
+    const uint8_t green = static_cast<uint8_t>((rgb888 >> 8) & 0xFFU);
+    const uint8_t blue = static_cast<uint8_t>(rgb888 & 0xFFU);
+
+    return static_cast<uint8_t>((red & 0xE0U) | ((green >> 3) & 0x1CU) | ((blue >> 6) & 0x03U));
+}
+
+std::array<uint8_t, GP_MATRIX_RGB332_FRAME_SIZE> BuildRgb332FrameFromBitmapRows(
+    const std::array<uint16_t, GP_MATRIX_HEIGHT>& rows,
+    uint32_t primary_rgb888) {
+    std::array<uint8_t, GP_MATRIX_RGB332_FRAME_SIZE> frame = {};
+    const uint8_t primary_rgb332 = Rgb888ToRgb332(primary_rgb888);
+
+    for (size_t row = 0; row < GP_MATRIX_HEIGHT; ++row) {
+        for (size_t column = 0; column < GP_MATRIX_WIDTH; ++column) {
+            const bool enabled = ((rows[row] >> (15U - column)) & 0x0001U) != 0U;
+            frame[row * GP_MATRIX_WIDTH + column] = enabled ? primary_rgb332 : 0U;
+        }
+    }
+
+    return frame;
+}
+
 GpColorDebugAnimation ParseAnimationName(const std::string& text) {
     const std::string lowered = ToAsciiLower(text);
     if (lowered == "gradient") {
@@ -370,6 +459,24 @@ const char* ToAnimationName(GpColorDebugAnimation animation) {
     case GpColorDebugAnimation::kPulse:
         return "pulse";
     case GpColorDebugAnimation::kSolid:
+    default:
+        return "solid";
+    }
+}
+
+const char* ToPresetName(GpColorDebugPreset preset) {
+    switch (preset) {
+    case GpColorDebugPreset::kDiamond:
+        return "diamond";
+    case GpColorDebugPreset::kCross:
+        return "cross";
+    case GpColorDebugPreset::kJluEmblem:
+        return "jlu_emblem";
+    case GpColorDebugPreset::kPythonDemo:
+        return "python_demo";
+    case GpColorDebugPreset::kScrollSubtitle:
+        return "scroll_subtitle";
+    case GpColorDebugPreset::kSolid:
     default:
         return "solid";
     }
@@ -419,6 +526,42 @@ cJSON* BuildDotResultJson(const GpColorDebugState& state) {
     cJSON_AddStringToObject(json, "source", state.source.c_str());
     cJSON_AddStringToObject(json, "transcript", state.transcript.c_str());
     cJSON_AddBoolToObject(json, "applied", true);
+    return json;
+}
+
+cJSON* BuildMatrixFrameResultJson(const char* preset,
+                                  const char* frame_hex,
+                                  const char* bitmap_rows_hex,
+                                  const char* primary_rgb888,
+                                  bool applied,
+                                  const char* source,
+                                  const char* transcript) {
+    cJSON* json = cJSON_CreateObject();
+
+    cJSON_AddStringToObject(json, "preset", preset != nullptr ? preset : "");
+    cJSON_AddStringToObject(json, "frame_rgb332_hex", frame_hex != nullptr ? frame_hex : "");
+    cJSON_AddStringToObject(json, "bitmap_rows_hex", bitmap_rows_hex != nullptr ? bitmap_rows_hex : "");
+    cJSON_AddStringToObject(json, "primary_rgb888", primary_rgb888 != nullptr ? primary_rgb888 : "");
+    cJSON_AddNumberToObject(json, "width", GP_MATRIX_WIDTH);
+    cJSON_AddNumberToObject(json, "height", GP_MATRIX_HEIGHT);
+    cJSON_AddBoolToObject(json, "applied", applied);
+    cJSON_AddStringToObject(json, "source", source != nullptr ? source : "mcp");
+    cJSON_AddStringToObject(json, "transcript", transcript != nullptr ? transcript : "");
+    return json;
+}
+
+cJSON* BuildPreviewFetchResultJson(const char* url,
+                                   size_t bytes,
+                                   bool fetched,
+                                   const char* source,
+                                   const char* transcript) {
+    cJSON* json = cJSON_CreateObject();
+
+    cJSON_AddStringToObject(json, "url", url != nullptr ? url : "");
+    cJSON_AddNumberToObject(json, "bytes", static_cast<double>(bytes));
+    cJSON_AddBoolToObject(json, "fetched", fetched);
+    cJSON_AddStringToObject(json, "source", source != nullptr ? source : "mcp");
+    cJSON_AddStringToObject(json, "transcript", transcript != nullptr ? transcript : "");
     return json;
 }
 
@@ -512,11 +655,13 @@ private:
         enum class Type : uint8_t {
             kApplyMatrixState = 0,
             kCaptureSnapshot = 1,
+            kSendDebugWebsocketMessage = 2,
         };
 
         Type type = Type::kApplyMatrixState;
         GpColorDebugState state;
         int quality = 50;
+        std::string text;
     };
 
     i2c_master_bus_handle_t i2c_bus_;
@@ -527,14 +672,77 @@ private:
     Esp32Camera* camera_;
     std::unique_ptr<GpLedMatrixEsp32> led_matrix_;
     QueueHandle_t debug_command_queue_ = nullptr;
+    httpd_handle_t debug_preview_http_server_ = nullptr;
     uint32_t last_debug_snapshot_sequence_ = 0;
     std::mutex debug_snapshot_mutex_;
     std::mutex debug_snapshot_upload_mutex_;
+    std::mutex debug_preview_status_mutex_;
+    std::mutex debug_websocket_mutex_;
+    std::mutex debug_websocket_status_mutex_;
     bool debug_snapshot_upload_in_progress_ = false;
+    bool debug_preview_online_ = false;
+    bool debug_websocket_connected_ = false;
+    size_t last_debug_preview_bytes_ = 0;
+    std::string debug_preview_status_text_ = "HTTP preview init";
+    std::string debug_websocket_status_text_ = "Debug WS init";
     uint32_t bt_transport_baudrate_ = GP_MATRIX_BT_UART_DATA_BAUDRATE;
+    std::unique_ptr<WebSocket> debug_websocket_;
+
+    /* Reuse the existing debug-menu link panel to surface Wi-Fi preview status updates. */
+    void UpdateDebugPreviewStatus(bool online, const std::string& status_text, size_t image_bytes = 0U) {
+        auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display_);
+
+        {
+            std::lock_guard<std::mutex> lock(debug_preview_status_mutex_);
+            debug_preview_online_ = online;
+            debug_preview_status_text_ = status_text;
+            if (image_bytes > 0U) {
+                last_debug_preview_bytes_ = image_bytes;
+            }
+        }
+
+        if (debug_display != nullptr) {
+            debug_display->ApplyAiLinkStatus(online, status_text);
+        }
+    }
+
+    void UpdateDebugWebsocketStatus(bool connected, const std::string& status_text) {
+        {
+            std::lock_guard<std::mutex> lock(debug_websocket_status_mutex_);
+            debug_websocket_connected_ = connected;
+            debug_websocket_status_text_ = status_text;
+        }
+
+        ESP_LOGI(TAG, "[DBG_WS] %s", status_text.c_str());
+    }
 
     static std::string GetCompiledDebugSnapshotUploadUrl() {
         return TrimAsciiWhitespace(GP_DEBUG_SNAPSHOT_DEFAULT_UPLOAD_URL);
+    }
+
+    static std::string GetConfiguredDebugWebsocketUrl() {
+        Settings settings(kDebugWebsocketSettingsNamespace, false);
+        return settings.GetString(kDebugWebsocketUrlKey, "");
+    }
+
+    static std::string GetEffectiveDebugWebsocketUrl() {
+        const std::string configured_url = TrimAsciiWhitespace(GetConfiguredDebugWebsocketUrl());
+
+        if (!configured_url.empty()) {
+            return configured_url;
+        }
+        return kDebugWebsocketDefaultUrl;
+    }
+
+    static void SetDebugWebsocketUrl(const std::string& url) {
+        Settings settings(kDebugWebsocketSettingsNamespace, true);
+
+        if (url.empty()) {
+            settings.EraseKey(kDebugWebsocketUrlKey);
+            return;
+        }
+
+        settings.SetString(kDebugWebsocketUrlKey, url);
     }
 
     static std::string GetDebugSnapshotUploadUrl() {
@@ -574,6 +782,119 @@ private:
         return json;
     }
 
+    static esp_err_t HandleDebugPreviewStatus(httpd_req_t* req) {
+        auto* self = static_cast<LichuangDevBoard*>(req->user_ctx);
+        cJSON* json = cJSON_CreateObject();
+        char* response_text = nullptr;
+        bool online = false;
+        size_t image_bytes = 0U;
+        std::string status_text = "HTTP preview unavailable";
+
+        if (self != nullptr) {
+            std::lock_guard<std::mutex> lock(self->debug_preview_status_mutex_);
+            online = self->debug_preview_online_;
+            image_bytes = self->last_debug_preview_bytes_;
+            status_text = self->debug_preview_status_text_;
+        }
+
+        /* The host bridge polls this endpoint before its automatic startup upload. */
+        cJSON_AddBoolToObject(json, "ready", true);
+        cJSON_AddStringToObject(json, "feature", "debug_preview");
+        cJSON_AddBoolToObject(json, "online", online);
+        cJSON_AddNumberToObject(json, "last_image_bytes", static_cast<double>(image_bytes));
+        cJSON_AddStringToObject(json, "status_text", status_text.c_str());
+        response_text = cJSON_PrintUnformatted(json);
+        cJSON_Delete(json);
+
+        httpd_resp_set_type(req, "application/json");
+        if (response_text == nullptr) {
+            return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to encode preview status");
+        }
+
+        esp_err_t result = httpd_resp_sendstr(req, response_text);
+        cJSON_free(response_text);
+        return result;
+    }
+
+    static esp_err_t HandleDebugPreviewUpload(httpd_req_t* req) {
+        auto* self = static_cast<LichuangDevBoard*>(req->user_ctx);
+        auto* lvgl_display = (self == nullptr) ? nullptr : dynamic_cast<LvglDisplay*>(self->display_);
+        size_t total_read = 0;
+        char* image_data = nullptr;
+        int bytes_read = 0;
+
+        if ((self == nullptr) || (lvgl_display == nullptr)) {
+            return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Display is not ready");
+        }
+
+        if ((req->content_len <= 0) || (static_cast<size_t>(req->content_len) > kDebugPreviewMaxImageBytes)) {
+            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid image size");
+        }
+
+        image_data = static_cast<char*>(heap_caps_malloc(static_cast<size_t>(req->content_len), MALLOC_CAP_8BIT));
+        if (image_data == nullptr) {
+            return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+        }
+
+        while (total_read < static_cast<size_t>(req->content_len)) {
+            bytes_read = httpd_req_recv(req,
+                                        image_data + total_read,
+                                        static_cast<size_t>(req->content_len) - total_read);
+            if (bytes_read <= 0) {
+                heap_caps_free(image_data);
+                return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to read request body");
+            }
+            total_read += static_cast<size_t>(bytes_read);
+        }
+
+        lvgl_display->SetPreviewImage(std::make_unique<LvglAllocatedImage>(image_data, total_read));
+        self->UpdateDebugPreviewStatus(true,
+                           "HTTP preview image received",
+                           total_read);
+        ESP_LOGI(TAG, "[DBG_HTTP] received preview image bytes=%u", static_cast<unsigned int>(total_read));
+
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_sendstr(req, "{\"accepted\":true}");
+    }
+
+    void EnsureDebugPreviewHttpServer() {
+        httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+        httpd_uri_t preview_uri = {};
+        httpd_uri_t status_uri = {};
+
+        if (debug_preview_http_server_ != nullptr) {
+            return;
+        }
+
+        config.server_port = kDebugPreviewServerPort;
+        config.max_open_sockets = 4;
+
+        preview_uri.uri = kDebugPreviewUploadPath;
+        preview_uri.method = HTTP_POST;
+        preview_uri.handler = &LichuangDevBoard::HandleDebugPreviewUpload;
+        preview_uri.user_ctx = this;
+
+        status_uri.uri = kDebugPreviewStatusPath;
+        status_uri.method = HTTP_GET;
+        status_uri.handler = &LichuangDevBoard::HandleDebugPreviewStatus;
+        status_uri.user_ctx = this;
+
+        if (httpd_start(&debug_preview_http_server_, &config) != ESP_OK) {
+            debug_preview_http_server_ = nullptr;
+            ESP_LOGE(TAG, "[DBG_HTTP] failed to start preview server on port %u", kDebugPreviewServerPort);
+            return;
+        }
+
+        httpd_register_uri_handler(debug_preview_http_server_, &preview_uri);
+        httpd_register_uri_handler(debug_preview_http_server_, &status_uri);
+        UpdateDebugPreviewStatus(true, "HTTP preview waiting for image");
+        ESP_LOGI(TAG,
+                 "[DBG_HTTP] preview server ready: POST %s GET %s port=%u",
+                 kDebugPreviewUploadPath,
+                 kDebugPreviewStatusPath,
+                 kDebugPreviewServerPort);
+    }
+
     static void LogDebugSnapshotUploadUrl(const char* reason) {
         const std::string current_url = GetDebugSnapshotUploadUrl();
         const std::string default_url = GetCompiledDebugSnapshotUploadUrl();
@@ -582,6 +903,267 @@ private:
         if (!default_url.empty()) {
             ESP_LOGI(TAG, "[%s] compiled default snapshot upload url=%s", reason, default_url.c_str());
         }
+    }
+
+    void LogDebugWebsocketStatus(const char* reason) {
+        bool connected = false;
+        std::string runtime_status;
+        const std::string configured_url = GetConfiguredDebugWebsocketUrl();
+        const std::string effective_url = GetEffectiveDebugWebsocketUrl();
+
+        {
+            std::lock_guard<std::mutex> lock(debug_websocket_status_mutex_);
+            connected = debug_websocket_connected_;
+            runtime_status = debug_websocket_status_text_;
+        }
+
+        ESP_LOGI(TAG,
+                 "[%s] debug_ws configured_url=%s",
+                 reason,
+                 configured_url.empty() ? "<empty>" : configured_url.c_str());
+        ESP_LOGI(TAG, "[%s] debug_ws effective_url=%s", reason, effective_url.c_str());
+        ESP_LOGI(TAG,
+                 "[%s] debug_ws connected=%s status=%s",
+                 reason,
+                 connected ? "true" : "false",
+                 runtime_status.c_str());
+    }
+
+    void CloseDebugWebsocket() {
+        std::lock_guard<std::mutex> lock(debug_websocket_mutex_);
+
+        debug_websocket_.reset();
+        UpdateDebugWebsocketStatus(false, "Debug WS closed");
+    }
+
+    static std::string BuildDebugWebsocketHelloMessage() {
+        cJSON* root = cJSON_CreateObject();
+        char* json_text = nullptr;
+        std::string message;
+
+        cJSON_AddStringToObject(root, "type", "hello");
+        cJSON_AddStringToObject(root, "role", "ai_debug_client");
+        cJSON_AddStringToObject(root, "transport", "debug_websocket");
+        cJSON_AddStringToObject(root, "device_id", SystemInfo::GetMacAddress().c_str());
+        cJSON_AddStringToObject(root, "client_id", Board::GetInstance().GetUuid().c_str());
+
+        json_text = cJSON_PrintUnformatted(root);
+        if (json_text != nullptr) {
+            message = json_text;
+            cJSON_free(json_text);
+        }
+        cJSON_Delete(root);
+        return message;
+    }
+
+    static std::string BuildDebugWebsocketTouchMessage(const GpColorDebugState& state, bool request_pattern_draw) {
+        cJSON* root = cJSON_CreateObject();
+        char* json_text = nullptr;
+        char primary_rgb888[16] = {0};
+        std::string message;
+
+        std::snprintf(primary_rgb888,
+                      sizeof(primary_rgb888),
+                      "#%06X",
+                      static_cast<unsigned int>(state.primary_rgb888 & 0xFFFFFFU));
+        cJSON_AddStringToObject(root,
+                                "type",
+                                request_pattern_draw ? "draw_random_pattern_request" : "touch_state_update");
+        cJSON_AddStringToObject(root, "source", state.source.c_str());
+        cJSON_AddStringToObject(root, "transcript", state.transcript.c_str());
+        cJSON_AddStringToObject(root, "preset", ToPresetName(state.preset));
+        cJSON_AddStringToObject(root, "animation", ToAnimationName(state.animation));
+        cJSON_AddStringToObject(root, "primary_rgb888", primary_rgb888);
+        cJSON_AddStringToObject(root, "label", state.label.c_str());
+        cJSON_AddNumberToObject(root, "size", state.dot_size_px);
+        cJSON_AddNumberToObject(root, "duration_ms", state.animation_period_ms);
+
+        if (state.has_secondary) {
+            char secondary_rgb888[16] = {0};
+
+            std::snprintf(secondary_rgb888,
+                          sizeof(secondary_rgb888),
+                          "#%06X",
+                          static_cast<unsigned int>(state.secondary_rgb888 & 0xFFFFFFU));
+            cJSON_AddStringToObject(root, "secondary_rgb888", secondary_rgb888);
+        }
+
+        json_text = cJSON_PrintUnformatted(root);
+        if (json_text != nullptr) {
+            message = json_text;
+            cJSON_free(json_text);
+        }
+        cJSON_Delete(root);
+        return message;
+    }
+
+    bool EnsureDebugWebsocketConnected() {
+        std::lock_guard<std::mutex> lock(debug_websocket_mutex_);
+        auto network = Board::GetInstance().GetNetwork();
+        const std::string url = GetEffectiveDebugWebsocketUrl();
+
+        if ((debug_websocket_ != nullptr) && debug_websocket_->IsConnected()) {
+            return true;
+        }
+
+        if (network == nullptr) {
+            UpdateDebugWebsocketStatus(false, "Debug WS network unavailable");
+            return false;
+        }
+
+        debug_websocket_.reset();
+        debug_websocket_ = network->CreateWebSocket(1);
+        if (debug_websocket_ == nullptr) {
+            UpdateDebugWebsocketStatus(false, "Debug WS create failed");
+            return false;
+        }
+
+        debug_websocket_->SetHeader("Device-Id", SystemInfo::GetMacAddress().c_str());
+        debug_websocket_->SetHeader("Client-Id", Board::GetInstance().GetUuid().c_str());
+        debug_websocket_->SetHeader("X-Debug-Transport", "preview");
+        debug_websocket_->OnData([this](const char* data, size_t len, bool binary) {
+            this->HandleDebugWebsocketMessage(data, len, binary);
+        });
+        debug_websocket_->OnDisconnected([this]() {
+            UpdateDebugWebsocketStatus(false, "Debug WS disconnected");
+        });
+
+        ESP_LOGI(TAG, "[DBG_WS] connecting url=%s", url.c_str());
+        if (!debug_websocket_->Connect(url.c_str())) {
+            ESP_LOGE(TAG,
+                     "[DBG_WS] connect failed url=%s code=%d",
+                     url.c_str(),
+                     debug_websocket_->GetLastError());
+            UpdateDebugWebsocketStatus(false, "Debug WS connect failed");
+            debug_websocket_.reset();
+            return false;
+        }
+
+        UpdateDebugWebsocketStatus(true, "Debug WS connected");
+        const std::string hello_message = BuildDebugWebsocketHelloMessage();
+        if (!hello_message.empty()) {
+            debug_websocket_->Send(hello_message);
+            ESP_LOGI(TAG, "[DBG_WS] tx %s", SanitizeAsciiForLog(hello_message).c_str());
+        }
+
+        return true;
+    }
+
+    bool SendDebugWebsocketMessage(const std::string& message) {
+        if (!EnsureDebugWebsocketConnected()) {
+            return false;
+        }
+
+        std::lock_guard<std::mutex> lock(debug_websocket_mutex_);
+        if ((debug_websocket_ == nullptr) || !debug_websocket_->IsConnected()) {
+            UpdateDebugWebsocketStatus(false, "Debug WS send skipped: not connected");
+            return false;
+        }
+        if (!debug_websocket_->Send(message)) {
+            UpdateDebugWebsocketStatus(false, "Debug WS send failed");
+            ESP_LOGE(TAG, "[DBG_WS] send failed payload=%s", SanitizeAsciiForLog(message).c_str());
+            return false;
+        }
+
+        UpdateDebugWebsocketStatus(true, "Debug WS message sent");
+        ESP_LOGI(TAG, "[DBG_WS] tx %s", SanitizeAsciiForLog(message).c_str());
+        return true;
+    }
+
+    void HandleDebugWebsocketMessage(const char* data, size_t len, bool binary) {
+        const std::string text(data != nullptr ? std::string(data, len) : std::string());
+        cJSON* root = nullptr;
+
+        if (binary) {
+            ESP_LOGW(TAG, "[DBG_WS] binary payload is not supported bytes=%u", static_cast<unsigned int>(len));
+            return;
+        }
+
+        ESP_LOGI(TAG, "[DBG_WS] rx %s", SanitizeAsciiForLog(text).c_str());
+        root = cJSON_Parse(text.c_str());
+        if (root == nullptr) {
+            ESP_LOGW(TAG, "[DBG_WS] invalid json payload");
+            return;
+        }
+
+        const auto* type = cJSON_GetObjectItem(root, "type");
+        if (!cJSON_IsString(type)) {
+            ESP_LOGW(TAG, "[DBG_WS] missing type field");
+            cJSON_Delete(root);
+            return;
+        }
+
+        if (std::strcmp(type->valuestring, "hello") == 0) {
+            UpdateDebugWebsocketStatus(true, "Debug WS hello received");
+            cJSON_Delete(root);
+            return;
+        }
+
+        if (std::strcmp(type->valuestring, "ack") == 0) {
+            UpdateDebugWebsocketStatus(true, "Debug WS ack received");
+            cJSON_Delete(root);
+            return;
+        }
+
+        if (std::strcmp(type->valuestring, "matrix_pattern_result") == 0) {
+            const auto* bitmap_rows_hex = cJSON_GetObjectItem(root, "bitmap_rows_hex");
+            const auto* primary_rgb888 = cJSON_GetObjectItem(root, "primary_rgb888");
+            const auto* background_rgb888 = cJSON_GetObjectItem(root, "background_rgb888");
+            const auto* transcript = cJSON_GetObjectItem(root, "transcript");
+            uint32_t background_rgb = 0x000000U;
+
+            if (!cJSON_IsString(bitmap_rows_hex) || !cJSON_IsString(primary_rgb888)) {
+                ESP_LOGW(TAG, "[DBG_WS] matrix_pattern_result missing bitmap/color fields");
+                cJSON_Delete(root);
+                return;
+            }
+
+            const auto bitmap_rows = ParseMatrixBitmapRowsHex(bitmap_rows_hex->valuestring);
+            const auto primary_rgb = ParseRgb888(primary_rgb888->valuestring);
+            if (!bitmap_rows.has_value() || !primary_rgb.has_value()) {
+                ESP_LOGW(TAG, "[DBG_WS] invalid matrix_pattern_result payload");
+                cJSON_Delete(root);
+                return;
+            }
+
+            if (cJSON_IsString(background_rgb888)) {
+                const auto parsed_background = ParseRgb888(background_rgb888->valuestring);
+                if (parsed_background.has_value()) {
+                    background_rgb = *parsed_background;
+                }
+            }
+
+            const std::array<uint16_t, GP_MATRIX_HEIGHT> scheduled_rows = *bitmap_rows;
+            const uint32_t scheduled_primary_rgb = *primary_rgb;
+            const uint32_t scheduled_background_rgb = background_rgb;
+            const std::string transcript_text = cJSON_IsString(transcript) ? transcript->valuestring : "";
+
+            Application::GetInstance().Schedule([this,
+                                                 scheduled_rows,
+                                                 scheduled_primary_rgb,
+                                                 scheduled_background_rgb,
+                                                 transcript_text]() {
+                auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display_);
+
+                if (debug_display != nullptr) {
+                    debug_display->ApplyMatrixBitmapPreview(scheduled_rows,
+                                                            scheduled_primary_rgb,
+                                                            scheduled_background_rgb);
+                }
+                if (display_ != nullptr) {
+                    display_->ShowNotification("WS pattern received", 1500);
+                    if (!transcript_text.empty()) {
+                        display_->SetChatMessage("system", transcript_text.c_str());
+                    }
+                }
+            });
+            UpdateDebugWebsocketStatus(true, "Debug WS pattern received");
+            cJSON_Delete(root);
+            return;
+        }
+
+        ESP_LOGW(TAG, "[DBG_WS] unsupported message type=%s", type->valuestring);
+        cJSON_Delete(root);
     }
 
     static bool ResetDebugSnapshotUploadUrlToCompiledDefault() {
@@ -672,6 +1254,93 @@ private:
         return true;
     }
 
+    bool FetchPreviewImageFromHttp(const std::string& image_url,
+                                   std::string* error_message,
+                                   size_t* image_bytes) {
+        auto network = Board::GetInstance().GetNetwork();
+        auto* lvgl_display = dynamic_cast<LvglDisplay*>(display_);
+        std::string response;
+        char* image_data = nullptr;
+        int status_code = 0;
+
+        if (image_url.empty()) {
+            if (error_message != nullptr) {
+                *error_message = "Preview image URL is required";
+            }
+            return false;
+        }
+
+        if (network == nullptr) {
+            if (error_message != nullptr) {
+                *error_message = "Network interface is not available";
+            }
+            return false;
+        }
+
+        if (lvgl_display == nullptr) {
+            if (error_message != nullptr) {
+                *error_message = "Display does not support preview image rendering";
+            }
+            return false;
+        }
+
+        auto http = network->CreateHttp(3);
+        http->SetHeader("Accept", "image/png, image/jpeg");
+
+        if (!http->Open("GET", image_url)) {
+            if (error_message != nullptr) {
+                *error_message = "Failed to open preview image URL";
+            }
+            return false;
+        }
+
+        response = http->ReadAll();
+        status_code = http->GetStatusCode();
+        http->Close();
+
+        if (status_code != 200) {
+            if (error_message != nullptr) {
+                *error_message = "Preview fetch HTTP status " + std::to_string(status_code) + ": " + response;
+            }
+            return false;
+        }
+
+        if (response.empty()) {
+            if (error_message != nullptr) {
+                *error_message = "Preview image response is empty";
+            }
+            return false;
+        }
+
+        if (response.size() > kDebugPreviewMaxImageBytes) {
+            if (error_message != nullptr) {
+                *error_message = "Preview image exceeds maximum size";
+            }
+            return false;
+        }
+
+        image_data = static_cast<char*>(heap_caps_malloc(response.size(), MALLOC_CAP_8BIT));
+        if (image_data == nullptr) {
+            if (error_message != nullptr) {
+                *error_message = "Out of memory while storing preview image";
+            }
+            return false;
+        }
+
+        std::memcpy(image_data, response.data(), response.size());
+        lvgl_display->SetPreviewImage(std::make_unique<LvglAllocatedImage>(image_data, response.size()));
+        UpdateDebugPreviewStatus(true, "HTTP preview image fetched", response.size());
+        ESP_LOGI(TAG,
+                 "[DBG_HTTP] fetched preview image url=%s bytes=%u",
+                 image_url.c_str(),
+                 static_cast<unsigned int>(response.size()));
+
+        if (image_bytes != nullptr) {
+            *image_bytes = response.size();
+        }
+        return true;
+    }
+
     void FinishDebugSnapshotUpload(const std::string& notify_text) {
         ESP_LOGI(TAG, "Snap upload finished: %s", notify_text.c_str());
         std::lock_guard<std::mutex> lock(debug_snapshot_upload_mutex_);
@@ -753,6 +1422,9 @@ cleanup:
             case DebugCommand::Type::kCaptureSnapshot:
                 self->RunDebugSnapshotUpload(command->quality);
                 break;
+            case DebugCommand::Type::kSendDebugWebsocketMessage:
+                self->SendDebugWebsocketMessage(command->text);
+                break;
             default:
                 break;
             }
@@ -816,6 +1488,27 @@ cleanup:
         return "Uploading snapshot...";
     }
 
+    std::string QueueDebugWebsocketTouchCommand(const GpColorDebugState& state, bool request_pattern_draw) {
+        auto command = std::make_unique<DebugCommand>();
+
+        command->type = DebugCommand::Type::kSendDebugWebsocketMessage;
+        command->text = BuildDebugWebsocketTouchMessage(state, request_pattern_draw);
+        if (command->text.empty()) {
+            ESP_LOGW(TAG, "[DBG_WS] failed to build touch websocket payload");
+            return "Debug WS payload failed";
+        }
+        if (!EnqueueDebugCommand(std::move(command))) {
+            ESP_LOGW(TAG, "[DBG_WS] queue failed");
+            return "Debug WS queue failed";
+        }
+
+        ESP_LOGI(TAG,
+                 "[DBG_WS] queued type=%s transcript=%s",
+                 request_pattern_draw ? "draw_random_pattern_request" : "touch_state_update",
+                 state.transcript.c_str());
+        return request_pattern_draw ? "Debug WS draw request queued" : "Debug WS state queued";
+    }
+
     void InitializeDebugCommandTask() {
         BaseType_t task_created;
 
@@ -853,6 +1546,8 @@ cleanup:
         int snap_quality = 50;
         const std::string help_text =
             "snap | snap <quality> | snap_url get | set <url> | clear | reset | help";
+        const std::string ws_help_text =
+            "debug_ws get | status | set <url> | clear | close | help";
 
         line = TrimAsciiWhitespace(std::move(line));
         if (line.empty()) {
@@ -877,6 +1572,54 @@ cleanup:
         }
 
         if (!StartsWithCommand(line, kSerialSnapUrlCommand)) {
+            if (!StartsWithCommand(line, kSerialDebugWebsocketCommand)) {
+                return;
+            }
+
+            argument_text = TrimAsciiWhitespace(line.substr(std::strlen(kSerialDebugWebsocketCommand)));
+            if (argument_text.empty() || argument_text == "help") {
+                ESP_LOGI(TAG, "Serial command: %s", ws_help_text.c_str());
+                LogDebugWebsocketStatus("serial_help");
+                return;
+            }
+
+            if (argument_text == "get" || argument_text == "status") {
+                LogDebugWebsocketStatus(argument_text == "get" ? "serial_get" : "serial_status");
+                ShowSerialCommandNotification("Debug WS status printed");
+                return;
+            }
+
+            if (argument_text == "clear") {
+                SetDebugWebsocketUrl("");
+                CloseDebugWebsocket();
+                LogDebugWebsocketStatus("serial_clear");
+                ShowSerialCommandNotification("Debug WS URL cleared");
+                return;
+            }
+
+            if (argument_text == "close") {
+                CloseDebugWebsocket();
+                LogDebugWebsocketStatus("serial_close");
+                ShowSerialCommandNotification("Debug WS closed");
+                return;
+            }
+
+            if (StartsWithCommand(argument_text, "set ")) {
+                command = TrimAsciiWhitespace(argument_text.substr(4));
+                if (command.empty()) {
+                    ESP_LOGW(TAG, "Serial command set failed: debug ws url is empty");
+                    ESP_LOGI(TAG, "Usage: %s", ws_help_text.c_str());
+                    return;
+                }
+                SetDebugWebsocketUrl(command);
+                CloseDebugWebsocket();
+                LogDebugWebsocketStatus("serial_set");
+                ShowSerialCommandNotification("Debug WS URL updated");
+                return;
+            }
+
+            ESP_LOGW(TAG, "Unknown serial command: %s", line.c_str());
+            ESP_LOGI(TAG, "Usage: %s", ws_help_text.c_str());
             return;
         }
 
@@ -940,7 +1683,8 @@ cleanup:
             return;
         }
 
-        ESP_LOGI(TAG, "Serial debug command ready: snap | snap <quality> | snap_url get | set <url> | clear | reset | help");
+        ESP_LOGI(TAG,
+                 "Serial debug command ready: snap | snap <quality> | snap_url get | set <url> | clear | reset | help | debug_ws get | status | set <url> | clear | close | help");
         while (true) {
             if (std::fgets(buffer, sizeof(buffer), stdin) == nullptr) {
                 clearerr(stdin);
@@ -1296,6 +2040,121 @@ cleanup:
                 return BuildDotResultJson(state);
             });
 
+        mcp_server.AddTool("self.screen.matrix_16x16.draw",
+            "Draw one 16x16 matrix frame on the LED side. Use preset=python_demo, frame_rgb332_hex with 256 RGB332 bytes, or compact bitmap_rows_hex plus one primary_rgb888 color.",
+            PropertyList({
+                Property("preset", kPropertyTypeString, std::string("")),
+                Property("frame_rgb332_hex", kPropertyTypeString, std::string("")),
+                Property("bitmap_rows_hex", kPropertyTypeString, std::string("")),
+                Property("primary_rgb888", kPropertyTypeString, std::string("")),
+                Property("source", kPropertyTypeString, std::string("mcp")),
+                Property("transcript", kPropertyTypeString, std::string(""))
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                auto* matrix_led = led_matrix_.get();
+                auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display_);
+                const std::string preset = ToAsciiLower(properties["preset"].value<std::string>());
+                const std::string frame_hex = properties["frame_rgb332_hex"].value<std::string>();
+                const std::string bitmap_rows_hex = properties["bitmap_rows_hex"].value<std::string>();
+                const std::string primary_text = properties["primary_rgb888"].value<std::string>();
+                const std::string source = properties["source"].value<std::string>();
+                const std::string transcript = properties["transcript"].value<std::string>();
+                bool applied = false;
+                std::string resolved_frame_hex = frame_hex;
+                std::string resolved_primary_text = primary_text;
+
+                if (matrix_led == nullptr) {
+                    throw std::runtime_error("LED matrix transport is not initialized");
+                }
+
+                if (!preset.empty()) {
+                    if (preset == "python_demo") {
+                        applied = matrix_led->ShowRgb332FramePreset(GpColorDebugPreset::kPythonDemo);
+                    } else {
+                        throw std::runtime_error("Unsupported 16x16 preset: " + preset);
+                    }
+                } else if (!frame_hex.empty()) {
+                    const auto frame = ParseRgb332FrameHex(frame_hex);
+
+                    if (!frame.has_value()) {
+                        throw std::runtime_error("frame_rgb332_hex must contain exactly 256 RGB332 bytes encoded as 512 hex characters");
+                    }
+                    applied = matrix_led->ShowRgb332Frame(frame->data(), frame->size(), kGpMatrixModeSolidFrame);
+                } else if (!bitmap_rows_hex.empty()) {
+                    const auto bitmap_rows = ParseMatrixBitmapRowsHex(bitmap_rows_hex);
+                    const auto primary_rgb = ParseRgb888(primary_text);
+                    const auto frame = bitmap_rows.has_value() && primary_rgb.has_value()
+                        ? BuildRgb332FrameFromBitmapRows(*bitmap_rows, *primary_rgb)
+                        : std::array<uint8_t, GP_MATRIX_RGB332_FRAME_SIZE> {};
+
+                    if (!bitmap_rows.has_value()) {
+                        throw std::runtime_error("bitmap_rows_hex must contain exactly 16 rows encoded as 64 hex characters");
+                    }
+                    if (!primary_rgb.has_value()) {
+                        throw std::runtime_error("primary_rgb888 must be a RGB888 string like #RRGGBB");
+                    }
+
+                    if (debug_display != nullptr) {
+                        debug_display->ApplyMatrixBitmapPreview(*bitmap_rows, *primary_rgb, 0x000000U);
+                    }
+                    applied = matrix_led->ShowRgb332Frame(frame.data(), frame.size(), kGpMatrixModeSolidFrame);
+
+                    char rgb_text[16] = {0};
+                    std::snprintf(rgb_text, sizeof(rgb_text), "#%06X", static_cast<unsigned int>(*primary_rgb & 0xFFFFFFU));
+                    resolved_primary_text = rgb_text;
+
+                    {
+                        std::string compact_hex;
+                        compact_hex.reserve(frame.size() * 2U);
+                        for (uint8_t value : frame) {
+                            char byte_text[3] = {0};
+                            std::snprintf(byte_text, sizeof(byte_text), "%02x", static_cast<unsigned int>(value));
+                            compact_hex += byte_text;
+                        }
+                        resolved_frame_hex = compact_hex;
+                    }
+                } else {
+                    throw std::runtime_error("Either preset, frame_rgb332_hex, or bitmap_rows_hex plus primary_rgb888 is required");
+                }
+
+                if (!applied) {
+                    throw std::runtime_error("16x16 frame draw failed");
+                }
+
+                return BuildMatrixFrameResultJson(preset.c_str(),
+                                                  resolved_frame_hex.c_str(),
+                                                  bitmap_rows_hex.c_str(),
+                                                  resolved_primary_text.c_str(),
+                                                  applied,
+                                                  source.c_str(),
+                                                  transcript.c_str());
+            });
+
+        mcp_server.AddTool("self.screen.preview_image.fetch_http",
+            "Fetch one PNG or JPEG from a host HTTP URL and show it in the debug preview area.",
+            PropertyList({
+                Property("url", kPropertyTypeString),
+                Property("source", kPropertyTypeString, std::string("host_http")),
+                Property("transcript", kPropertyTypeString, std::string(""))
+            }),
+            [this](const PropertyList& properties) -> ReturnValue {
+                const std::string url = properties["url"].value<std::string>();
+                const std::string source = properties["source"].value<std::string>();
+                const std::string transcript = properties["transcript"].value<std::string>();
+                std::string error_message;
+                size_t image_bytes = 0;
+
+                if (!FetchPreviewImageFromHttp(url, &error_message, &image_bytes)) {
+                    throw std::runtime_error(error_message);
+                }
+
+                return BuildPreviewFetchResultJson(url.c_str(),
+                                                   image_bytes,
+                                                   true,
+                                                   source.c_str(),
+                                                   transcript.c_str());
+            });
+
         mcp_server.AddTool("self.screen.debug_snapshot.set_upload_url",
             "Set or clear the HTTP upload URL used by the local Snap button. Use an empty string to clear it.",
             PropertyList({
@@ -1359,6 +2218,13 @@ cleanup:
         debug_display->SetDebugSnapshotCallback([this]() {
             return QueueDebugSnapshotCapture(50);
         });
+        debug_display->SetTouchCommandCallback([this](const GpColorDebugState& state, bool request_pattern_draw) {
+            const std::string status_text = QueueDebugWebsocketTouchCommand(state, request_pattern_draw);
+
+            if (request_pattern_draw) {
+                ShowSerialCommandNotification(status_text);
+            }
+        });
         InitializeBluetoothBridgeTask();
     }
 
@@ -1375,6 +2241,30 @@ public:
         InitializeTools();
         InitializeLedMatrix();
         InitializeSerialDebugCommands();
+        UpdateDebugPreviewStatus(false, "HTTP preview waiting for Wi-Fi");
+        LogDebugWebsocketStatus("boot");
+        SetNetworkEventCallback([this](NetworkEvent event, const std::string& data) {
+            (void)data;
+
+            switch (event) {
+            case NetworkEvent::Connected:
+                Application::GetInstance().Schedule([this]() {
+                    EnsureDebugPreviewHttpServer();
+                });
+                break;
+            case NetworkEvent::Connecting:
+                UpdateDebugPreviewStatus(false, "HTTP preview waiting for Wi-Fi");
+                break;
+            case NetworkEvent::Disconnected:
+                UpdateDebugPreviewStatus(false, "HTTP preview Wi-Fi disconnected");
+                break;
+            case NetworkEvent::WifiConfigModeEnter:
+                UpdateDebugPreviewStatus(false, "HTTP preview Wi-Fi config mode");
+                break;
+            default:
+                break;
+            }
+        });
         LogDebugSnapshotUploadUrl("startup");
 
         GetBacklight()->RestoreBrightness();

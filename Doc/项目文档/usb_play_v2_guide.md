@@ -106,7 +106,7 @@ Common examples:
 - `BT SEND AT`
 - `BT AT+VERSION?`
 - `BT AT+UART?`
-- `BT AT+UART=115200,0,0`
+- `BT AT+UART=460800,0,0`
 - `BT SEND LED 0`
 
 Behavior:
@@ -114,9 +114,9 @@ Behavior:
 - `BT SEND text` forwards `text` to the HC-05 on `UART2(P4.2/P4.3)` and always appends `\r\n` if missing.
 - `BT STATUS` prints the compact UART2 state summary without sending anything to the HC-05.
 - `BT text` remains available as a compatibility shortcut and behaves like `BT SEND text`.
-- Startup now runs an automatic HC-05 setup sequence at `38400 8N1` in strict set-then-query order: `AT`, version query, slave role plus role query, `WS2812` plus name query, `19220309` plus password query, `AT+UART=115200,0,0` plus `AT+UART?`, and finally `AT+RESET`; the local baudrate switch happens only after the reset reply is `OK`.
+- Startup now runs an automatic HC-05 setup sequence at `38400 8N1` in strict set-then-query order: `AT`, version query, slave role plus role query, `WS2812` plus name query, `19220309` plus password query, `AT+UART=460800,0,0` plus `AT+UART?`, and finally `AT+RESET`; the local baudrate switch happens only after the reset reply is `OK`.
 - The AT path no longer depends on `P4.1` or `PIO11`; the firmware keeps `P4.1` low and uses pure UART AT transactions.
-- If `text` is `AT+UART=<baud>,0,0`, firmware first waits for the HC-05 reply on the old baudrate, then sends `AT+RESET`, and switches the local `UART2` baudrate only after both replies contain `OK`; startup now begins at `38400 8N1` and ends at `115200 8N1`.
+- If `text` is `AT+UART=<baud>,0,0`, firmware first waits for the HC-05 reply on the old baudrate, then sends `AT+RESET`, and switches the local `UART2` baudrate only after both replies contain `OK`; startup now begins at `38400 8N1` and ends at `460800 8N1`.
 - The received HC-05 reply is printed through USB serial as ASCII and HEX summaries.
 - Firmware prints compact tagged logs such as `[BT_CMD]`, `[BT_RSP]`, `[BT_STA]`, `[BT_MON]`, and `[BT_ACT]` so command flow, reply flow, periodic monitor output, and board actions are easier to distinguish.
 - RX-side debug text is captured in the UART ISR and then printed/handled by a 50ms scheduled debug task after the byte stream becomes idle, so incoming text such as `LED 0` can still light the board LED without doing heavy work inside the ISR.

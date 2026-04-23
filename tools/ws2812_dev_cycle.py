@@ -18,6 +18,8 @@ DEFAULT_BT_SEQUENCE = "BT SEND AT|BT SEND AT+VERSION?|BT SEND AT+ADDR?|BT SEND A
 DEFAULT_BT_INITIAL_DELAY_MS = 1500
 DEFAULT_BT_COMMAND_DELAY_MS = 1200
 DEFAULT_DEBOUNCE_SECONDS = 3
+DEFAULT_AI8051_CAPTURE_SECONDS = 20
+DEFAULT_LOG_ROOT_NAME = "debug_snapshots/dev_cycle_logs"
 CREATE_NEW_CONSOLE = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
 
 
@@ -51,6 +53,55 @@ def run_command(command, cwd: Path, step_name: str, dry_run: bool) -> None:
     result = subprocess.run(command, cwd=str(cwd), check=False)
     if result.returncode != 0:
         raise RuntimeError(f"{step_name} failed with exit code {result.returncode}.")
+
+
+def terminate_process_tree(pid: int, name: str) -> None:
+    if pid <= 0 or pid == os.getpid():
+        return
+
+    log(f"Stopping previous {name} process tree (PID {pid}).")
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], check=False,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return
+
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        return
+
+
+def acquire_run_lock(lock_path: Path) -> None:
+    if lock_path.exists():
+        try:
+            previous_pid = int(lock_path.read_text(encoding="utf-8").strip() or "0")
+        except (OSError, ValueError):
+            previous_pid = 0
+
+        if previous_pid and previous_pid != os.getpid():
+            terminate_process_tree(previous_pid, "ws2812 dev cycle")
+
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_text(str(os.getpid()), encoding="utf-8")
+
+
+def release_run_lock(lock_path: Path) -> None:
+    if not lock_path.exists():
+        return
+
+    try:
+        owner_pid = int(lock_path.read_text(encoding="utf-8").strip() or "0")
+    except (OSError, ValueError):
+        owner_pid = 0
+
+    if owner_pid == os.getpid():
+        lock_path.unlink(missing_ok=True)
+
+
+def create_cycle_log_dir(log_root: Path) -> Path:
+    cycle_dir = log_root / time.strftime("%Y%m%d-%H%M%S")
+    cycle_dir.mkdir(parents=True, exist_ok=True)
+    return cycle_dir
 
 
 def build_idf_command(export_bat: Path, project_root: Path, idf_args) -> list[str]:
@@ -113,6 +164,16 @@ def write_serial_chunk(serial_port: serial.Serial) -> None:
         sys.stdout.flush()
 
 
+def capture_serial_chunk(serial_port: serial.Serial, log_handle) -> int:
+    chunk = serial_port.read(serial_port.in_waiting or 1)
+    if not chunk:
+        return 0
+
+    log_handle.write(chunk.decode("utf-8", errors="replace"))
+    log_handle.flush()
+    return len(chunk)
+
+
 def invoke_ai8051_bt_debug_sequence(serial_port: serial.Serial,
                                     commands: list[str],
                                     initial_delay_ms: int,
@@ -150,6 +211,32 @@ def run_ai8051_monitor(args) -> None:
             time.sleep(0.12)
 
 
+def run_ai8051_capture(args) -> None:
+    com_port = normalize_com_port(args.ai8051_com_port)
+    log_path = Path(args.ai8051_log_path).resolve()
+    capture_seconds = max(args.ai8051_capture_seconds, 1)
+
+    if not com_port:
+        raise RuntimeError("AI8051 serial capture requires --ai8051-com-port.")
+
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with serial.Serial(com_port, args.ai8051_baud_rate, timeout=0.25) as serial_port, \
+            log_path.open("w", encoding="utf-8", newline="") as log_handle:
+        deadline = time.time() + capture_seconds
+        log_handle.write(f"[capture-start] port={com_port} baud={args.ai8051_baud_rate} seconds={capture_seconds}\n")
+        log_handle.flush()
+        if args.run_ai8051_bt_debug:
+            invoke_ai8051_bt_debug_sequence(serial_port,
+                                            parse_bt_commands(args.ai8051_bt_command_sequence),
+                                            args.ai8051_bt_initial_delay_ms,
+                                            args.ai8051_bt_command_delay_ms)
+        while time.time() < deadline:
+            if capture_serial_chunk(serial_port, log_handle) == 0:
+                time.sleep(0.12)
+        log_handle.write("\n[capture-end]\n")
+        log_handle.flush()
+
+
 def start_ai8051_monitor(script_path: Path, repo_root: Path, args, dry_run: bool):
     command = [
         sys.executable,
@@ -176,6 +263,38 @@ def start_ai8051_monitor(script_path: Path, repo_root: Path, args, dry_run: bool
         return None
 
     return subprocess.Popen(command, cwd=str(repo_root), creationflags=CREATE_NEW_CONSOLE)
+
+
+def start_ai8051_capture(script_path: Path, repo_root: Path, args, log_path: Path, dry_run: bool):
+    command = [
+        sys.executable,
+        str(script_path),
+        "--mode",
+        "ai8051-capture",
+        "--ai8051-com-port",
+        normalize_com_port(args.ai8051_com_port),
+        "--ai8051-baud-rate",
+        str(args.ai8051_baud_rate),
+        "--ai8051-capture-seconds",
+        str(args.ai8051_capture_seconds),
+        "--ai8051-log-path",
+        str(log_path),
+        "--ai8051-bt-command-sequence",
+        args.ai8051_bt_command_sequence,
+        "--ai8051-bt-initial-delay-ms",
+        str(args.ai8051_bt_initial_delay_ms),
+        "--ai8051-bt-command-delay-ms",
+        str(args.ai8051_bt_command_delay_ms),
+    ]
+    if args.run_ai8051_bt_debug:
+        command.append("--run-ai8051-bt-debug")
+
+    if dry_run:
+        log("[dry-run] Start AI8051 serial capture")
+        print(join_cmd_tokens(command), flush=True)
+        return None
+
+    return subprocess.Popen(command, cwd=str(repo_root))
 
 
 def stop_process(process, name: str):
@@ -274,8 +393,11 @@ def invoke_development_cycle(script_path: Path,
                              keil_project: Path,
                              args,
                              state: dict) -> None:
+    cycle_log_dir = create_cycle_log_dir(args.log_root)
+
     state["xiaozhi_monitor"] = stop_process(state.get("xiaozhi_monitor"), "XiaoZhi monitor")
     state["ai8051_monitor"] = stop_process(state.get("ai8051_monitor"), "AI8051 monitor")
+    state["cycle_log_dir"] = cycle_log_dir
 
     log("Step 1/4: Build and flash XiaoZhi firmware.")
     invoke_xiaozhi_build_and_flash(export_bat, project_root, args.esp_port, args.dry_run)
@@ -297,13 +419,18 @@ def invoke_development_cycle(script_path: Path,
             time.sleep(args.ai8051_reconnect_delay_seconds)
 
     if not args.skip_ai8051_monitor:
-        log("Step 4/4: Start AI8051 serial monitor.")
-        state["ai8051_monitor"] = start_ai8051_monitor(script_path, repo_root, args, args.dry_run)
+        ai8051_log_path = cycle_log_dir / "ai8051_serial.log"
+        log(f"Step 4/4: Capture AI8051 serial output to {ai8051_log_path}.")
+        state["ai8051_monitor"] = start_ai8051_capture(script_path,
+                                                        repo_root,
+                                                        args,
+                                                        ai8051_log_path,
+                                                        args.dry_run)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="WS2812 development cycle helper.")
-    parser.add_argument("--mode", choices=["run", "ai8051-monitor"], default="run")
+    parser.add_argument("--mode", choices=["run", "ai8051-monitor", "ai8051-capture"], default="run")
     parser.add_argument("--idf-path", type=Path, default=DEFAULT_IDF_PATH)
     parser.add_argument("--xiaozhi-project", type=Path)
     parser.add_argument("--esp-port", default=os.environ.get("WS2812_ESP_PORT", ""))
@@ -312,6 +439,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--keil-project", type=Path)
     parser.add_argument("--ai8051-com-port", default=os.environ.get("WS2812_AI8051_COM_PORT", ""))
     parser.add_argument("--ai8051-baud-rate", type=int, default=DEFAULT_AI8051_BAUD)
+    parser.add_argument("--ai8051-capture-seconds", type=int, default=DEFAULT_AI8051_CAPTURE_SECONDS)
+    parser.add_argument("--ai8051-log-path", default="")
     parser.add_argument("--ai8051-reconnect-delay-seconds", type=int, default=DEFAULT_RECONNECT_DELAY_SECONDS)
     parser.add_argument("--run-ai8051-bt-debug", action="store_true")
     parser.add_argument("--ai8051-bt-command-sequence", default=DEFAULT_BT_SEQUENCE)
@@ -322,6 +451,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--watch", action="store_true")
     parser.add_argument("--debounce-seconds", type=int, default=DEFAULT_DEBOUNCE_SECONDS)
     parser.add_argument("--watch-paths", nargs="*", default=[])
+    parser.add_argument("--log-root", type=Path)
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -338,11 +468,20 @@ def main() -> int:
     if args.mode == "ai8051-monitor":
         run_ai8051_monitor(args)
         return 0
+    if args.mode == "ai8051-capture":
+        if not args.ai8051_log_path:
+            raise RuntimeError("AI8051 serial capture requires --ai8051-log-path.")
+        run_ai8051_capture(args)
+        return 0
 
     export_bat, project_root, keil_project = validate_paths(args, repo_root, project_root, keil_project)
+    args.log_root = (args.log_root or (repo_root / DEFAULT_LOG_ROOT_NAME)).resolve()
+    lock_path = args.log_root / ".ws2812_dev_cycle.pid"
+    acquire_run_lock(lock_path)
     log(f"Repository root: {repo_root}")
     log(f"XiaoZhi project: {project_root}")
     log(f"Keil project: {keil_project}")
+    log(f"Log root: {args.log_root}")
 
     watch_targets = build_watch_targets(repo_root, project_root, args.watch_paths)
     state = {
@@ -359,11 +498,12 @@ def main() -> int:
                 invoke_development_cycle(script_path, repo_root, export_bat, project_root, keil_project, args, state)
                 log("Watch mode is active. Waiting for the next source change.")
         else:
-            log("One-shot cycle finished. Child monitor windows stay open until you close them manually.")
+            log("One-shot cycle finished. XiaoZhi monitor stays open and AI8051 capture exits after the configured duration.")
     finally:
         if args.watch:
             state["xiaozhi_monitor"] = stop_process(state.get("xiaozhi_monitor"), "XiaoZhi monitor")
             state["ai8051_monitor"] = stop_process(state.get("ai8051_monitor"), "AI8051 monitor")
+        release_run_lock(lock_path)
     return 0
 
 

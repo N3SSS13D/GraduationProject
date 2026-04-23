@@ -20,7 +20,8 @@ model: "GPT-5 (copilot)"
 - 将 `AI端` 的语音结果、调试结果或截图控制请求映射为稳定动作对象。
 - 保持 `AI端` 输出与 `LED端` 协议字段一致。
 - 优先复用现有 `voice_color_result`、矩阵驱动和调试界面路径。
-- 若任务涉及 HC-05，默认配置流程为先在 `38400` 下发送 `AT` 探测；若连续 `3` 次无应答，则直接切本地串口到 `115200` 并跳过后续设置；若探测成功，再按“设置一条、查询一条”完成全部 AT 指令，AI端 使用固定地址 `98:D3:02:96:A2:B1` 对应的 `AT+BIND` 绑定 LED端，最后两步固定为 `AT+RESET` 和本地切到 `115200` 数据模式，并把每一步回包打印到 monitor。
+- 若任务涉及调试菜单输入，优先复用 `voice_color_analyze -> voice_color_result` 这条统一分析链，允许 `source` 为 `stt` 或 `touch`。
+- 若任务涉及 HC-05，默认配置流程为先在 `38400` 下发送 `AT` 探测；若连续 `3` 次无应答，则直接切本地串口到 `460800` 并跳过后续设置；若探测成功，再按“设置一条、查询一条”完成全部 AT 指令，AI端 使用固定地址 `98:D3:02:96:A2:B1` 对应的 `AT+BIND` 绑定 LED端，最后两步固定为 `AT+RESET` 和本地切到 `460800` 数据模式，并把每一步回包打印到 monitor。
 
 执行要求：
 
@@ -30,11 +31,20 @@ model: "GPT-5 (copilot)"
 4. 命令突发时保持动作下发有边界、可追踪、可验证。
 5. 若涉及截图或 MCP，说明脚本路径和调用路径。
 6. 修改后执行可用的构建或联调验证。
+7. 保持现有触摸控制主链：`GpDebugLcdDisplay -> QueueMatrixDebugState -> ShowDebugState -> SetAction`；若需要进入大模型，复用 `GpDebugLcdDisplay -> SendColorDebugAnalyze(..., "touch")`，不要新增并行协议。
+8. 保持 `GP_Port/transport/` 中基于后台任务的 UART 收包模型，不要把 `ReadPacket()` 改回调用时轮询读串口。
+9. 若任务涉及 Wi-Fi 图片预览链路，先从 `AI端` monitor 日志 `WiFi STA IP: ...` 获取设备地址，再优先使用主机脚本 `/control/device_preview` 将本地 PNG/JPEG 发送到 `http://<device_ip>:8781/debug/preview_image`；设备侧应复用现有预览路径，并同步显示到调试二级菜单预览卡片中。
+10. 面向 LLM 的 MCP 桥接脚本、工具名和参数名必须尽量自解释，优先使用一眼可懂的命名，例如 `gp_display_mcp_bridge.py`、`draw_python`、`show_text`、`python_source`、`frame_interval_ms`、`text`。
 
 验证入口：
 
 - `tools/ws2812_dev_cycle.py`
-- `External/xiaozhi-esp32/GP_Port/gp_mcp_endpoint_client.py`
+- `External/xiaozhi-esp32/GP_Port/gp_display_mcp_bridge.py`
+
+联调补充：
+
+- `tools/ws2812_dev_cycle.py` 会把每轮联调日志落到 `debug_snapshots/dev_cycle_logs/`。
+- 默认用定时串口抓取保存 `LED端` 日志，而不是无限前台串口监听。
 
 输出格式：
 

@@ -30,6 +30,24 @@ constexpr size_t kStatusReplyPayloadBytes = 4;
 constexpr uint8_t kMatrixDebugPatternDiamond = 0;
 constexpr uint8_t kMatrixDebugPatternCross = 1;
 constexpr uint8_t kMatrixDebugPatternJluEmblem = 2;
+constexpr uint8_t kPythonDemoFrame[GP_MATRIX_RGB332_FRAME_SIZE] = {
+    0x00, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x00, 0x00,
+    0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00,
+    0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00,
+    0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00,
+    0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x03, 0x03, 0x03, 0x03,
+    0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x03, 0x03, 0x00, 0x03, 0x03, 0x00, 0x00,
+    0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x03, 0x00, 0x03, 0x03, 0x00, 0x00, 0x03,
+    0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x03, 0x00, 0x03, 0x03, 0x00, 0x00, 0x03, 0x00,
+    0x00, 0x00, 0x03, 0x03, 0x00, 0x00, 0x03, 0x03, 0x00, 0x03, 0x03, 0x03, 0x03, 0x03, 0x00, 0x00,
+    0x00, 0x03, 0x00, 0x00, 0x03, 0x03, 0x00, 0x00, 0x03, 0x03, 0x03, 0x03, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00,
+    0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00,
+    0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x03, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x03, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x03, 0x03, 0x00, 0x00, 0x00, 0x03, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x03, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
 
 uint8_t ExtractRgb888Channel(uint32_t rgb, uint8_t shift) {
     return static_cast<uint8_t>((rgb >> shift) & 0xFFU);
@@ -142,6 +160,10 @@ bool GpLedMatrixEsp32::ShowDebugState(const GpColorDebugState& state) {
     GpMatrixActionPayload action = {};
     const uint32_t background_rgb888 = ResolveMatrixBackgroundRgb888(state);
 
+    if (state.preset == GpColorDebugPreset::kPythonDemo) {
+        return ShowRgb332FramePreset(state.preset);
+    }
+
     action.source = kGpMatrixActionSourceLocal;
     action.direction = kGpMatrixDirectionNormal;
     action.brightness = brightness_;
@@ -239,8 +261,23 @@ bool GpLedMatrixEsp32::ShowAction(const GpMatrixActionPayload& action) {
     return sent;
 }
 
+bool GpLedMatrixEsp32::ShowRgb332FramePreset(GpColorDebugPreset preset) {
+    const uint8_t* frame = ResolveFramePreset(preset);
+
+    if (frame == nullptr) {
+        return false;
+    }
+
+    return ShowRgb332Frame(frame, GP_MATRIX_RGB332_FRAME_SIZE, kGpMatrixModeSolidFrame);
+}
+
 bool GpLedMatrixEsp32::ShowRgb332Frame(const uint8_t* frame, size_t length, GpMatrixMode mode) {
     std::lock_guard<std::mutex> lock(mutex_);
+
+    if ((frame == nullptr) || (length != GP_MATRIX_RGB332_FRAME_SIZE)) {
+        return false;
+    }
+
     uint8_t start_payload[GP_MATRIX_FRAME_START_PAYLOAD_BYTES] = {
         GP_MATRIX_PAYLOAD_FORMAT_RGB332,
         GP_MATRIX_WIDTH,
@@ -248,7 +285,8 @@ bool GpLedMatrixEsp32::ShowRgb332Frame(const uint8_t* frame, size_t length, GpMa
         static_cast<uint8_t>(length & 0xffU),
         static_cast<uint8_t>((length >> 8) & 0xffU),
     };
-    if (!SendCommand(kGpMatrixCommandFrameStart, start_payload, sizeof(start_payload))) {
+    /* Keep single-frame uploads deterministic: each stage waits for the LED side ACK. */
+    if (!SendCommand(kGpMatrixCommandFrameStart, start_payload, sizeof(start_payload), true)) {
         return false;
     }
 
@@ -258,13 +296,13 @@ bool GpLedMatrixEsp32::ShowRgb332Frame(const uint8_t* frame, size_t length, GpMa
         payload[0] = static_cast<uint8_t>(offset / GP_MATRIX_MAX_CHUNK_DATA);
         payload[1] = chunk_size;
         std::memcpy(payload.data() + sizeof(GpMatrixFrameChunkPrefix), frame + offset, chunk_size);
-        if (!SendCommand(kGpMatrixCommandFrameChunk, payload.data(), payload.size())) {
+        if (!SendCommand(kGpMatrixCommandFrameChunk, payload.data(), payload.size(), true)) {
             return false;
         }
     }
 
     uint8_t mode_payload[1] = {static_cast<uint8_t>(mode)};
-    return SendCommand(kGpMatrixCommandFrameCommit, mode_payload, sizeof(mode_payload));
+    return SendCommand(kGpMatrixCommandFrameCommit, mode_payload, sizeof(mode_payload), true);
 }
 
 bool GpLedMatrixEsp32::ShowGlyphRows(const uint16_t* rows, size_t row_count, uint8_t glyph_count, uint8_t glyph_width, uint8_t glyph_spacing) {
@@ -704,5 +742,14 @@ void GpLedMatrixEsp32::DrawBars(Rgb332Frame& frame, uint8_t first, uint8_t secon
         for (size_t x = 3; x < GP_MATRIX_WIDTH - 3; ++x) {
             frame[y * GP_MATRIX_WIDTH + x] = color;
         }
+    }
+}
+
+const uint8_t* GpLedMatrixEsp32::ResolveFramePreset(GpColorDebugPreset preset) {
+    switch (preset) {
+    case GpColorDebugPreset::kPythonDemo:
+        return kPythonDemoFrame;
+    default:
+        return nullptr;
     }
 }

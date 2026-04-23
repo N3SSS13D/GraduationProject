@@ -10,6 +10,7 @@
 #include <driver/uart.h>
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
 #include <freertos/task.h>
 
 #include "gp_led_matrix_protocol.h"
@@ -19,8 +20,17 @@
 namespace {
 constexpr int kBtUartRxBufferBytes = 1024;
 constexpr int kBtUartTxBufferBytes = 1024;
+constexpr int kBtUartEventQueueLength = 16;
+constexpr int kBtPacketQueueLength = 8;
+constexpr uint32_t kBtRxTaskStackWords = 4096;
+constexpr UBaseType_t kBtRxTaskPriority = 5;
 constexpr size_t kBtReadChunkBytes = 64;
 constexpr size_t kBtMaxPacketBytes = GP_MATRIX_PACKET_HEADER_SIZE + GP_MATRIX_MAX_CHUNK_DATA + 8U;
+
+struct GpMatrixRxPacket {
+    uint16_t length = 0;
+    uint8_t data[kBtMaxPacketBytes] = {};
+};
 
 class GpMatrixBtUartTransport final : public GpMatrixTransport {
 public:
@@ -58,10 +68,25 @@ public:
             remote_name_ = "WS2812";
         }
 
-        ESP_ERROR_CHECK(uart_driver_install(uart_port_, kBtUartRxBufferBytes, kBtUartTxBufferBytes, 0, nullptr, 0));
+        ESP_ERROR_CHECK(uart_driver_install(uart_port_,
+                                            kBtUartRxBufferBytes,
+                                            kBtUartTxBufferBytes,
+                                            kBtUartEventQueueLength,
+                                            &uart_event_queue_,
+                                            0));
         ESP_ERROR_CHECK(uart_param_config(uart_port_, &uart_config));
         ESP_ERROR_CHECK(uart_set_pin(uart_port_, tx_gpio_, rx_gpio_, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
         ESP_ERROR_CHECK(uart_flush_input(uart_port_));
+
+        packet_queue_ = xQueueCreate(kBtPacketQueueLength, sizeof(GpMatrixRxPacket));
+        ESP_ERROR_CHECK(packet_queue_ != nullptr ? ESP_OK : ESP_ERR_NO_MEM);
+
+        ESP_ERROR_CHECK(xTaskCreate(&GpMatrixBtUartTransport::RunRxTask,
+                                    "gp_matrix_rx",
+                                    kBtRxTaskStackWords,
+                                    this,
+                                    kBtRxTaskPriority,
+                                    &rx_task_) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
 
         ESP_LOGI(TAG,
                  "HC-05 UART ready: port=%d tx=%d rx=%d baud=%lu local=%s remote=%s pin=%s",
@@ -75,11 +100,21 @@ public:
     }
 
     ~GpMatrixBtUartTransport() override {
+        if (rx_task_ != nullptr) {
+            vTaskDelete(rx_task_);
+            rx_task_ = nullptr;
+        }
+
+        if (packet_queue_ != nullptr) {
+            vQueueDelete(packet_queue_);
+            packet_queue_ = nullptr;
+        }
+
         uart_driver_delete(uart_port_);
     }
 
     bool WritePacket(const uint8_t* data, size_t length, uint32_t timeout_ms) override {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::mutex> lock(tx_mutex_);
         int bytes_written;
 
         if ((data == nullptr) || (length == 0U)) {
@@ -99,26 +134,29 @@ public:
     }
 
     bool ReadPacket(uint8_t* data, size_t length, uint32_t timeout_ms) override {
-        const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeout_ms);
+        GpMatrixRxPacket packet = {};
 
         if ((data == nullptr) || (length == 0U)) {
             return false;
         }
 
-        while (xTaskGetTickCount() <= deadline) {
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
-
-                PumpRxBytes(8U);
-                if (TryExtractPacket(data, length)) {
-                    return true;
-                }
-            }
-
-            vTaskDelay(pdMS_TO_TICKS(8));
+        if (packet_queue_ == nullptr) {
+            return false;
         }
 
-        return false;
+        if (xQueueReceive(packet_queue_, &packet, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+            return false;
+        }
+        if (packet.length > length) {
+            ESP_LOGW(TAG,
+                     "HC-05 UART packet too large for caller buffer: packet=%u buffer=%u",
+                     static_cast<unsigned int>(packet.length),
+                     static_cast<unsigned int>(length));
+            return false;
+        }
+
+        std::memcpy(data, packet.data, packet.length);
+        return true;
     }
 
     std::string DescribeLink() const override {
@@ -133,22 +171,88 @@ private:
     std::string local_name_;
     std::string remote_name_;
     std::string pin_code_;
+    QueueHandle_t uart_event_queue_ = nullptr;
+    QueueHandle_t packet_queue_ = nullptr;
+    TaskHandle_t rx_task_ = nullptr;
     std::vector<uint8_t> rx_buffer_;
-    std::mutex mutex_;
+    std::mutex tx_mutex_;
 
-    void PumpRxBytes(uint32_t timeout_ms) {
-        uint8_t rx_chunk[kBtReadChunkBytes];
-        int bytes_read;
+    static void RunRxTask(void* context) {
+        auto* self = static_cast<GpMatrixBtUartTransport*>(context);
+        uart_event_t event = {};
 
-        bytes_read = uart_read_bytes(uart_port_, rx_chunk, sizeof(rx_chunk), pdMS_TO_TICKS(timeout_ms));
-        if (bytes_read > 0) {
-            rx_buffer_.insert(rx_buffer_.end(), rx_chunk, rx_chunk + bytes_read);
+        if ((self == nullptr) || (self->uart_event_queue_ == nullptr)) {
+            vTaskDelete(nullptr);
+            return;
+        }
+
+        while (true) {
+            if (xQueueReceive(self->uart_event_queue_, &event, portMAX_DELAY) != pdTRUE) {
+                continue;
+            }
+
+            switch (event.type) {
+            case UART_DATA:
+                self->PumpRxBytes();
+                break;
+            case UART_FIFO_OVF:
+            case UART_BUFFER_FULL:
+                ESP_LOGW(TAG, "HC-05 UART RX overflow, resetting input stream");
+                self->ResetRxState();
+                break;
+            case UART_BREAK:
+            case UART_PARITY_ERR:
+            case UART_FRAME_ERR:
+                ESP_LOGW(TAG, "HC-05 UART RX framing error type=%d", event.type);
+                self->PumpRxBytes();
+                break;
+            default:
+                self->PumpRxBytes();
+                break;
+            }
         }
     }
 
-    bool TryExtractPacket(uint8_t* data, size_t length) {
+    void ResetRxState() {
+        rx_buffer_.clear();
+        uart_flush_input(uart_port_);
+        if (uart_event_queue_ != nullptr) {
+            xQueueReset(uart_event_queue_);
+        }
+        if (packet_queue_ != nullptr) {
+            xQueueReset(packet_queue_);
+        }
+    }
+
+    void PumpRxBytes() {
+        uint8_t rx_chunk[kBtReadChunkBytes];
+        int bytes_read;
+        GpMatrixRxPacket packet = {};
+
+        while (true) {
+            bytes_read = uart_read_bytes(uart_port_, rx_chunk, sizeof(rx_chunk), 0);
+            if (bytes_read <= 0) {
+                break;
+            }
+
+            rx_buffer_.insert(rx_buffer_.end(), rx_chunk, rx_chunk + bytes_read);
+
+            while (TryExtractPacket(&packet)) {
+                if ((packet_queue_ == nullptr) || (xQueueSend(packet_queue_, &packet, 0) != pdTRUE)) {
+                    ESP_LOGW(TAG, "HC-05 UART packet queue full, dropping packet len=%u",
+                             static_cast<unsigned int>(packet.length));
+                }
+            }
+        }
+    }
+
+    bool TryExtractPacket(GpMatrixRxPacket* packet) {
         uint16_t payload_length;
         size_t packet_length;
+
+        if (packet == nullptr) {
+            return false;
+        }
 
         while (!rx_buffer_.empty()) {
             if ((rx_buffer_.size() >= 2U)
@@ -170,7 +274,7 @@ private:
         payload_length = static_cast<uint16_t>(rx_buffer_[6])
             | (static_cast<uint16_t>(rx_buffer_[7]) << 8);
         packet_length = GP_MATRIX_PACKET_HEADER_SIZE + payload_length + 1U;
-        if ((packet_length > kBtMaxPacketBytes) || (packet_length > length)) {
+        if (packet_length > kBtMaxPacketBytes) {
             rx_buffer_.erase(rx_buffer_.begin());
             return false;
         }
@@ -178,7 +282,8 @@ private:
             return false;
         }
 
-        std::memcpy(data, rx_buffer_.data(), packet_length);
+        packet->length = static_cast<uint16_t>(packet_length);
+        std::memcpy(packet->data, rx_buffer_.data(), packet_length);
         rx_buffer_.erase(rx_buffer_.begin(), rx_buffer_.begin() + packet_length);
         return true;
     }

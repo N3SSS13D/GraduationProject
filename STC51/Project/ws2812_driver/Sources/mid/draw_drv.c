@@ -183,6 +183,11 @@ static uint8_t DrawDrv_GetPatternPixel(uint8_t imageIndex, uint8_t row, uint8_t 
     return frame[idx];
 }
 
+static uint8_t DrawDrv_GetSolidPixel(void)
+{
+    return 0xFFU;
+}
+
 static uint8_t DrawDrv_GetScrollSourceCol(uint8_t col, uint8_t activeCols)
 {
     uint16_t offset;
@@ -454,6 +459,10 @@ static void DrawDrv_RebuildFrame(void)
             if (g_drawCfg.contentType == DRAWDRV_CONTENT_GLYPH)
             {
                 packed = DrawDrv_GetJluTextPixel(mappedRow, mappedCol);
+            }
+            else if (g_drawCfg.contentType == DRAWDRV_CONTENT_SOLID)
+            {
+                packed = DrawDrv_GetSolidPixel();
             }
             else
             {

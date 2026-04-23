@@ -32,7 +32,7 @@
 #define UART2_S2CFG_INIT_VALUE          0x01U
 #define UART2_S2CON_INIT_VALUE          0x50U
 #define UART2_BAUDRATE_MIN              1200UL
-#define UART2_BAUDRATE_MAX              115200UL
+#define UART2_BAUDRATE_MAX              460800UL
 #define UART2_DMA_PRIORITY              2U
 
 static uint8_t xdata g_uart2RxRing[UART2_RX_RING_SIZE];

@@ -10,6 +10,8 @@
 #include <freertos/task.h>
 #include <esp_network.h>
 #include <esp_log.h>
+#include <esp_netif.h>
+#include <esp_netif_ip_addr.h>
 #include <utility>
 
 #include <font_awesome.h>
@@ -25,6 +27,31 @@ static const char *TAG = "WifiBoard";
 
 // Connection timeout in seconds
 static constexpr int CONNECT_TIMEOUT_SEC = 60;
+
+namespace {
+
+void LogWifiStaIpAddress() {
+    esp_netif_ip_info_t ip_info = {};
+    esp_netif_t* sta_netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+
+    if (sta_netif == nullptr) {
+        ESP_LOGW(TAG, "WiFi STA netif is not ready, skip IP log");
+        return;
+    }
+
+    if (esp_netif_get_ip_info(sta_netif, &ip_info) != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to query WiFi STA IP information");
+        return;
+    }
+
+    ESP_LOGI(TAG,
+             "WiFi STA IP: " IPSTR " gateway=" IPSTR " netmask=" IPSTR,
+             IP2STR(&ip_info.ip),
+             IP2STR(&ip_info.gw),
+             IP2STR(&ip_info.netmask));
+}
+
+}
 
 WifiBoard::WifiBoard() {
     // Create connection timeout timer
@@ -115,6 +142,7 @@ void WifiBoard::OnNetworkEvent(NetworkEvent event, const std::string& data) {
 #endif
             in_config_mode_ = false;
             ESP_LOGI(TAG, "Connected to WiFi: %s", data.c_str());
+            LogWifiStaIpAddress();
             break;
         case NetworkEvent::Scanning:
             ESP_LOGI(TAG, "WiFi scanning");
@@ -146,7 +174,21 @@ void WifiBoard::OnNetworkEvent(NetworkEvent event, const std::string& data) {
 }
 
 void WifiBoard::SetNetworkEventCallback(NetworkEventCallback callback) {
-    network_event_callback_ = std::move(callback);
+    if (!callback) {
+        return;
+    }
+
+    if (!network_event_callback_) {
+        network_event_callback_ = std::move(callback);
+        return;
+    }
+
+    auto previous_callback = std::move(network_event_callback_);
+    network_event_callback_ = [previous_callback = std::move(previous_callback),
+                               callback = std::move(callback)](NetworkEvent event, const std::string& data) {
+        previous_callback(event, data);
+        callback(event, data);
+    };
 }
 
 void WifiBoard::OnWifiConnectTimeout(void* arg) {

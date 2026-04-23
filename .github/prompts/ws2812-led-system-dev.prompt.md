@@ -12,7 +12,7 @@ Current workflow:
 - `AI side`: `External/xiaozhi-esp32/`
 - `LED side`: `STC51/Project/ws2812_driver/`
 - transport: `AI side -> HC-05 -> LED side UART2(P4.2/P4.3)`
-- default HC-05 setup flow: first probe with `AT` at `38400`; if there is still no reply after `3` attempts, switch the local UART directly to `115200` and skip the remaining setup; if the probe succeeds, keep all AT commands and queries at `38400` in strict set-then-query order, bind the AI side to fixed slave address `98:D3:02:96:A2:B1` with `AT+BIND`, then make `AT+RESET` and the local baud switch to `115200` the final two steps, with `XiaoZhi -> WS2812`.
+- default HC-05 setup flow: first probe with `AT` at `38400`; if there is still no reply after `3` attempts, switch the local UART directly to `460800` and skip the remaining setup; if the probe succeeds, keep all AT commands and queries at `38400` in strict set-then-query order, bind the AI side to fixed slave address `98:D3:02:96:A2:B1` with `AT+BIND`, then make `AT+RESET` and the local baud switch to `460800` the final two steps, with `XiaoZhi -> WS2812`.
 - LED-side UART2 should default to DMA-based TX/RX with task-driven batch consumption instead of byte-by-byte UART interrupts.
 
 Read first:
@@ -32,12 +32,19 @@ Requirements:
 4. Preserve protocol consistency between the AI side and the LED side.
 5. If the task touches performance, explain what was optimized and how it was verified.
 6. Run the available validation after code changes.
+7. Keep `SetAction` behavior aligned across `solid`, `pattern`, and `glyph` content; avoid AI-side combinations that the LED-side renderer cannot execute.
+8. Treat DrawDrv as the shared online render path for animated solid, pattern, and glyph actions; direct-frame mode is only for explicit frame or glyph-row uploads.
 
 Default validation:
 
 - Rebuild `STC51/Project/ws2812_driver/ws2812_driver.uvproj` after LED-side source changes.
 - Use `tools/ws2812_dev_cycle.py` for integration work.
 - Use `-RunAi8051BtDebug` when the LED-side Bluetooth path changes.
+
+Integration notes:
+
+- `tools/ws2812_dev_cycle.py` stores per-cycle logs in `debug_snapshots/dev_cycle_logs/`.
+- Prefer checking bounded LED-side serial captures when reviewing Bluetooth behavior changes.
 
 Output format:
 

@@ -80,23 +80,6 @@ static void GpLedAction_EndDirectFrame(void)
     g_gpLedDirectFrameActive = 1U;
 }
 
-static void GpLedAction_RenderSolidFrame(uint8_t r, uint8_t g, uint8_t b, uint8_t brightness)
-{
-    g_gpLedTempR = GpLedAction_ScaleColor(r, brightness);
-    g_gpLedTempG = GpLedAction_ScaleColor(g, brightness);
-    g_gpLedTempB = GpLedAction_ScaleColor(b, brightness);
-
-    GpLedAction_BeginDirectFrame();
-    for (g_gpLedTempRow = 0U; g_gpLedTempRow < GP_MATRIX_HEIGHT; ++g_gpLedTempRow)
-    {
-        for (g_gpLedTempCol = 0U; g_gpLedTempCol < GP_MATRIX_WIDTH; ++g_gpLedTempCol)
-        {
-            WS2812DRV_SetPixelRgbFast(g_gpLedTempRow, g_gpLedTempCol, g_gpLedTempR, g_gpLedTempG, g_gpLedTempB);
-        }
-    }
-    GpLedAction_EndDirectFrame();
-}
-
 static void GpLedAction_RenderRgb332Frame(const uint8_t xdata *frameData, uint8_t brightness)
 {
     GpLedAction_BeginDirectFrame();
@@ -267,20 +250,6 @@ GpMatrixStatusCode GpLedAction_ApplyAction(const GpMatrixActionPayload xdata *pa
         return kGpMatrixStatusOk;
     }
 
-    if (payload->content == kGpMatrixActionContentSolid)
-    {
-        if (payload->effect != kGpMatrixEffectStatic)
-        {
-            return kGpMatrixStatusUnsupported;
-        }
-
-        GpLedAction_RenderSolidFrame(payload->primary_r,
-                                     payload->primary_g,
-                                     payload->primary_b,
-                                     payload->brightness);
-        return kGpMatrixStatusOk;
-    }
-
     if (GpLedAction_IsRenderActionValid(payload) == 0U)
     {
         return kGpMatrixStatusUnsupported;
@@ -309,7 +278,12 @@ GpMatrixStatusCode GpLedAction_ApplyAction(const GpMatrixActionPayload xdata *pa
     g_gpLedRenderCfg.scrollStep = (payload->scroll_step == 0U) ? 1U : payload->scroll_step;
     g_gpLedRenderCfg.animStep = (payload->anim_step == 0U) ? 1U : payload->anim_step;
 
-    if (payload->content == kGpMatrixActionContentPattern)
+    if (payload->content == kGpMatrixActionContentSolid)
+    {
+        g_gpLedRenderCfg.contentType = DRAWDRV_CONTENT_SOLID;
+        DrawDrv_SetRenderConfig(&g_gpLedRenderCfg);
+    }
+    else if (payload->content == kGpMatrixActionContentPattern)
     {
         g_gpLedRenderCfg.contentType = DRAWDRV_CONTENT_PATTERN;
         DrawDrv_SetRenderConfig(&g_gpLedRenderCfg);

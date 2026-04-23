@@ -205,7 +205,7 @@ function Resolve-PythonCommand {
         }
     }
 
-    throw 'Unable to locate a Python interpreter for gp_mcp_endpoint_client.py. Set WS2812_MCP_PYTHON or pass -McpPython.'
+    throw 'Unable to locate a Python interpreter for gp_display_mcp_bridge.py. Set WS2812_MCP_PYTHON or pass -McpPython.'
 }
 
 function Wait-ForHttpJson {
@@ -670,7 +670,7 @@ $script:ToolScriptPath = $PSCommandPath
 $repoRoot = Resolve-Path -Path (Join-Path $PSScriptRoot '..')
 $XiaozhiProject = Set-DefaultPath -CurrentValue $XiaozhiProject -FallbackValue (Join-Path $repoRoot 'External\xiaozhi-esp32')
 $KeilProject = Set-DefaultPath -CurrentValue $KeilProject -FallbackValue (Join-Path $repoRoot 'STC51\Project\ws2812_driver\ws2812_driver.uvproj')
-$McpScript = Set-DefaultPath -CurrentValue $McpScript -FallbackValue (Join-Path $XiaozhiProject 'GP_Port\gp_mcp_endpoint_client.py')
+$McpScript = Set-DefaultPath -CurrentValue $McpScript -FallbackValue (Join-Path $XiaozhiProject 'GP_Port\gp_display_mcp_bridge.py')
 $IdfPath = Set-DefaultPath -CurrentValue $IdfPath -FallbackValue 'S:\Embedded\ESP\v5.4.3\esp-idf'
 $KeilUv4Path = Set-DefaultPath -CurrentValue $KeilUv4Path -FallbackValue 'S:\Embedded\Keil\UV4\UV4.exe'
 

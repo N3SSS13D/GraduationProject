@@ -48,6 +48,7 @@ bool HasBackgroundColorKeyword(const std::string& text);
 
 constexpr std::string_view kVoiceColorAnalyzeAction = "voice_color_analyze";
 constexpr std::string_view kVoiceColorResultAction = "voice_color_result";
+constexpr std::string_view kMatrixPatternRequestAction = "matrix_pattern_request";
 constexpr uint16_t kDefaultDotSize = 28;
 constexpr uint16_t kLargeDotSize = 42;
 constexpr uint16_t kSmallDotSize = 18;
@@ -111,6 +112,8 @@ const char* GetPresetLabel(GpColorDebugPreset preset) {
         return "cross";
     case GpColorDebugPreset::kJluEmblem:
         return "JLU_emblem";
+    case GpColorDebugPreset::kPythonDemo:
+        return "python_demo";
     case GpColorDebugPreset::kScrollSubtitle:
         return "scroll_subtitle";
     case GpColorDebugPreset::kSolid:
@@ -120,10 +123,11 @@ const char* GetPresetLabel(GpColorDebugPreset preset) {
 }
 
 const DebugPresetKeyword* MatchDebugPresetKeyword(const std::string& text) {
-    static const std::array<DebugPresetKeyword, 4> kPresets{{
+    static const std::array<DebugPresetKeyword, 5> kPresets{{
         {"diamond", GpColorDebugPreset::kDiamond, {"菱形", "diamond", "rhombus", "钻石", "菱", ""}},
         {"cross", GpColorDebugPreset::kCross, {"十字", "cross", "plus", "叉", "crosshair", ""}},
         {"JLU_emblem", GpColorDebugPreset::kJluEmblem, {"吉林大学校徽", "吉大校徽", "校徽", "jlu_emblem", "jlu emblem", "emblem"}},
+        {"python_demo", GpColorDebugPreset::kPythonDemo, {"python_demo", "python demo", "像素图", "16x16", "16*16", "图案画板"}},
         {"scroll_subtitle", GpColorDebugPreset::kScrollSubtitle, {"字幕", "滚动字幕", "scroll", "text", "marquee", "滚动"}},
     }};
 
@@ -236,7 +240,7 @@ bool IsVoiceColorIntent(const std::string& transcript) {
     if (MatchDebugPresetKeyword(transcript) != nullptr) {
         return true;
     }
-    return ContainsAnyKeyword(transcript, {"圆点", "颜色", "渐变", "动画", "背景", "底色", "rgb", "dot", "color", "gradient", "pulse", "breath", "background", "菱形", "十字", "字幕", "图案", "scroll", "pattern"});
+    return ContainsAnyKeyword(transcript, {"圆点", "颜色", "渐变", "动画", "背景", "底色", "rgb", "dot", "color", "gradient", "pulse", "breath", "background", "菱形", "十字", "字幕", "图案", "scroll", "pattern", "python", "16x16", "16*16", "像素图"});
 }
 
 uint16_t MatchDotSize(const std::string& transcript) {
@@ -392,6 +396,8 @@ std::optional<GpColorDebugState> ParseRemoteColorState(const cJSON* payload) {
             state.preset = GpColorDebugPreset::kCross;
         } else if (preset_name == "jlu_emblem" || preset_name == "jlu emblem" || preset_name == "jilin university emblem") {
             state.preset = GpColorDebugPreset::kJluEmblem;
+        } else if (preset_name == "python_demo" || preset_name == "python demo" || preset_name == "16x16") {
+            state.preset = GpColorDebugPreset::kPythonDemo;
         } else if (preset_name == "scroll_subtitle" || preset_name == "scroll") {
             state.preset = GpColorDebugPreset::kScrollSubtitle;
         }
@@ -428,10 +434,10 @@ bool ApplyColorDebugState(Display* display, const GpColorDebugState& state, bool
     return true;
 }
 
-std::string BuildVoiceColorAnalyzePayload(const std::string& transcript) {
+std::string BuildColorAnalyzePayload(const std::string& transcript, std::string_view source) {
     cJSON* payload = cJSON_CreateObject();
     cJSON_AddStringToObject(payload, "action", std::string(kVoiceColorAnalyzeAction).c_str());
-    cJSON_AddStringToObject(payload, "source", "stt");
+    cJSON_AddStringToObject(payload, "source", std::string(source).c_str());
     cJSON_AddStringToObject(payload, "transcript", transcript.c_str());
 
     cJSON* format = cJSON_CreateObject();
@@ -457,6 +463,45 @@ std::string BuildVoiceColorAnalyzePayload(const std::string& transcript) {
     return result;
 }
 
+std::string BuildMatrixPatternRequestPayload(const std::string& transcript, std::string_view source) {
+    cJSON* payload = cJSON_CreateObject();
+    cJSON* target = cJSON_CreateObject();
+    cJSON* transport = cJSON_CreateObject();
+    cJSON* service_hints = cJSON_CreateObject();
+    char* json_text = nullptr;
+    std::string result = "{}";
+
+    cJSON_AddStringToObject(payload, "action", std::string(kMatrixPatternRequestAction).c_str());
+    cJSON_AddStringToObject(payload, "source", std::string(source).c_str());
+    cJSON_AddStringToObject(payload, "transcript", transcript.c_str());
+
+    cJSON_AddStringToObject(target, "type", "led_matrix");
+    cJSON_AddNumberToObject(target, "width", GP_MATRIX_WIDTH);
+    cJSON_AddNumberToObject(target, "height", GP_MATRIX_HEIGHT);
+    cJSON_AddStringToObject(target, "pixel_format", "rgb332");
+    cJSON_AddItemToObject(payload, "target", target);
+
+    cJSON_AddStringToObject(transport, "link", "bluetooth_frame_upload");
+    cJSON_AddNumberToObject(transport, "chunk_bytes", GP_MATRIX_MAX_CHUNK_DATA);
+    cJSON_AddBoolToObject(transport, "ack_required", true);
+    cJSON_AddItemToObject(payload, "transport", transport);
+
+    cJSON_AddStringToObject(service_hints, "mcp_render_tool", "self.screen.matrix_16x16.render_prompt");
+    cJSON_AddStringToObject(service_hints, "mcp_frame_tool", "self.screen.matrix_16x16.draw_frame");
+    cJSON_AddStringToObject(service_hints, "mcp_drawing_tool", "self.screen.matrix_16x16.draw_python");
+    cJSON_AddStringToObject(service_hints, "mcp_text_tool", "self.screen.matrix_16x16.show_text");
+    cJSON_AddStringToObject(service_hints, "http_control_endpoint", "/control/matrix_prompt_16x16");
+    cJSON_AddItemToObject(payload, "service_hints", service_hints);
+
+    json_text = cJSON_PrintUnformatted(payload);
+    if (json_text != nullptr) {
+        result = json_text;
+        cJSON_free(json_text);
+    }
+    cJSON_Delete(payload);
+    return result;
+}
+
 void HandleVoiceColorDebugFromStt(Application* app, Display* display, const std::string& transcript) {
     if (!IsVoiceColorIntent(transcript)) {
         return;
@@ -471,7 +516,7 @@ void HandleVoiceColorDebugFromStt(Application* app, Display* display, const std:
         ApplyColorDebugState(display, *local_state, true);
     }
 
-    app->SendCustomMessage(BuildVoiceColorAnalyzePayload(transcript));
+    app->SendColorDebugAnalyze(transcript, "stt");
 }
 
 bool HandleVoiceColorDebugFromCustom(Display* display, const cJSON* payload) {
@@ -1717,6 +1762,39 @@ void Application::SendCustomMessage(const std::string& payload) {
             protocol_->SendCustomMessage(payload);
         }
     });
+}
+
+void Application::SendColorDebugAnalyze(const std::string& transcript, const std::string& source) {
+    if (transcript.empty()) {
+        return;
+    }
+
+    Schedule([transcript]() {
+        auto* display = Board::GetInstance().GetDisplay();
+
+        if (display != nullptr) {
+            display->SetChatMessage("user", transcript.c_str());
+            display->ShowNotification("Touch debug request queued", 1500);
+        }
+    });
+
+    SendCustomMessage(BuildColorAnalyzePayload(transcript, source));
+}
+
+void Application::SendMatrixPatternRequest(const std::string& transcript, const std::string& source) {
+    if (transcript.empty()) {
+        return;
+    }
+
+    Schedule([transcript]() {
+        auto* display = Board::GetInstance().GetDisplay();
+
+        if (display != nullptr) {
+            display->SetChatMessage("user", transcript.c_str());
+            display->ShowNotification("Matrix draw request queued", 1500);
+        }
+    });
+    SendCustomMessage(BuildMatrixPatternRequestPayload(transcript, source));
 }
 
 void Application::SetAecMode(AecMode mode) {

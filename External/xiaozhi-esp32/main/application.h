@@ -117,6 +117,8 @@ public:
         std::string* error_message = nullptr);
     void SendMcpMessage(const std::string& payload);
     void SendCustomMessage(const std::string& payload);
+    void SendColorDebugAnalyze(const std::string& transcript, const std::string& source = "stt");
+    void SendMatrixPatternRequest(const std::string& transcript, const std::string& source = "touch");
     void SetAecMode(AecMode mode);
     AecMode GetAecMode() const { return aec_mode_; }
     void PlaySound(const std::string_view& sound);

@@ -22,7 +22,7 @@
 - 蓝牙传输：`External/xiaozhi-esp32/GP_Port/transport/`
 - 调试界面：`External/xiaozhi-esp32/GP_Port/ui/`
 - 板级接入：`External/xiaozhi-esp32/main/boards/lichuang-dev/`
-- MCP / 截图工具：`External/xiaozhi-esp32/GP_Port/gp_mcp_endpoint_client.py`
+- MCP / 绘图 / 截图桥接：`External/xiaozhi-esp32/GP_Port/gp_display_mcp_bridge.py`
 
 ### LED端构建
 
@@ -66,7 +66,7 @@
 
 1. 打开 `External/xiaozhi-esp32/`
 2. 执行 ESP-IDF 构建与监视
-3. 需要截图或 MCP 联调时运行 `External/xiaozhi-esp32/GP_Port/gp_mcp_endpoint_client.py`
+3. 需要截图、MCP 联调或 `16x16` 绘图/文字预览时运行 `External/xiaozhi-esp32/GP_Port/gp_display_mcp_bridge.py`
 
 ### 联调
 

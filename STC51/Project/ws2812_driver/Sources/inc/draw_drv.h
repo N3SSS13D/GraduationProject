@@ -17,7 +17,8 @@ typedef enum
 typedef enum
 {
 	DRAWDRV_CONTENT_PATTERN = 0,
-	DRAWDRV_CONTENT_GLYPH = 1
+	DRAWDRV_CONTENT_GLYPH = 1,
+	DRAWDRV_CONTENT_SOLID = 2
 } DrawDrv_ContentType_t;
 
 typedef enum

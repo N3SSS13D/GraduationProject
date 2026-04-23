@@ -44,6 +44,9 @@ public:
     /* Send one full RGB332 frame through the current matrix transport. */
     bool ShowRgb332Frame(const uint8_t* frame, size_t length, GpMatrixMode mode = kGpMatrixModeSolidFrame);
 
+    /* Send one built-in 16x16 RGB332 frame preset through the current matrix transport. */
+    bool ShowRgb332FramePreset(GpColorDebugPreset preset);
+
     /* Send one packed glyph-row buffer for subtitle-style rendering. */
     bool ShowGlyphRows(const uint16_t* rows, size_t row_count, uint8_t glyph_count, uint8_t glyph_width, uint8_t glyph_spacing);
 
@@ -88,6 +91,7 @@ private:
     void NotifyLinkStatus(bool online, const std::string& status_text);
     Rgb332Frame BuildFrameForState(DeviceState state) const;
     static const char* CommandShortName(uint8_t command);
+    static const uint8_t* ResolveFramePreset(GpColorDebugPreset preset);
 
     static void FillFrame(Rgb332Frame& frame, uint8_t color);
     static void DrawCross(Rgb332Frame& frame, uint8_t color, uint8_t background);

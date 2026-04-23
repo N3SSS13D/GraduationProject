@@ -223,8 +223,8 @@ static void GpLedMatrixBtDebug_PrintUsage(void)
 {
     printf("[BT_HELP] BT SEND <text>\r\n");
     printf("[BT_HELP] BT STATUS\r\n");
-    printf("[BT_HELP] startup auto setup uses 38400 -> role/name/pswd -> 115200\r\n");
-    printf("[BT_HELP] BT AT+UART=115200,0,0\r\n");
+    printf("[BT_HELP] startup auto setup uses 38400 -> role/name/pswd -> 460800\r\n");
+    printf("[BT_HELP] BT AT+UART=460800,0,0\r\n");
 }
 
 static void GpLedMatrixBtDebug_PrintStatus(const char *tag)
@@ -579,13 +579,13 @@ static void GpLedMatrixBtDebug_RunAutoSetup(void)
 
     if (GpLedMatrixBtDebug_ProbeAtWithRetry() == 0U)
     {
-        if (UART2_SetBaudrate(115200UL) != 0U)
+        if (UART2_SetBaudrate(460800UL) != 0U)
         {
-            printf("[BT_CFG] startup=skip-at local_baud=115200\r\n");
+            printf("[BT_CFG] startup=skip-at local_baud=460800\r\n");
         }
         else
         {
-            printf("[BT_CFG] startup=skip-at local_baud_switch_failed=115200\r\n");
+            printf("[BT_CFG] startup=skip-at local_baud_switch_failed=460800\r\n");
         }
         printf("[BT_CFG] startup=end\r\n");
         return;
@@ -605,7 +605,7 @@ static void GpLedMatrixBtDebug_RunAutoSetup(void)
     delay_ms(GP_MATRIX_BT_COMMAND_GAP_MS);
     GpLedMatrixBtDebug_SendText("AT+PSWD?");
     delay_ms(GP_MATRIX_BT_COMMAND_GAP_MS);
-    GpLedMatrixBtDebug_SendText("AT+UART=115200,0,0");
+    GpLedMatrixBtDebug_SendText("AT+UART=460800,0,0");
     delay_ms(GP_MATRIX_BT_COMMAND_GAP_MS);
     GpLedMatrixBtDebug_SendText("AT+UART?");
     printf("[BT_CFG] startup=end\r\n");
@@ -620,7 +620,7 @@ void GpLedMatrixBtDebug_PrintInit(void)
 {
     PORT2_ClearDebugLeds();
     UART2_SetBtAtMode(0U);
-    printf("[BT_INIT] uart2=P42(RX),P43(TX) at=P41 baud=%lu startup_at=38400 data=115200\r\n",
+    printf("[BT_INIT] uart2=P42(RX),P43(TX) at=P41 baud=%lu startup_at=38400 data=460800\r\n",
            (unsigned long)UART2_GetBaudrate());
     GpLedMatrixBtDebug_PrintStatus("init");
     GpLedMatrixBtDebug_RunAutoSetup();
