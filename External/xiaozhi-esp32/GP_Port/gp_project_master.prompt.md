@@ -28,6 +28,7 @@
 5. 保持 `GP_Port/transport/`、`GP_Port/ui/`、矩阵驱动三者职责清晰。
 6. 修改后直接执行可用构建或联调验证。
 7. 若 `AI端` 构建成功且具备硬件连接条件，默认继续执行 flash；只有在用户明确要求只编译或当前环境无法访问硬件时才跳过。
+8. 若任务涉及 `16x16` 动画，优先使用紧凑 `bitmap_rows + RGB888` 序列；当单帧有效负载可落入单个 `64` 字节 `FrameChunk` 时，优先只在 `FrameCommit` 等待 ACK，以支持更低延迟的 `10 fps` 蓝牙播放。
 
 输出要求：
 
@@ -54,3 +55,4 @@ Rules:
 3. Move solved issues to the shared problem document instead of keeping them in prompts.
 4. Run build or validation steps after code changes.
 5. After an `AI side` build succeeds, continue with flash by default unless the user explicitly requests build-only or the hardware path is unavailable.
+6. For `16x16` animation tasks, prefer compact `bitmap_rows + RGB888` sequences; when a frame fits in one `64`-byte chunk, prefer waiting for ACK only on `FrameCommit` to support lower-latency `10 fps` playback.

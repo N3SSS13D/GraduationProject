@@ -34,6 +34,7 @@ Requirements:
 6. Run the available validation after code changes.
 7. Keep `SetAction` behavior aligned across `solid`, `pattern`, and `glyph` content; avoid AI-side combinations that the LED-side renderer cannot execute.
 8. Treat DrawDrv as the shared online render path for animated solid, pattern, and glyph actions; direct-frame mode is only for explicit frame or glyph-row uploads.
+9. For compact `bitmap_rows + RGB888` animation playback, prefer `10` frames at `100 ms` for `10 fps`; when a frame fits in one `64`-byte `FrameChunk`, prefer waiting for ACK only on `FrameCommit`.
 
 Default validation:
 

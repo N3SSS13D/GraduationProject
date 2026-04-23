@@ -67,6 +67,7 @@ DEFAULT_STARTUP_PREVIEW_READY_WAIT_SECONDS = 15.0
 DEFAULT_STARTUP_PREVIEW_POLL_SECONDS = 1.0
 DEFAULT_STARTUP_PREVIEW_RETRY_COUNT = 2
 DEFAULT_TEXT_FRAME_INTERVAL_MS = 420
+DEFAULT_ANIMATION_FRAME_INTERVAL_MS = 100
 STATUS_RESULT_TEXT_LIMIT = 320
 STATUS_HISTORY_LIMIT = 8
 MATRIX_WIDTH = 16
@@ -76,6 +77,7 @@ MAX_DRAWING_SOURCE_CHARS = 4000
 MAX_DRAWING_AST_NODES = 512
 MAX_DRAWING_RANGE_STEPS = 256
 MAX_TEXT_FRAME_COUNT = 48
+MAX_ANIMATION_FRAME_COUNT = 10
 LOCAL_MCP_SERVER_NAME = "gp-display-mcp-bridge"
 
 DRAW_FRAME_TOOL_NAMES = frozenset({
@@ -85,7 +87,10 @@ DRAW_FRAME_TOOL_NAMES = frozenset({
 PROMPT_RENDER_TOOL_NAMES = frozenset({"self.screen.matrix_16x16.render_prompt"})
 PYTHON_DRAW_TOOL_NAMES = frozenset({"self.screen.matrix_16x16.draw_python"})
 TEXT_SEQUENCE_TOOL_NAMES = frozenset({"self.screen.matrix_16x16.show_text"})
-DEBUG_WS_DELIVERY_TOOL_NAMES = DRAW_FRAME_TOOL_NAMES | PYTHON_DRAW_TOOL_NAMES | TEXT_SEQUENCE_TOOL_NAMES
+ANIMATION_SEQUENCE_TOOL_NAMES = frozenset({"self.screen.matrix_16x16.draw_animation"})
+DEBUG_WS_DELIVERY_TOOL_NAMES = (
+    DRAW_FRAME_TOOL_NAMES | PYTHON_DRAW_TOOL_NAMES | TEXT_SEQUENCE_TOOL_NAMES | ANIMATION_SEQUENCE_TOOL_NAMES
+)
 HTTP_PREVIEW_FALLBACK_TOOL_NAMES = DRAW_FRAME_TOOL_NAMES | PYTHON_DRAW_TOOL_NAMES
 
 ALLOWED_DRAW_HELPER_NAMES = frozenset({
@@ -1058,6 +1063,68 @@ def render_python_source_to_matrix_frame(
     return frame_payload
 
 
+def render_bitmap_animation_frame_sequence(
+    bitmap_rows_hex_list: Sequence[str],
+    primary_rgb888: str = "",
+    background_rgb888: str = "",
+    frame_interval_ms: int = DEFAULT_ANIMATION_FRAME_INTERVAL_MS,
+    source: str = "mcp_animation",
+    transcript: str = "",
+) -> Dict[str, Any]:
+    if not bitmap_rows_hex_list:
+        raise ValueError("bitmap_rows_hex_list is required")
+    if len(bitmap_rows_hex_list) > MAX_ANIMATION_FRAME_COUNT:
+        raise ValueError(f"bitmap_rows_hex_list is too long; keep it under {MAX_ANIMATION_FRAME_COUNT} frames")
+    if frame_interval_ms < 60 or frame_interval_ms > 5000:
+        raise ValueError("frame_interval_ms must be between 60 and 5000")
+
+    resolved_primary_rgb888 = primary_rgb888 or "#F5F5F5"
+    resolved_background_rgb888 = background_rgb888 or "#000000"
+    parse_rgb888(resolved_primary_rgb888)
+    parse_rgb888(resolved_background_rgb888)
+
+    frames: list[Dict[str, Any]] = []
+    total_frames = len(bitmap_rows_hex_list)
+    transcript_text = transcript or f"play {total_frames}-frame animation"
+
+    for frame_index, bitmap_rows_hex in enumerate(bitmap_rows_hex_list):
+        normalized_bitmap_rows_hex = "".join(ch for ch in str(bitmap_rows_hex) if ch.strip())
+
+        if len(normalized_bitmap_rows_hex) != 64:
+            raise ValueError("Each bitmap_rows_hex_list entry must contain exactly 64 hex characters")
+        int(normalized_bitmap_rows_hex, 16)
+
+        bitmap_rows = [int(normalized_bitmap_rows_hex[index:index + 4], 16) for index in range(0, 64, 4)]
+        frame_payload = build_matrix_frame_payload_from_bitmap_rows(
+            bitmap_rows=bitmap_rows,
+            primary_rgb888=resolved_primary_rgb888,
+            background_rgb888=resolved_background_rgb888,
+            source=source,
+            transcript=transcript_text,
+            content_type="animation",
+            frame_index=frame_index,
+            frame_count=total_frames,
+            label="animation_frame",
+        )
+        frames.append(frame_payload)
+
+    return {
+        "data_format": "matrix_frame_sequence_v1",
+        "content_type": "animation",
+        "width": MATRIX_WIDTH,
+        "height": MATRIX_HEIGHT,
+        "frame_interval_ms": int(frame_interval_ms),
+        "frame_count": total_frames,
+        "primary_rgb888": format_rgb888(parse_rgb888(resolved_primary_rgb888)),
+        "background_rgb888": format_rgb888(parse_rgb888(resolved_background_rgb888)),
+        "frames": frames,
+        "source": source,
+        "transcript": transcript_text,
+        "applied": True,
+        "tool_name": "self.screen.matrix_16x16.draw_animation",
+    }
+
+
 def render_text_glyph_to_mask_image(glyph: str) -> Image.Image:
     if len(glyph) != 1:
         raise ValueError("Each glyph must be exactly one character long")
@@ -1464,6 +1531,41 @@ def build_tool_list() -> list[Dict[str, Any]]:
                     "transcript": {"type": "string"},
                 },
                 "required": ["text"],
+            },
+        },
+        {
+            "name": "self.screen.matrix_16x16.draw_animation",
+            "description": "Transmit a compact 16x16 bitmap animation sequence for LED-side Bluetooth playback. Prefer 10 frames at 100 ms for a 10 fps effect.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "bitmap_rows_hex_list": {
+                        "type": "array",
+                        "description": "An array of compact 16x16 bitmap masks. Each entry must contain exactly 64 hex characters.",
+                        "minItems": 1,
+                        "maxItems": 10,
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "frame_interval_ms": {
+                        "type": "integer",
+                        "minimum": 60,
+                        "maximum": 5000,
+                        "description": "Delay between consecutive frames. Use 100 for a 10 fps animation.",
+                    },
+                    "primary_rgb888": {
+                        "type": "string",
+                        "description": "Foreground color in #RRGGBB. All set bits use this color.",
+                    },
+                    "background_rgb888": {
+                        "type": "string",
+                        "description": "Background color in #RRGGBB. Empty pixels use this color.",
+                    },
+                    "source": {"type": "string"},
+                    "transcript": {"type": "string"},
+                },
+                "required": ["bitmap_rows_hex_list"],
             },
         },
         {
@@ -1967,6 +2069,16 @@ def handle_local_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Dict[st
             background_rgb888=str(arguments.get("background_rgb888", "#000000")),
             frame_interval_ms=int(arguments.get("frame_interval_ms", DEFAULT_TEXT_FRAME_INTERVAL_MS)),
             source=str(arguments.get("source", "mcp_text")),
+            transcript=str(arguments.get("transcript", "")),
+        )
+
+    if tool_name in ANIMATION_SEQUENCE_TOOL_NAMES:
+        return render_bitmap_animation_frame_sequence(
+            bitmap_rows_hex_list=arguments.get("bitmap_rows_hex_list", []),
+            primary_rgb888=str(arguments.get("primary_rgb888", "#F5F5F5")),
+            background_rgb888=str(arguments.get("background_rgb888", "#000000")),
+            frame_interval_ms=int(arguments.get("frame_interval_ms", DEFAULT_ANIMATION_FRAME_INTERVAL_MS)),
+            source=str(arguments.get("source", "mcp_animation")),
             transcript=str(arguments.get("transcript", "")),
         )
 

@@ -98,6 +98,11 @@ private:
                      bool ack_required = false,
                      bool track_activity = true);
     bool SendState(DeviceState state, const Rgb332Frame& frame, GpMatrixMode mode = kGpMatrixModeSolidFrame);
+    bool SendStagedFrame(uint8_t frame_format,
+                         const uint8_t* frame_data,
+                         size_t frame_length,
+                         GpMatrixMode mode,
+                         bool ack_each_stage);
     bool SendDebugLedCommandLocked(uint8_t led_index, bool ack_required, bool track_activity);
     std::string BuildHeartbeatStatusText(uint8_t led_index) const;
     std::string BuildStatusText(bool online,

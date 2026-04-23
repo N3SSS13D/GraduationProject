@@ -37,6 +37,7 @@ model: "GPT-5 (copilot)"
 7. 修改源码后直接执行可用验证，不停留在建议层。
 8. 统一维护 `solid / pattern / glyph` 三类 `SetAction` 行为，避免 AI端 能发但 LED端 不能执行的动作组合。
 9. 将 DrawDrv 视为在线动画渲染主路径；直接帧写入仅用于显式帧传输或字模行传输。
+10. 若任务涉及紧凑 `bitmap_rows + RGB888` 动画播放，优先采用 `10` 帧、`100 ms` 的 `10 fps` 配置；当单帧能落入单个 `64` 字节 `FrameChunk` 时，优先只在 `FrameCommit` 等待 ACK。
 
 默认验证：
 

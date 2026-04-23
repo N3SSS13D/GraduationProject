@@ -285,25 +285,34 @@ bool GpLedMatrixEsp32::ShowRgb332Frame(const uint8_t* frame, size_t length, GpMa
         return false;
     }
 
+    return SendStagedFrame(GP_MATRIX_PAYLOAD_FORMAT_RGB332, frame, length, mode, true);
+}
+
+bool GpLedMatrixEsp32::SendStagedFrame(uint8_t frame_format,
+                                       const uint8_t* frame_data,
+                                       size_t frame_length,
+                                       GpMatrixMode mode,
+                                       bool ack_each_stage) {
     uint8_t start_payload[GP_MATRIX_FRAME_START_PAYLOAD_BYTES] = {
-        GP_MATRIX_PAYLOAD_FORMAT_RGB332,
+        frame_format,
         GP_MATRIX_WIDTH,
         GP_MATRIX_HEIGHT,
-        static_cast<uint8_t>(length & 0xffU),
-        static_cast<uint8_t>((length >> 8) & 0xffU),
+        static_cast<uint8_t>(frame_length & 0xffU),
+        static_cast<uint8_t>((frame_length >> 8) & 0xffU),
     };
-    /* Keep single-frame uploads deterministic: each stage waits for the LED side ACK. */
-    if (!SendCommand(kGpMatrixCommandFrameStart, start_payload, sizeof(start_payload), true)) {
+
+    if (!SendCommand(kGpMatrixCommandFrameStart, start_payload, sizeof(start_payload), ack_each_stage)) {
         return false;
     }
 
-    for (size_t offset = 0; offset < length; offset += GP_MATRIX_MAX_CHUNK_DATA) {
-        const auto chunk_size = static_cast<uint8_t>(std::min(length - offset, static_cast<size_t>(GP_MATRIX_MAX_CHUNK_DATA)));
+    for (size_t offset = 0; offset < frame_length; offset += GP_MATRIX_MAX_CHUNK_DATA) {
+        const auto chunk_size = static_cast<uint8_t>(std::min(frame_length - offset,
+                                                              static_cast<size_t>(GP_MATRIX_MAX_CHUNK_DATA)));
         std::vector<uint8_t> payload(sizeof(GpMatrixFrameChunkPrefix) + chunk_size);
         payload[0] = static_cast<uint8_t>(offset / GP_MATRIX_MAX_CHUNK_DATA);
         payload[1] = chunk_size;
-        std::memcpy(payload.data() + sizeof(GpMatrixFrameChunkPrefix), frame + offset, chunk_size);
-        if (!SendCommand(kGpMatrixCommandFrameChunk, payload.data(), payload.size(), true)) {
+        std::memcpy(payload.data() + sizeof(GpMatrixFrameChunkPrefix), frame_data + offset, chunk_size);
+        if (!SendCommand(kGpMatrixCommandFrameChunk, payload.data(), payload.size(), ack_each_stage)) {
             return false;
         }
     }
@@ -333,32 +342,12 @@ bool GpLedMatrixEsp32::ShowBitmapFrame(const uint16_t* bitmap_rows,
     WriteRgb888(frame_payload.data() + GP_MATRIX_BITMAP_ROWS_BYTES, primary_rgb888);
     WriteRgb888(frame_payload.data() + GP_MATRIX_BITMAP_ROWS_BYTES + 3U, background_rgb888);
 
-    uint8_t start_payload[GP_MATRIX_FRAME_START_PAYLOAD_BYTES] = {
-        GP_MATRIX_PAYLOAD_FORMAT_BITMAP_RGB888,
-        GP_MATRIX_WIDTH,
-        GP_MATRIX_HEIGHT,
-        static_cast<uint8_t>(frame_payload.size() & 0xFFU),
-        static_cast<uint8_t>((frame_payload.size() >> 8) & 0xFFU),
-    };
-    if (!SendCommand(kGpMatrixCommandFrameStart, start_payload, sizeof(start_payload), true)) {
-        return false;
-    }
-
-    /* Compact bitmap uploads stay on the same ACK-gated frame path as full RGB332 frames. */
-    for (size_t offset = 0; offset < frame_payload.size(); offset += GP_MATRIX_MAX_CHUNK_DATA) {
-        const auto chunk_size = static_cast<uint8_t>(
-            std::min(frame_payload.size() - offset, static_cast<size_t>(GP_MATRIX_MAX_CHUNK_DATA)));
-        std::vector<uint8_t> payload(sizeof(GpMatrixFrameChunkPrefix) + chunk_size);
-        payload[0] = static_cast<uint8_t>(offset / GP_MATRIX_MAX_CHUNK_DATA);
-        payload[1] = chunk_size;
-        std::memcpy(payload.data() + sizeof(GpMatrixFrameChunkPrefix), frame_payload.data() + offset, chunk_size);
-        if (!SendCommand(kGpMatrixCommandFrameChunk, payload.data(), payload.size(), true)) {
-            return false;
-        }
-    }
-
-    uint8_t mode_payload[1] = {static_cast<uint8_t>(mode)};
-    return SendCommand(kGpMatrixCommandFrameCommit, mode_payload, sizeof(mode_payload), true);
+    /* Compact bitmap frames fit in one chunk, so only the final commit waits for an ACK. */
+    return SendStagedFrame(GP_MATRIX_PAYLOAD_FORMAT_BITMAP_RGB888,
+                           frame_payload.data(),
+                           frame_payload.size(),
+                           mode,
+                           false);
 }
 
 bool GpLedMatrixEsp32::ShowGlyphRows(const uint16_t* rows, size_t row_count, uint8_t glyph_count, uint8_t glyph_width, uint8_t glyph_spacing) {

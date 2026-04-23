@@ -22,10 +22,13 @@ Primary tool for most custom drawings.
 2. `self.screen.matrix_16x16.show_text`
 Use when the request is naturally text and should become a short frame sequence.
 
-3. `self.screen.matrix_16x16.draw_frame`
+3. `self.screen.matrix_16x16.draw_animation`
+Use when you already have a compact `bitmap_rows_hex` sequence and want a LED-side animation, especially `10` frames at `100 ms` for `10 fps` playback.
+
+4. `self.screen.matrix_16x16.draw_frame`
 Use when you already have `frame_rgb332_hex` or `bitmap_rows_hex`.
 
-4. `self.screen.matrix_16x16.render_prompt`
+5. `self.screen.matrix_16x16.render_prompt`
 Legacy fallback for vague natural-language prompts when you do not want to author draw code directly.
 
 ## Shared Rules
@@ -212,6 +215,32 @@ Rules:
 - frames are sent one by one to `AI端` through the debug websocket when connected
 - `frame_interval_ms` controls the interval between frames
 
+## `self.screen.matrix_16x16.draw_animation`
+
+Use this when you already have a compact bitmap sequence that should play on the `LED端`.
+
+Example:
+
+```json
+{
+  "bitmap_rows_hex_list": [
+    "018003c007e00ff01ff83ffc7ffe3ffc1ff80ff007e003c00180",
+    "00c001e003f007f80ffc1ffe3fff1ffe0ffc07f003f001e000c0"
+  ],
+  "frame_interval_ms": 100,
+  "primary_rgb888": "#3DDC97",
+  "background_rgb888": "#000000",
+  "source": "mcp_animation",
+  "transcript": "play a 10 fps pulse animation"
+}
+```
+
+Rules:
+
+- each `bitmap_rows_hex_list` entry must contain exactly `64` hex characters
+- prefer `10` frames and `100 ms` for a `10 fps` effect
+- this tool is optimized for the compact `bitmap_rows + RGB888` Bluetooth path to the `LED端`
+
 ## `self.screen.matrix_16x16.draw_frame`
 
 Use this when you already have frame data.
@@ -304,20 +333,49 @@ Example:
 }
 ```
 
+### Animation Sequence
+
+`draw_animation` returns:
+
+```json
+{
+  "data_format": "matrix_frame_sequence_v1",
+  "content_type": "animation",
+  "frame_interval_ms": 100,
+  "frame_count": 10,
+  "frames": [
+    {
+      "data_format": "matrix_frame_v1",
+      "content_type": "animation",
+      "frame_index": 0,
+      "frame_count": 10,
+      "frame_rgb332_hex": "<512 hex chars>",
+      "bitmap_rows_hex": "<64 hex chars>",
+      "primary_rgb888": "#3DDC97",
+      "background_rgb888": "#000000"
+    }
+  ],
+  "tool_name": "self.screen.matrix_16x16.draw_animation",
+  "applied": true
+}
+```
+
 ## LLM Calling Checklist
 
 1. If you need a custom pattern, start with `self.screen.matrix_16x16.draw_python`.
 2. Use `python_source` for readable imperative steps.
 3. Use `eval_source` for compact expression-based drawing logic.
-4. If you already have a bitmap mask, skip code generation and call `draw_frame`.
-5. If the request is text, call `show_text`.
-6. Always provide explicit colors for reproducible output.
-7. Keep generated output bounded to one `16x16` frame unless text playback is explicitly needed.
+4. If you need a LED-side animation sequence, call `draw_animation` with compact bitmap masks.
+5. If you already have a bitmap mask, skip code generation and call `draw_frame`.
+6. If the request is text, call `show_text`.
+7. Always provide explicit colors for reproducible output.
+8. Keep generated output bounded to one `16x16` frame unless text or animation playback is explicitly needed.
 
 ## Delivery Notes
 
 - Single-frame tools prefer debug websocket delivery when available.
 - Single-frame tools can fall back to the existing HTTP preview flow.
-- Text display is intended to use the debug websocket path.
+- Text and animation playback are intended to use the debug websocket path.
 - After the `AI端` receives `matrix_pattern_result`, it should forward `bitmap_rows + RGB888` to the `LED端` over Bluetooth using the compact frame format instead of expanding to a full RGB332 frame.
 - Keep Bluetooth `FrameChunk` sizing aligned with the shared protocol constant: `64` bytes on both the `AI端` and `LED端`.
+- Compact bitmap frames are only `38` bytes, so the `AI端` may send `FrameStart` and `FrameChunk` without waiting for intermediate ACKs and rely on the final `FrameCommit` ACK for low-latency animation playback.

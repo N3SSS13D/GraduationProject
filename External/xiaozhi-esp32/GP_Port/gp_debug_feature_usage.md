@@ -133,12 +133,12 @@ python External/xiaozhi-esp32/GP_Port/gp_display_mcp_bridge.py
 - 以本地 MCP Server 方式接入桥接端。
 - 同时启动本地调试 WebSocket Server，默认监听 `ws://<host>:8766/debug`，供 `AI端` 主动连接。
 - 同时启动本地 HTTP 端点：`/snapshot`、`/control/snapshot`、`/control/matrix_16x16`、`/control/matrix_prompt_16x16`、`/control/device_preview`、`/status`。
-- 对外暴露更适合 LLM 直接理解的 MCP 工具：`self.screen.matrix_16x16.draw_frame`、`self.screen.matrix_16x16.draw_python`、`self.screen.matrix_16x16.show_text`。
+- 对外暴露更适合 LLM 直接理解的 MCP 工具：`self.screen.matrix_16x16.draw_frame`、`self.screen.matrix_16x16.draw_python`、`self.screen.matrix_16x16.show_text`、`self.screen.matrix_16x16.draw_animation`。
 - 设备侧 `S` 按键把 PNG 直接上传到 `/snapshot`。
 - 调试菜单触摸按钮不再走旧的 LLM/MCP 触摸分析链路；其中 `Draw` 按键会通过独立 debug websocket 向主机发起请求，由主机随机选择 `16x16` 图案并返回位图数据，再由 `AI端` 本地绘制到 `Preview` 区域，并继续通过蓝牙把紧凑 `bitmap + RGB888` 图案转发到 `LED端` 显示。
 - 语音侧若是自由 `16x16` 绘图请求、且不能直接映射到本地现有预设，则会走 `matrix_pattern_request` 自定义消息链路，不需要先点一次 `Draw` 再开始绘图。
 - 主机侧可通过 `/control/snapshot` 请求脚本调用设备 MCP 工具 `self.screen.debug_snapshot.capture`。
-- 主机侧也可通过 MCP 直接调用 `self.screen.matrix_16x16.draw_python` 生成任意 `16x16` 图案，或调用 `self.screen.matrix_16x16.show_text` 逐帧显示文字。
+- 主机侧也可通过 MCP 直接调用 `self.screen.matrix_16x16.draw_python` 生成任意 `16x16` 图案，调用 `self.screen.matrix_16x16.show_text` 逐帧显示文字，或调用 `self.screen.matrix_16x16.draw_animation` 以紧凑 `bitmap_rows_hex` 序列生成 `10 fps` 动画并继续通过蓝牙转发到 `LED端`。
 - 主机侧也可通过 `/control/device_preview` 按 `device_ip` 把本地 PNG/JPEG 直接发到设备 `POST /debug/preview_image`，设备收到后会在二级菜单预览卡片中显示。
 - 脚本会持续打印 MCP 状态、debug websocket 状态、最近一次工具调用、最近一次主机控制调用、最近保存路径和最近错误；`GET /status` 还会返回最近一次调用是否成功、结果摘要和最近调用历史。
 - 图片默认保存到项目根目录 `debug_snapshots/`。
