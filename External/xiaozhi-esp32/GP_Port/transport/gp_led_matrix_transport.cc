@@ -21,7 +21,7 @@ namespace {
 constexpr int kBtUartRxBufferBytes = 1024;
 constexpr int kBtUartTxBufferBytes = 1024;
 constexpr int kBtUartEventQueueLength = 16;
-constexpr int kBtPacketQueueLength = 8;
+constexpr int kBtPacketQueueLength = 16;
 constexpr uint32_t kBtRxTaskStackWords = 4096;
 constexpr UBaseType_t kBtRxTaskPriority = 5;
 constexpr size_t kBtReadChunkBytes = 64;
@@ -79,6 +79,10 @@ void LogRxPacket(const uint8_t* data, size_t length) {
              static_cast<unsigned int>(payload_length),
              static_cast<unsigned int>(length));
     ESP_LOG_BUFFER_HEX_LEVEL(TAG, data, length, ESP_LOG_INFO);
+}
+
+bool IsReplyPacket(const GpMatrixRxPacket& packet) {
+    return (packet.data[3] == kGpMatrixCommandStatus) || (packet.data[3] == kGpMatrixCommandError);
 }
 
 class GpMatrixBtUartTransport final : public GpMatrixTransport {
@@ -277,6 +281,7 @@ private:
         uint8_t rx_chunk[kBtReadChunkBytes];
         int bytes_read;
         GpMatrixRxPacket packet = {};
+        GpMatrixRxPacket stale_packet = {};
 
         while (true) {
             bytes_read = uart_read_bytes(uart_port_, rx_chunk, sizeof(rx_chunk), 0);
@@ -287,10 +292,25 @@ private:
             rx_buffer_.insert(rx_buffer_.end(), rx_chunk, rx_chunk + bytes_read);
 
             while (TryExtractPacket(&packet)) {
-                if ((packet_queue_ == nullptr) || (xQueueSend(packet_queue_, &packet, 0) != pdTRUE)) {
-                    ESP_LOGW(TAG, "HC-05 UART packet queue full, dropping packet len=%u",
+                if (packet_queue_ == nullptr) {
+                    ESP_LOGW(TAG, "HC-05 UART packet queue unavailable, dropping packet len=%u",
                              static_cast<unsigned int>(packet.length));
+                    continue;
                 }
+
+                if (xQueueSend(packet_queue_, &packet, 0) == pdTRUE) {
+                    continue;
+                }
+
+                if (IsReplyPacket(packet) && (xQueueReceive(packet_queue_, &stale_packet, 0) == pdTRUE)) {
+                    if (xQueueSend(packet_queue_, &packet, 0) == pdTRUE) {
+                        continue;
+                    }
+                }
+
+                ESP_LOGW(TAG, "HC-05 UART packet queue full, dropping packet len=%u",
+                         static_cast<unsigned int>(packet.length));
+                break;
             }
         }
     }

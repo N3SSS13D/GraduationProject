@@ -58,6 +58,12 @@ struct DebugMenuLayout {
     int right_x = 0;
 };
 
+struct PreviewSlotLayout {
+    lv_coord_t left = 0;
+    lv_coord_t top = 0;
+    lv_coord_t size = kMatrixPreviewGridSize;
+};
+
 void ApplyDebugTextStyle(lv_obj_t* obj, uint32_t color,
     lv_text_align_t align = LV_TEXT_ALIGN_LEFT, uint16_t zoom = 220) {
     lv_obj_set_style_text_color(obj, lv_color_hex(color), 0);
@@ -111,6 +117,28 @@ int ClampDotSizeToPreview(lv_obj_t* panel, int dot_size) {
 
     /* Keep the preview fully inside the submenu's reduced content area. */
     return std::clamp(dot_size, kDebugDotMinSize, std::min({kDebugDotMaxSize, width_limit, height_limit}));
+}
+
+PreviewSlotLayout ComputePreviewSlotLayout(lv_obj_t* panel) {
+    PreviewSlotLayout layout = {};
+    lv_coord_t content_width;
+    lv_coord_t content_height;
+    lv_coord_t available_top;
+    lv_coord_t available_height;
+
+    if (panel == nullptr) {
+        return layout;
+    }
+
+    content_width = lv_obj_get_content_width(panel);
+    content_height = lv_obj_get_content_height(panel);
+    layout.size = kMatrixPreviewGridSize;
+    layout.left = std::max<lv_coord_t>(content_width - kMatrixPreviewRightInset - layout.size,
+                                       kDotLeftInset + kDebugDotMaxSize + kDebugMenuContentGap);
+    available_top = kDebugPreviewImageTop;
+    available_height = std::max<lv_coord_t>(content_height - available_top - 8, layout.size);
+    layout.top = available_top + (available_height - layout.size) / 2;
+    return layout;
 }
 
 const char* GetPresetName(GpColorDebugPreset preset) {
@@ -281,9 +309,8 @@ void GpDebugLcdDisplay::SetPreviewImage(std::unique_ptr<LvglImage> image) {
 
     if (!has_image || (preview_image_cached_ == nullptr)) {
         lv_obj_add_flag(debug_image_preview_, LV_OBJ_FLAG_HIDDEN);
-        if (debug_matrix_preview_ == nullptr || !has_matrix_bitmap_preview_) {
-            lv_obj_remove_flag(debug_dot_, LV_OBJ_FLAG_HIDDEN);
-        }
+        lv_obj_remove_flag(debug_dot_, LV_OBJ_FLAG_HIDDEN);
+        UpdateDotPlacement(current_state_.dot_size_px);
         if (debug_menu_visible_) {
             RefreshAnimatedDot();
         }
@@ -291,13 +318,11 @@ void GpDebugLcdDisplay::SetPreviewImage(std::unique_ptr<LvglImage> image) {
     }
 
     has_matrix_bitmap_preview_ = false;
-    if (debug_matrix_preview_ != nullptr) {
-        lv_obj_add_flag(debug_matrix_preview_, LV_OBJ_FLAG_HIDDEN);
-    }
     lv_image_set_src(debug_image_preview_, preview_image_cached_->image_dsc());
     UpdatePreviewImagePlacement();
     lv_obj_remove_flag(debug_image_preview_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(debug_dot_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(debug_dot_, LV_OBJ_FLAG_HIDDEN);
+    UpdateDotPlacement(current_state_.dot_size_px);
 }
 
 void GpDebugLcdDisplay::CreateMenuEntryButton() {
@@ -467,8 +492,6 @@ void GpDebugLcdDisplay::CreateDebugOverlay() {
     lv_obj_set_style_border_width(debug_matrix_preview_, 1, 0);
     lv_obj_set_style_border_color(debug_matrix_preview_, lv_color_hex(0x334155), 0);
     lv_obj_clear_flag(debug_matrix_preview_, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(debug_matrix_preview_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_align(debug_matrix_preview_, LV_ALIGN_TOP_RIGHT, -kMatrixPreviewRightInset, kMatrixPreviewTop);
 
     for (size_t index = 0; index < debug_matrix_pixels_.size(); ++index) {
         const int row = static_cast<int>(index / 16U);
@@ -485,6 +508,7 @@ void GpDebugLcdDisplay::CreateDebugOverlay() {
         debug_matrix_pixels_[index] = pixel;
     }
 
+    UpdatePreviewImagePlacement();
     UpdateDotPlacement(current_state_.dot_size_px);
     RefreshAnimatedDot();
 }
@@ -793,8 +817,8 @@ void GpDebugLcdDisplay::ApplyMatrixBitmapPreview(const std::array<uint16_t, 16>&
         }
     }
 
-    lv_obj_remove_flag(debug_matrix_preview_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(debug_dot_, LV_OBJ_FLAG_HIDDEN);
+    UpdatePreviewImagePlacement();
     UpdateDotPlacement(current_state_.dot_size_px);
     if (debug_menu_visible_) {
         RefreshAnimatedDot();
@@ -1107,7 +1131,10 @@ std::string GpDebugLcdDisplay::BuildTouchCommandTranscript(TouchAdjust adjust) c
 }
 
 void GpDebugLcdDisplay::UpdateDotPlacement(int dot_size) {
-    int available_height;
+    const PreviewSlotLayout layout = ComputePreviewSlotLayout(debug_preview_panel_);
+    lv_coord_t dot_left;
+    lv_coord_t dot_top;
+    lv_coord_t dot_region_width;
 
     if (debug_dot_ == nullptr) {
         return;
@@ -1118,29 +1145,34 @@ void GpDebugLcdDisplay::UpdateDotPlacement(int dot_size) {
         return;
     }
 
-    if ((debug_matrix_preview_ != nullptr) && has_matrix_bitmap_preview_) {
-        available_height = lv_obj_get_content_height(debug_preview_panel_) - kDebugPreviewTopInset;
-        available_height = std::max(available_height, dot_size);
-        lv_obj_align(debug_dot_, LV_ALIGN_TOP_LEFT, kDotLeftInset, kDebugPreviewTopInset + (available_height - dot_size) / 2);
-        return;
-    }
-
-    available_height = lv_obj_get_content_height(debug_preview_panel_) - kDebugPreviewTopInset;
-    available_height = std::max(available_height, dot_size);
-    lv_obj_align(debug_dot_, LV_ALIGN_TOP_MID, 0, kDebugPreviewTopInset + (available_height - dot_size) / 2);
+    dot_region_width = std::max<lv_coord_t>(layout.left - kDebugMenuContentGap, dot_size + kDotLeftInset);
+    dot_left = std::max<lv_coord_t>((dot_region_width - dot_size) / 2, kDotLeftInset);
+    dot_top = layout.top + (layout.size - dot_size) / 2;
+    lv_obj_set_pos(debug_dot_, dot_left, dot_top);
 }
 
 void GpDebugLcdDisplay::UpdatePreviewImagePlacement() {
     const lv_img_dsc_t* img_dsc = nullptr;
+    const PreviewSlotLayout layout = ComputePreviewSlotLayout(debug_preview_panel_);
     lv_coord_t available_width;
     lv_coord_t available_height;
     lv_coord_t image_width;
     lv_coord_t image_height;
+    lv_coord_t scaled_width;
+    lv_coord_t scaled_height;
     lv_coord_t zoom_w;
     lv_coord_t zoom_h;
     lv_coord_t zoom;
 
-    if ((debug_preview_panel_ == nullptr) || (debug_image_preview_ == nullptr) || (preview_image_cached_ == nullptr)) {
+    if ((debug_preview_panel_ == nullptr) || (debug_image_preview_ == nullptr)) {
+        return;
+    }
+
+    if (debug_matrix_preview_ != nullptr) {
+        lv_obj_set_pos(debug_matrix_preview_, layout.left, layout.top);
+    }
+
+    if (preview_image_cached_ == nullptr) {
         return;
     }
 
@@ -1151,8 +1183,8 @@ void GpDebugLcdDisplay::UpdatePreviewImagePlacement() {
         return;
     }
 
-    available_width = lv_obj_get_content_width(debug_preview_panel_) - 24;
-    available_height = lv_obj_get_content_height(debug_preview_panel_) - kDebugPreviewImageTop - 8;
+    available_width = std::max<lv_coord_t>(layout.size - 8, 16);
+    available_height = std::max<lv_coord_t>(layout.size - 8, 16);
     available_width = std::max<lv_coord_t>(available_width, 16);
     available_height = std::max<lv_coord_t>(available_height, 16);
     image_width = static_cast<lv_coord_t>(img_dsc->header.w);
@@ -1163,7 +1195,12 @@ void GpDebugLcdDisplay::UpdatePreviewImagePlacement() {
     zoom = std::max<lv_coord_t>(zoom, 16);
 
     lv_image_set_scale(debug_image_preview_, zoom);
-    lv_obj_align(debug_image_preview_, LV_ALIGN_TOP_MID, 0, kDebugPreviewImageTop);
+    scaled_width = (image_width * zoom) / 256;
+    scaled_height = (image_height * zoom) / 256;
+    lv_obj_set_pos(debug_image_preview_,
+                   layout.left + (layout.size - scaled_width) / 2,
+                   layout.top + (layout.size - scaled_height) / 2);
+    lv_obj_move_foreground(debug_image_preview_);
 }
 
 void GpDebugLcdDisplay::OnMenuButtonEvent(lv_event_t* event) {

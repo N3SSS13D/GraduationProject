@@ -43,7 +43,7 @@
 本地 Python MCP 脚本已经补齐三条更适合 LLM 理解的主机侧能力：
 
 1. `self.screen.matrix_16x16.draw_python`
-作用：使用受限 Python 绘图语句直接生成一帧统一 `16x16` 图像结果，并返回 `frame_rgb332_hex + bitmap_rows_hex`。
+作用：使用受限 Python 绘图语句或受限 `eval()` 表达式直接生成一帧统一 `16x16` 图像结果，并返回 `frame_rgb332_hex + bitmap_rows_hex`。
 
 2. `self.screen.matrix_16x16.show_text`
 作用：把文字转成 `16x16` 单帧序列，并按统一格式逐帧显示到 `AI端` 预览区域。
@@ -62,7 +62,7 @@ curl -X POST http://127.0.0.1:8765/control/matrix_prompt_16x16 \
 ### 接入建议
 
 1. 语音/触摸入口只负责给出自然语言意图，不直接内联图像数据。
-2. 服务端收到 `matrix_pattern_request` 后，可以优先调用 `self.screen.matrix_16x16.draw_python` 生成统一帧结果。
+2. 服务端收到 `matrix_pattern_request` 后，可以优先调用 `self.screen.matrix_16x16.draw_python` 生成统一帧结果；简单步骤优先放进 `python_source`，表达式/推导式优先放进 `eval_source`。
 3. 如果服务端更适合走 HTTP，可直接向 `/control/matrix_prompt_16x16` 发起 POST。
 4. 最终向 `LED端` 的传输固定使用 `FrameStart + FrameChunk + FrameCommit`，每片 `64` 字节，并在每一步等待 ACK。
 5. 当服务端已经有 `bitmap_rows_hex + primary_rgb888/background_rgb888` 时，`AI端` 应优先把它编码成紧凑 `bitmap + RGB888` 蓝牙帧，再转发到 `LED端`，不要先膨胀成 `256` 字节 RGB332。

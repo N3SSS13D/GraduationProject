@@ -113,6 +113,7 @@ GpLedMatrixEsp32::GpLedMatrixEsp32(std::unique_ptr<GpMatrixTransport> transport,
       failure_count_(0),
       verified_count_(0),
       no_reply_count_(0),
+            last_foreground_activity_tick_(0U),
     link_verified_(false),
       remote_override_active_(false),
       has_last_action_(false),
@@ -391,13 +392,35 @@ bool GpLedMatrixEsp32::ShowGlyphRows(const uint16_t* rows, size_t row_count, uin
 
 bool GpLedMatrixEsp32::SendBtDebugLedCommand(uint8_t led_index) {
     std::lock_guard<std::mutex> lock(mutex_);
+
+    return SendDebugLedCommandLocked(led_index, true, true);
+}
+
+bool GpLedMatrixEsp32::TrySendBackgroundDebugLedCommand(uint8_t led_index, uint32_t quiet_window_ms) {
+    const uint32_t now_ticks = static_cast<uint32_t>(xTaskGetTickCount());
+    const uint32_t quiet_window_ticks = static_cast<uint32_t>(pdMS_TO_TICKS(quiet_window_ms));
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+
+    if (!lock.owns_lock()) {
+        return false;
+    }
+
+    if ((last_foreground_activity_tick_ != 0U)
+        && ((now_ticks - last_foreground_activity_tick_) < quiet_window_ticks)) {
+        return false;
+    }
+
+    return SendDebugLedCommandLocked(led_index, false, false);
+}
+
+bool GpLedMatrixEsp32::SendDebugLedCommandLocked(uint8_t led_index, bool ack_required, bool track_activity) {
     uint8_t payload[GP_MATRIX_DEBUG_LED_PAYLOAD_BYTES] = {led_index};
 
     if ((led_index != GP_MATRIX_DEBUG_LED_CLEAR) && (led_index > GP_MATRIX_DEBUG_LED_MAX_INDEX)) {
         return false;
     }
 
-    return SendCommand(kGpMatrixCommandSetDebugLed, payload, sizeof(payload), true);
+    return SendCommand(kGpMatrixCommandSetDebugLed, payload, sizeof(payload), ack_required, track_activity);
 }
 
 bool GpLedMatrixEsp32::SetDebugLedFlow(bool enable) {
@@ -409,11 +432,19 @@ bool GpLedMatrixEsp32::SetDebugLedFlow(bool enable) {
     return SendCommand(kGpMatrixCommandSetDebugLedFlow, payload, sizeof(payload), true);
 }
 
-bool GpLedMatrixEsp32::SendCommand(uint8_t command, const uint8_t* payload, size_t payload_length, bool ack_required) {
+bool GpLedMatrixEsp32::SendCommand(uint8_t command,
+                                   const uint8_t* payload,
+                                   size_t payload_length,
+                                   bool ack_required,
+                                   bool track_activity) {
     std::vector<uint8_t> buffer(GP_MATRIX_PACKET_HEADER_SIZE + payload_length + 1);
     GpMatrixStatusCode reply_status;
     bool reply_valid;
     uint8_t sequence;
+
+    if (track_activity) {
+        last_foreground_activity_tick_ = static_cast<uint32_t>(xTaskGetTickCount());
+    }
 
     buffer[0] = GP_MATRIX_PROTOCOL_MAGIC0;
     buffer[1] = GP_MATRIX_PROTOCOL_MAGIC1;
@@ -430,12 +461,21 @@ bool GpLedMatrixEsp32::SendCommand(uint8_t command, const uint8_t* payload, size
     }
     buffer.back() = GpMatrixComputeChecksum(buffer.data(), buffer.size() - 1);
     last_payload_summary_ = BuildPayloadSummary(command, payload, payload_length);
-    ESP_LOGI(TAG,
-             "[GP_TX] cmd=%s seq=%u len=%u %s",
-             CommandShortName(command),
-             static_cast<unsigned int>(sequence),
-             static_cast<unsigned int>(payload_length),
-             last_payload_summary_.c_str());
+    if ((command == kGpMatrixCommandSetDebugLed) && !ack_required) {
+        ESP_LOGD(TAG,
+                 "[GP_TX] bg cmd=%s seq=%u len=%u %s",
+                 CommandShortName(command),
+                 static_cast<unsigned int>(sequence),
+                 static_cast<unsigned int>(payload_length),
+                 last_payload_summary_.c_str());
+    } else {
+        ESP_LOGI(TAG,
+                 "[GP_TX] cmd=%s seq=%u len=%u %s",
+                 CommandShortName(command),
+                 static_cast<unsigned int>(sequence),
+                 static_cast<unsigned int>(payload_length),
+                 last_payload_summary_.c_str());
+    }
 
     if ((transport_ == nullptr) || !transport_->WritePacket(buffer.data(), buffer.size(), 100)) {
         link_verified_ = false;

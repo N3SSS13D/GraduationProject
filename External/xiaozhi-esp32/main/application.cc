@@ -243,6 +243,27 @@ bool IsVoiceColorIntent(const std::string& transcript) {
     return ContainsAnyKeyword(transcript, {"圆点", "颜色", "渐变", "动画", "背景", "底色", "rgb", "dot", "color", "gradient", "pulse", "breath", "background", "菱形", "十字", "字幕", "图案", "scroll", "pattern", "python", "16x16", "16*16", "像素图"});
 }
 
+bool IsMatrixPatternIntent(const std::string& transcript) {
+    const bool has_draw_verb = ContainsAnyKeyword(transcript,
+                                                  {"画", "绘", "draw", "render", "show", "显示", "生成", "写"});
+    const bool has_matrix_target = ContainsAnyKeyword(transcript,
+                                                      {"图案", "图形", "像素", "像素图", "pixel", "matrix", "16x16", "16*16", "bitmap", "文字", "文本", "字母", "text", "glyph", "logo", "图标", "笑脸", "心形", "箭头"});
+
+    if (!has_draw_verb) {
+        return false;
+    }
+    if (MatchDebugPresetKeyword(transcript) != nullptr) {
+        return false;
+    }
+    if (HasBackgroundColorKeyword(transcript)) {
+        return false;
+    }
+    if (ContainsAnyKeyword(transcript, {"圆点", "dot"}) && !has_matrix_target) {
+        return false;
+    }
+    return has_matrix_target || (MatchDebugColorKeyword(transcript) != nullptr);
+}
+
 uint16_t MatchDotSize(const std::string& transcript) {
     if (ContainsAnyKeyword(transcript, {"最大", "很大", "biggest", "huge"})) {
         return 52;
@@ -503,7 +524,10 @@ std::string BuildMatrixPatternRequestPayload(const std::string& transcript, std:
 }
 
 void HandleVoiceColorDebugFromStt(Application* app, Display* display, const std::string& transcript) {
-    if (!IsVoiceColorIntent(transcript)) {
+    const bool is_color_intent = IsVoiceColorIntent(transcript);
+    const bool is_matrix_pattern_intent = IsMatrixPatternIntent(transcript);
+
+    if (!is_color_intent && !is_matrix_pattern_intent) {
         return;
     }
 
@@ -512,11 +536,25 @@ void HandleVoiceColorDebugFromStt(Application* app, Display* display, const std:
     }
 
     const auto local_state = BuildLocalColorState(transcript, "local-fallback");
-    if (local_state.has_value()) {
-        ApplyColorDebugState(display, *local_state, true);
+    if (is_matrix_pattern_intent && (!local_state.has_value() || (local_state->preset == GpColorDebugPreset::kSolid))) {
+        app->SendMatrixPatternRequest(transcript, "stt");
+        return;
     }
 
-    app->SendColorDebugAnalyze(transcript, "stt");
+    if (local_state.has_value()) {
+        ApplyColorDebugState(display, *local_state, true);
+        app->SendColorDebugAnalyze(transcript, "stt");
+        return;
+    }
+
+    if (is_matrix_pattern_intent) {
+        app->SendMatrixPatternRequest(transcript, "stt");
+        return;
+    }
+
+    if (is_color_intent) {
+        app->SendColorDebugAnalyze(transcript, "stt");
+    }
 }
 
 bool HandleVoiceColorDebugFromCustom(Display* display, const cJSON* payload) {

@@ -60,6 +60,9 @@ public:
     /* Send one protocol-scoped debug LED command; use GP_MATRIX_DEBUG_LED_CLEAR to clear. */
     bool SendBtDebugLedCommand(uint8_t led_index);
 
+    /* Run the P2 LED chase only when the Bluetooth matrix link has been idle long enough. */
+    bool TrySendBackgroundDebugLedCommand(uint8_t led_index, uint32_t quiet_window_ms);
+
     /* Start or stop the LED-side 1-second debug LED chase test. */
     bool SetDebugLedFlow(bool enable);
 
@@ -72,6 +75,7 @@ private:
     uint32_t failure_count_;
     uint32_t verified_count_;
     uint32_t no_reply_count_;
+    uint32_t last_foreground_activity_tick_;
     bool link_verified_;
     bool remote_override_active_;
     bool has_last_action_;
@@ -88,8 +92,13 @@ private:
     static const char* StateShortName(DeviceState state);
     std::string BuildPayloadSummary(uint8_t command, const uint8_t* payload, size_t payload_length) const;
     bool ReadReply(uint8_t expected_sequence, uint8_t expected_command, GpMatrixStatusCode& reply_status);
-    bool SendCommand(uint8_t command, const uint8_t* payload, size_t payload_length, bool ack_required = false);
+    bool SendCommand(uint8_t command,
+                     const uint8_t* payload,
+                     size_t payload_length,
+                     bool ack_required = false,
+                     bool track_activity = true);
     bool SendState(DeviceState state, const Rgb332Frame& frame, GpMatrixMode mode = kGpMatrixModeSolidFrame);
+    bool SendDebugLedCommandLocked(uint8_t led_index, bool ack_required, bool track_activity);
     std::string BuildHeartbeatStatusText(uint8_t led_index) const;
     std::string BuildStatusText(bool online,
                                 uint8_t command,

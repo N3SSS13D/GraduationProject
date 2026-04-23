@@ -650,6 +650,7 @@ private:
     static constexpr UBaseType_t kBtBridgeTaskPriority = 1;
     static constexpr uint32_t kBtBridgeStartDelayMs = 1200;
     static constexpr uint32_t kBtBridgeTickMs = 1000;
+    static constexpr uint32_t kBtBridgeQuietWindowMs = 1500;
 
     struct DebugCommand {
         enum class Type : uint8_t {
@@ -1737,11 +1738,10 @@ cleanup:
         self->led_matrix_->RunStartupLinkTest();
 
         while (true) {
-            if (!self->led_matrix_->SendBtDebugLedCommand(led_index)) {
-                ESP_LOGW(TAG, "P2 LED chase command failed: led=%u", static_cast<unsigned int>(led_index));
+            /* Keep the periodic P2 LED test out of the way while real matrix traffic is active. */
+            if (self->led_matrix_->TrySendBackgroundDebugLedCommand(led_index, kBtBridgeQuietWindowMs)) {
+                led_index = static_cast<uint8_t>((led_index + 1U) % (GP_MATRIX_DEBUG_LED_MAX_INDEX + 1U));
             }
-
-            led_index = static_cast<uint8_t>((led_index + 1U) % (GP_MATRIX_DEBUG_LED_MAX_INDEX + 1U));
             vTaskDelay(pdMS_TO_TICKS(kBtBridgeTickMs));
         }
     }
@@ -2271,6 +2271,7 @@ public:
             case NetworkEvent::Connected:
                 Application::GetInstance().Schedule([this]() {
                     EnsureDebugPreviewHttpServer();
+                    EnsureDebugWebsocketConnected();
                 });
                 break;
             case NetworkEvent::Connecting:

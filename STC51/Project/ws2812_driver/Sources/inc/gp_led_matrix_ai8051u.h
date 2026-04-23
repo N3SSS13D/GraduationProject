@@ -28,6 +28,7 @@ typedef struct
     uint8_t frameFormat;
     uint8_t lastSequence;
     uint8_t lastCommand;
+    uint8_t lastFlags;
     uint8_t lastStatus;
     uint8_t packetLength;
     uint8_t packetPending;

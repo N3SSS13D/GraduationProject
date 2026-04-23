@@ -20,6 +20,7 @@ static uint8_t xdata g_gpMatrixCommand = 0U;
 static uint8_t xdata g_gpMatrixPacketLength = 0U;
 static uint8_t xdata g_gpMatrixChunkSize = 0U;
 static uint8_t xdata g_gpMatrixCopyLength = 0U;
+static uint8_t xdata g_gpMatrixFlags = 0U;
 static uint8_t xdata g_gpMatrixReplyPayload[GP_MATRIX_STATUS_PAYLOAD_BYTES];
 static GpMatrixActionPayload xdata g_gpMatrixAction;
 static uint8_t xdata g_gpMatrixStreamLength = 0U;
@@ -182,6 +183,7 @@ static void GpLedMatrixAi8051u_ResetContext(GpLedMatrixAi8051uContext xdata *con
     context->mode = (uint8_t)kGpMatrixModeSolidFrame;
     context->lastSequence = 0U;
     context->lastCommand = 0U;
+    context->lastFlags = 0U;
     context->lastStatus = (uint8_t)kGpMatrixStatusOk;
     context->packetLength = 0U;
     context->packetPending = 0U;
@@ -190,6 +192,16 @@ static void GpLedMatrixAi8051u_ResetContext(GpLedMatrixAi8051uContext xdata *con
     context->txPending = 0U;
     GpLedMatrixAi8051u_ResetFrameTransfer(context);
     GpLedMatrixAi8051u_ResetGlyphTransfer(context);
+}
+
+static uint8_t GpLedMatrixAi8051u_ShouldReply(void)
+{
+    if ((g_gpMatrixFlags & GP_MATRIX_PROTOCOL_FLAG_ACK_REQUIRED) != 0U)
+    {
+        return 1U;
+    }
+
+    return 0U;
 }
 
 static void GpLedMatrixAi8051u_ShutdownLegacyI2cHardware(void)
@@ -632,6 +644,7 @@ static GpMatrixStatusCode GpLedMatrixAi8051u_ProcessPacket(GpLedMatrixAi8051uCon
 
     command = packet[3];
     sequence = packet[4];
+    g_gpMatrixFlags = packet[5];
     payloadLength = GpLedMatrixAi8051u_ReadLe16(&packet[6]);
     g_gpMatrixCtx = context;
     g_gpMatrixCommand = command;
@@ -652,6 +665,7 @@ static GpMatrixStatusCode GpLedMatrixAi8051u_ProcessPacket(GpLedMatrixAi8051uCon
 
     context->lastCommand = command;
     context->lastSequence = sequence;
+    context->lastFlags = g_gpMatrixFlags;
     payload = &packet[GP_MATRIX_PACKET_HEADER_SIZE];
     g_gpMatrixPayload = payload;
     g_gpMatrixPayloadLength = payloadLength;
@@ -715,7 +729,10 @@ static GpMatrixStatusCode GpLedMatrixAi8051u_ProcessPacket(GpLedMatrixAi8051uCon
             break;
     }
 
-    GpLedMatrixAi8051u_BuildReply(status);
+    if (GpLedMatrixAi8051u_ShouldReply() != 0U)
+    {
+        GpLedMatrixAi8051u_BuildReply(status);
+    }
     return status;
 }
 
@@ -749,7 +766,7 @@ static void GpLedMatrixAi8051u_ProcessPendingPacket(GpLedMatrixAi8051uContext xd
     context->packetLength = 0U;
 
     status = GpLedMatrixAi8051u_ProcessPacket(context, context->rxBuffer, g_gpMatrixPacketLength);
-    if (context->packetReplyPrepared == 0U)
+    if ((context->packetReplyPrepared == 0U) && (GpLedMatrixAi8051u_ShouldReply() != 0U))
     {
         GpLedMatrixAi8051u_BuildReply(status);
     }

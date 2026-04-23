@@ -27,6 +27,7 @@
 4. 优先处理动作映射、蓝牙收发、协议一致性、调试工具接入和性能优化。
 5. 保持 `GP_Port/transport/`、`GP_Port/ui/`、矩阵驱动三者职责清晰。
 6. 修改后直接执行可用构建或联调验证。
+7. 若 `AI端` 构建成功且具备硬件连接条件，默认继续执行 flash；只有在用户明确要求只编译或当前环境无法访问硬件时才跳过。
 
 输出要求：
 
@@ -52,3 +53,4 @@ Rules:
 2. Keep changes focused on action mapping, Bluetooth transport, protocol consistency, tooling, and performance.
 3. Move solved issues to the shared problem document instead of keeping them in prompts.
 4. Run build or validation steps after code changes.
+5. After an `AI side` build succeeds, continue with flash by default unless the user explicitly requests build-only or the hardware path is unavailable.

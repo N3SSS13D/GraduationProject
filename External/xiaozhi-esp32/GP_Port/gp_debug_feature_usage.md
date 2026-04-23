@@ -31,7 +31,7 @@
 - 蓝牙联调时以协议级 `[GP_TX] / [GP_RX] / [GP_DROP] / [GP_SYNC]` 日志为准；`[BT_MON]` 只保留有限长度的原始串口片段，用于辅助观察，不应单独作为“是否收到完整帧”的结论依据。
 - `AI端` monitor 现在还会打印 `[BT_RX]`，显示通过 HC-05 收到的完整回包包头、sequence、payload 长度和原始十六进制内容；该日志可直接用于确认 `LED端` ACK 是否真实回到 `AI端`。
 - `AI端` 若需要点亮 `LED端` 板载调试 LED，必须走独立的 `SetDebugLed` 协议命令；`0..7` 表示目标 LED，`0xFF` 表示清除，不能再发送裸 `LED n` 文本。
-- `AI端` 启动蓝牙自检成功后，现在会保留一个 `1s` 周期任务，持续按协议发送 `SetDebugLed` 命令，让 `LED端` 板载调试 LED 按 `0..7` 做流水灯，用于验证链路持续可用。
+- `AI端` 启动蓝牙自检成功后，会保留一个 `1s` 周期任务作为低干扰链路探测；该任务只在矩阵链路空闲窗口内按协议发送 `SetDebugLed` 命令，而且后台探测包不再等待 ACK，避免和实际画面传输互相抢占。
 - `LED端` 收到并显示通过蓝牙传输的整帧图像后，会保持最后一帧显示；后续只有显式 `REMOTE_RELEASE` 或本地切换控制模式时才会释放远程显示内容。
 - 若 `self.screen.matrix_16x16.draw` 的预设动作可以显示，而 `bitmap + RGB888` 绘制偶发卡在 `fchk`，优先怀疑 `LED端` 长包分片接收节奏，而不是图案渲染本身；当前固件已收紧 `UART2` 的 DMA idle 重装时机以降低该问题。
 
@@ -136,6 +136,7 @@ python External/xiaozhi-esp32/GP_Port/gp_display_mcp_bridge.py
 - 对外暴露更适合 LLM 直接理解的 MCP 工具：`self.screen.matrix_16x16.draw_frame`、`self.screen.matrix_16x16.draw_python`、`self.screen.matrix_16x16.show_text`。
 - 设备侧 `S` 按键把 PNG 直接上传到 `/snapshot`。
 - 调试菜单触摸按钮不再走旧的 LLM/MCP 触摸分析链路；其中 `Draw` 按键会通过独立 debug websocket 向主机发起请求，由主机随机选择 `16x16` 图案并返回位图数据，再由 `AI端` 本地绘制到 `Preview` 区域，并继续通过蓝牙把紧凑 `bitmap + RGB888` 图案转发到 `LED端` 显示。
+- 语音侧若是自由 `16x16` 绘图请求、且不能直接映射到本地现有预设，则会走 `matrix_pattern_request` 自定义消息链路，不需要先点一次 `Draw` 再开始绘图。
 - 主机侧可通过 `/control/snapshot` 请求脚本调用设备 MCP 工具 `self.screen.debug_snapshot.capture`。
 - 主机侧也可通过 MCP 直接调用 `self.screen.matrix_16x16.draw_python` 生成任意 `16x16` 图案，或调用 `self.screen.matrix_16x16.show_text` 逐帧显示文字。
 - 主机侧也可通过 `/control/device_preview` 按 `device_ip` 把本地 PNG/JPEG 直接发到设备 `POST /debug/preview_image`，设备收到后会在二级菜单预览卡片中显示。
@@ -210,7 +211,7 @@ This document describes the stable `AI side` debug UI, snapshot flow, and MCP-si
 
 - Fixed header: `Back / Debug Menu / S`.
 - Top card: touch controls for `Pattern` and `Effect`.
-- Middle card: centered dot preview.
+- Middle card: fixed split preview with the dot centered on the left and the preview slot centered on the right; the preview slot stays visible before the first draw.
 - Lower cards: LED-side link panel and a wrapped summary view for the current debug state.
 
 ### Runtime Strategy
@@ -218,6 +219,7 @@ This document describes the stable `AI side` debug UI, snapshot flow, and MCP-si
 - Debug widgets stay hidden by default.
 - Dot animation runs only while the debug menu is visible.
 - Touch updates still emit a natural-language transcript, but debug-menu transport now prefers the dedicated debug websocket path instead of the old `voice_color_analyze`/MCP request chain.
+- Freeform speech-driven `16x16` draw requests that do not match an existing local preset now use `matrix_pattern_request`, so voice drawing does not require a prior `Draw` tap.
 - Heavy matrix updates and snapshot work run through a board-side worker queue.
 - The LED side prepares ACK data immediately after a full packet is captured, while LED execution stays in the main loop.
 

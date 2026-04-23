@@ -39,6 +39,7 @@ Default validation:
 
 - Rebuild `STC51/Project/ws2812_driver/ws2812_driver.uvproj` after LED-side source changes.
 - Use `tools/ws2812_dev_cycle.py` for integration work.
+- After an `AI side` build succeeds, continue with flash by default unless the user explicitly requests build-only or the hardware path is unavailable.
 - Use `-RunAi8051BtDebug` when the LED-side Bluetooth path changes.
 
 Integration notes:

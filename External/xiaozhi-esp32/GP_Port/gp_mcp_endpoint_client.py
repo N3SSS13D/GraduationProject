@@ -94,6 +94,7 @@ ALLOWED_DRAW_HELPER_NAMES = frozenset({
     "max",
     "abs",
     "int",
+    "eval",
     "clear",
     "point",
     "line",
@@ -120,6 +121,7 @@ ALLOWED_DRAW_AST_NODE_TYPES = (
     ast.Expr,
     ast.Assign,
     ast.For,
+    ast.If,
     ast.Call,
     ast.Name,
     ast.Load,
@@ -138,6 +140,54 @@ ALLOWED_DRAW_AST_NODE_TYPES = (
     ast.UnaryOp,
     ast.USub,
     ast.UAdd,
+    ast.BoolOp,
+    ast.And,
+    ast.Or,
+    ast.Not,
+    ast.Compare,
+    ast.Eq,
+    ast.NotEq,
+    ast.Lt,
+    ast.LtE,
+    ast.Gt,
+    ast.GtE,
+    ast.IfExp,
+    ast.Attribute,
+)
+ALLOWED_DRAW_EVAL_AST_NODE_TYPES = (
+    ast.Expression,
+    ast.Call,
+    ast.Name,
+    ast.Load,
+    ast.Store,
+    ast.Constant,
+    ast.Tuple,
+    ast.List,
+    ast.ListComp,
+    ast.comprehension,
+    ast.keyword,
+    ast.BinOp,
+    ast.Add,
+    ast.Sub,
+    ast.Mult,
+    ast.Div,
+    ast.FloorDiv,
+    ast.Mod,
+    ast.UnaryOp,
+    ast.USub,
+    ast.UAdd,
+    ast.BoolOp,
+    ast.And,
+    ast.Or,
+    ast.Not,
+    ast.Compare,
+    ast.Eq,
+    ast.NotEq,
+    ast.Lt,
+    ast.LtE,
+    ast.Gt,
+    ast.GtE,
+    ast.IfExp,
     ast.Attribute,
 )
 MATRIX_TEXT_FONT_CANDIDATES = (
@@ -636,6 +686,7 @@ def build_matrix_frame_payload_from_bitmap_rows(
     text: str = "",
     glyph: str = "",
     python_source: str = "",
+    eval_source: str = "",
     frame_index: Optional[int] = None,
     frame_count: Optional[int] = None,
 ) -> Dict[str, Any]:
@@ -683,6 +734,8 @@ def build_matrix_frame_payload_from_bitmap_rows(
         payload["glyph"] = glyph
     if python_source:
         payload["python_source"] = python_source
+    if eval_source:
+        payload["eval_source"] = eval_source
     if frame_index is not None:
         payload["frame_index"] = frame_index
     if frame_count is not None:
@@ -800,21 +853,81 @@ def validate_matrix_python_source(python_source: str) -> ast.Module:
     return syntax_tree
 
 
+def validate_matrix_eval_source(eval_source: str) -> ast.Expression:
+    try:
+        syntax_tree = ast.parse(eval_source, mode="eval")
+    except SyntaxError as exc:
+        raise ValueError(f"eval_source has invalid syntax: {exc.msg} at line {exc.lineno}") from exc
+
+    node_count = 0
+    for node in ast.walk(syntax_tree):
+        node_count += 1
+        if node_count > MAX_DRAWING_AST_NODES:
+            raise ValueError(f"eval_source is too complex; keep it under {MAX_DRAWING_AST_NODES} AST nodes")
+
+        if not isinstance(node, ALLOWED_DRAW_EVAL_AST_NODE_TYPES):
+            raise ValueError(f"Unsupported eval Python construct: {type(node).__name__}")
+
+        if isinstance(node, ast.Attribute):
+            if not isinstance(node.value, ast.Name) or node.value.id != "draw":
+                raise ValueError("Only draw.<method>(...) attribute access is allowed in eval_source")
+            if node.attr not in ALLOWED_DRAW_METHOD_NAMES:
+                raise ValueError(f"Unsupported draw method: {node.attr}")
+
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                if node.func.id not in ALLOWED_DRAW_HELPER_NAMES:
+                    raise ValueError(f"Unsupported helper function: {node.func.id}")
+            elif isinstance(node.func, ast.Attribute):
+                if node.func.attr not in ALLOWED_DRAW_METHOD_NAMES:
+                    raise ValueError(f"Unsupported draw method: {node.func.attr}")
+            else:
+                raise ValueError("Only helper calls and draw.<method>(...) calls are allowed in eval_source")
+
+        if isinstance(node, ast.comprehension):
+            if node.is_async:
+                raise ValueError("Async comprehensions are not allowed in eval_source")
+            if not isinstance(node.target, ast.Name):
+                raise ValueError("Only simple comprehension targets are allowed in eval_source")
+
+    return syntax_tree
+
+
+def execute_matrix_eval_source(eval_source: str, execution_scope: Dict[str, Any]) -> Any:
+    normalized_eval_source = eval_source.strip()
+
+    if not normalized_eval_source:
+        raise ValueError("eval_source is required")
+    if len(normalized_eval_source) > MAX_DRAWING_SOURCE_CHARS:
+        raise ValueError(f"eval_source is too long; keep it under {MAX_DRAWING_SOURCE_CHARS} characters")
+
+    syntax_tree = validate_matrix_eval_source(normalized_eval_source)
+    try:
+        return eval(compile(syntax_tree, "<matrix_draw_eval>", "eval"), {"__builtins__": {}}, execution_scope)
+    except Exception as exc:
+        raise ValueError(f"eval_source execution failed: {exc}") from exc
+
+
 def render_python_source_to_matrix_frame(
-    python_source: str,
+    python_source: str = "",
+    eval_source: str = "",
     primary_rgb888: str = "",
     background_rgb888: str = "",
     source: str = "mcp_python",
     transcript: str = "",
 ) -> Dict[str, Any]:
     normalized_python_source = python_source.strip()
+    normalized_eval_source = eval_source.strip()
 
-    if not normalized_python_source:
-        raise ValueError("python_source is required")
+    if not normalized_python_source and not normalized_eval_source:
+        raise ValueError("python_source or eval_source is required")
     if len(normalized_python_source) > MAX_DRAWING_SOURCE_CHARS:
         raise ValueError(f"python_source is too long; keep it under {MAX_DRAWING_SOURCE_CHARS} characters")
 
-    syntax_tree = validate_matrix_python_source(normalized_python_source)
+    syntax_tree = None
+    if normalized_python_source:
+        syntax_tree = validate_matrix_python_source(normalized_python_source)
+
     mask_image = Image.new("1", (MATRIX_WIDTH, MATRIX_HEIGHT), 0)
     draw_context = ImageDraw.Draw(mask_image)
 
@@ -892,13 +1005,21 @@ def render_python_source_to_matrix_frame(
             fill=None if fill is None else (1 if fill else 0),
         )
 
-    execution_scope: Dict[str, Any] = {
+    execution_scope: Dict[str, Any] = {}
+
+    def safe_eval(expression: str) -> Any:
+        if not isinstance(expression, str):
+            raise ValueError("eval(...) requires a string expression")
+        return execute_matrix_eval_source(expression, execution_scope)
+
+    execution_scope.update({
         "draw": draw_context,
         "range": safe_matrix_range,
         "min": min,
         "max": max,
         "abs": abs,
         "int": int,
+        "eval": safe_eval,
         "clear": clear,
         "point": point,
         "line": line,
@@ -909,11 +1030,16 @@ def render_python_source_to_matrix_frame(
         "circle": circle,
         "fill_circle": fill_circle,
         "polygon": polygon,
-    }
+    })
 
     try:
-        exec(compile(syntax_tree, "<matrix_draw_python>", "exec"), {"__builtins__": {}}, execution_scope)
+        if syntax_tree is not None:
+            exec(compile(syntax_tree, "<matrix_draw_python>", "exec"), {"__builtins__": {}}, execution_scope)
+        if normalized_eval_source:
+            execute_matrix_eval_source(normalized_eval_source, execution_scope)
     except Exception as exc:
+        if isinstance(exc, ValueError):
+            raise
         raise ValueError(f"python_source execution failed: {exc}") from exc
 
     bitmap_rows = build_bitmap_rows_from_mask_image(mask_image)
@@ -922,9 +1048,10 @@ def render_python_source_to_matrix_frame(
         primary_rgb888=primary_rgb888 or "#F5F5F5",
         background_rgb888=background_rgb888 or "#000000",
         source=source,
-        transcript=transcript or normalized_python_source,
+        transcript=transcript or normalized_python_source or normalized_eval_source,
         content_type="python_draw",
         python_source=normalized_python_source,
+        eval_source=normalized_eval_source,
         label="python_draw",
     )
     frame_payload["tool_name"] = "self.screen.matrix_16x16.draw_python"
@@ -1286,13 +1413,17 @@ def build_tool_list() -> list[Dict[str, Any]]:
         },
         {
             "name": "self.screen.matrix_16x16.draw_python",
-            "description": "Primary LLM drawing tool. Execute restricted Pillow ImageDraw-style Python statements and return one unified 16x16 frame payload.",
+            "description": "Primary LLM drawing tool. Execute restricted Pillow ImageDraw-style Python statements, evaluate restricted Python expressions with eval(), and return one unified 16x16 frame payload.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "python_source": {
                         "type": "string",
-                        "description": "Restricted Python drawing statements. Use draw.point, draw.line, draw.rectangle, draw.ellipse, draw.polygon, or helper functions like line(...), fill_rectangle(...), fill_circle(...).",
+                        "description": "Restricted Python drawing statements. Use draw.point, draw.line, draw.rectangle, draw.ellipse, draw.polygon, helper functions like line(...), fill_rectangle(...), fill_circle(...), or eval(\"<expression>\") for nested dynamic drawing.",
+                    },
+                    "eval_source": {
+                        "type": "string",
+                        "description": "Restricted Python expression evaluated with eval(). Prefer this for comprehensions, conditional expressions, or other dynamic draw patterns. If both python_source and eval_source are provided, python_source runs first.",
                     },
                     "primary_rgb888": {
                         "type": "string",
@@ -1305,7 +1436,10 @@ def build_tool_list() -> list[Dict[str, Any]]:
                     "source": {"type": "string"},
                     "transcript": {"type": "string"},
                 },
-                "required": ["python_source"],
+                "anyOf": [
+                    {"required": ["python_source"]},
+                    {"required": ["eval_source"]}
+                ],
             },
         },
         {
@@ -1819,6 +1953,7 @@ def handle_local_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Dict[st
     if tool_name in PYTHON_DRAW_TOOL_NAMES:
         return render_python_source_to_matrix_frame(
             python_source=str(arguments.get("python_source", "")),
+            eval_source=str(arguments.get("eval_source", "")),
             primary_rgb888=str(arguments.get("primary_rgb888", "#F5F5F5")),
             background_rgb888=str(arguments.get("background_rgb888", "#000000")),
             source=str(arguments.get("source", "mcp_python")),

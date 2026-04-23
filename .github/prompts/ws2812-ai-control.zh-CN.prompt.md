@@ -20,7 +20,8 @@ model: "GPT-5 (copilot)"
 - 将 `AI端` 的语音结果、调试结果或截图控制请求映射为稳定动作对象。
 - 保持 `AI端` 输出与 `LED端` 协议字段一致。
 - 优先复用现有 `voice_color_result`、矩阵驱动和调试界面路径。
-- 若任务涉及调试菜单输入，优先复用 `voice_color_analyze -> voice_color_result` 这条统一分析链，允许 `source` 为 `stt` 或 `touch`。
+- 若任务涉及调试菜单输入或预设型颜色/效果更新，优先复用 `voice_color_analyze -> voice_color_result` 这条统一分析链，允许 `source` 为 `stt` 或 `touch`。
+- 若 `stt` 文本表达的是自由 `16x16` 绘图，且不能直接落到本地现有 `solid / pattern / glyph` 预设上，优先复用已有 `matrix_pattern_request` 路径，避免语音绘图依赖先点一次 `Draw`。
 - 若任务涉及 HC-05，默认配置流程为先在 `38400` 下发送 `AT` 探测；若连续 `3` 次无应答，则直接切本地串口到 `460800` 并跳过后续设置；若探测成功，再按“设置一条、查询一条”完成全部 AT 指令，AI端 使用固定地址 `98:D3:02:96:A2:B1` 对应的 `AT+BIND` 绑定 LED端，最后两步固定为 `AT+RESET` 和本地切到 `460800` 数据模式，并把每一步回包打印到 monitor。
 
 执行要求：
@@ -30,18 +31,19 @@ model: "GPT-5 (copilot)"
 3. 优先改动动作映射、协议拼包、调试工具接入，不重写无关 UI 或底层驱动。
 4. 命令突发时保持动作下发有边界、可追踪、可验证。
 5. 若涉及截图或 MCP，说明脚本路径和调用路径。
-6. 修改后执行可用的构建或联调验证。
-7. 保持现有触摸控制主链：`GpDebugLcdDisplay -> QueueMatrixDebugState -> ShowDebugState -> SetAction`；若需要进入大模型，复用 `GpDebugLcdDisplay -> SendColorDebugAnalyze(..., "touch")`，不要新增并行协议。
+6. 修改后执行可用的构建或联调验证。若 `AI端` 构建成功且具备硬件连接条件，默认继续执行 flash；只有在用户明确要求只编译或当前环境无法访问硬件时才跳过。
+7. 保持现有触摸控制主链：`GpDebugLcdDisplay -> QueueMatrixDebugState -> ShowDebugState -> SetAction`；若需要进入大模型，优先复用现有路径，不要为同一类触摸输入新增并行协议。
 8. 保持 `GP_Port/transport/` 中基于后台任务的 UART 收包模型，不要把 `ReadPacket()` 改回调用时轮询读串口。
 9. 若任务涉及 Wi-Fi 图片预览链路，先从 `AI端` monitor 日志 `WiFi STA IP: ...` 获取设备地址，再优先使用主机脚本 `/control/device_preview` 将本地 PNG/JPEG 发送到 `http://<device_ip>:8781/debug/preview_image`；设备侧应复用现有预览路径，并同步显示到调试二级菜单预览卡片中。
-10. 面向 LLM 的 MCP 桥接脚本、工具名和参数名必须尽量自解释，优先使用一眼可懂的命名，例如 `gp_display_mcp_bridge.py`、`draw_python`、`show_text`、`python_source`、`frame_interval_ms`、`text`。
-11. 当 `AI端` 需要把 `16x16` 图案通过蓝牙转发到 `LED端` 时，优先使用紧凑 `bitmap_rows + RGB888` 传输，而不是先展开成 `256` 字节 RGB332 整帧；`FrameChunk` 的分片基准必须在两端保持一致，统一使用共享协议里的 `64` 字节常量。
-12. 蓝牙联调时，以 `LED端` 的协议级 `[GP_TX]`、`[GP_RX]`、`[GP_DROP]`、`[GP_SYNC]` 日志为准；`[BT_MON]` 只是一个有上限的原始 UART 抓包窗口，可能裁剪长包，不能单独据此判断整帧是否完整到达。
-13. 需要确认 `LED端` ACK 是否真实返回到 `AI端` 时，优先查看 `AI端` monitor 中新增的 `[BT_RX]` 日志；它会打印通过 HC-05 收到的完整协议回包摘要和原始十六进制内容。
-14. 如果任务需要点亮 `LED端` 板载调试 LED 做链路验证，必须使用独立的 GP 协议调试 LED 命令，不要再向 HC-05 发送裸 `LED n` 文本。
-15. 如果任务需要验证 `LED端` 是否能持续稳定接收协议包，而不仅是回一条短 ACK，优先让 `AI端` 创建 `1s` 周期任务，持续发送 GP 协议调试 LED 命令，让 `LED端` P2 调试 LED 按正常 ACK 流程做流水灯。
-16. 当 `SetAction` 这类短包能工作、而 `FrameChunk` 这类长包上传失败时，应先检查 `LED端` UART2 接收节奏与组包时机，再考虑修改位图渲染逻辑。
-17. `LED端` 显示通过蓝牙传输的图像后，应保持最后一帧显示，直到显式释放远程模式或本地切换控制模式；不能仅因为通信活动超时就自动清空。
+10. 面向 LLM 的 MCP 桥接脚本、工具名和参数名必须尽量自解释，优先使用一眼可懂的命名，例如 `gp_display_mcp_bridge.py`、`draw_python`、`show_text`、`python_source`、`eval_source`、`frame_interval_ms`、`text`。
+11. 若任务涉及 `16x16` 图案预览，优先维持当前固定布局：左侧中心为圆点，右侧中心为预览区域；不要再让预览区域依赖首次绘制后才出现。
+12. 当 `AI端` 需要把 `16x16` 图案通过蓝牙转发到 `LED端` 时，优先使用紧凑 `bitmap_rows + RGB888` 传输，而不是先展开成 `256` 字节 RGB332 整帧；`FrameChunk` 的分片基准必须在两端保持一致，统一使用共享协议里的 `64` 字节常量。
+13. 蓝牙联调时，以 `LED端` 的协议级 `[GP_TX]`、`[GP_RX]`、`[GP_DROP]`、`[GP_SYNC]` 日志为准；`[BT_MON]` 只是一个有上限的原始 UART 抓包窗口，可能裁剪长包，不能单独据此判断整帧是否完整到达。
+14. 需要确认 `LED端` ACK 是否真实返回到 `AI端` 时，优先查看 `AI端` monitor 中新增的 `[BT_RX]` 日志；它会打印通过 HC-05 收到的完整协议回包摘要和原始十六进制内容。
+15. 如果任务需要点亮 `LED端` 板载调试 LED 做链路验证，必须使用独立的 GP 协议调试 LED 命令，不要再向 HC-05 发送裸 `LED n` 文本。
+16. 如果任务需要验证 `LED端` 是否能持续稳定接收协议包，而不仅是回一条短 ACK，优先让 `AI端` 创建 `1s` 周期任务，但只在链路空闲窗口内发送 GP 协议调试 LED 命令；该后台探测应采用尽力发送且不等待 ACK，避免干扰前台整帧传输。
+17. 当 `SetAction` 这类短包能工作、而 `FrameChunk` 这类长包上传失败时，应先检查 `LED端` UART2 接收节奏与组包时机，再考虑修改位图渲染逻辑。
+18. `LED端` 显示通过蓝牙传输的图像后，应保持最后一帧显示，直到显式释放远程模式或本地切换控制模式；不能仅因为通信活动超时就自动清空。
 
 验证入口：
 

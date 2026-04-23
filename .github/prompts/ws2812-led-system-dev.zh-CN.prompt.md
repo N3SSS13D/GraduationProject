@@ -42,6 +42,7 @@ model: "GPT-5 (copilot)"
 
 - 改动 LED端 源码后，执行 `STC51/Project/ws2812_driver/ws2812_driver.uvproj` 的 Keil rebuild。
 - 改动 AI端 或联调边界后，优先执行 `tools/ws2812_dev_cycle.py`。
+- 若 `AI端` 构建成功且具备硬件连接条件，默认继续执行 flash；只有在用户明确要求只编译或当前环境无法访问硬件时才跳过。
 - 改动 LED端 蓝牙链路时，优先追加 `-RunAi8051BtDebug`。
 
 联调补充：
