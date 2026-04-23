@@ -22,6 +22,12 @@ static uint8_t xdata g_gpLedTempRowMapped = 0U;
 static uint8_t xdata g_gpLedTempR = 0U;
 static uint8_t xdata g_gpLedTempG = 0U;
 static uint8_t xdata g_gpLedTempB = 0U;
+static uint8_t xdata g_gpLedPrimaryR = 0U;
+static uint8_t xdata g_gpLedPrimaryG = 0U;
+static uint8_t xdata g_gpLedPrimaryB = 0U;
+static uint8_t xdata g_gpLedBackgroundR = 0U;
+static uint8_t xdata g_gpLedBackgroundG = 0U;
+static uint8_t xdata g_gpLedBackgroundB = 0U;
 static uint16_t xdata g_gpLedTempPixelIndex = 0U;
 static uint16_t xdata g_gpLedTempRowBits = 0U;
 
@@ -122,6 +128,46 @@ static void GpLedAction_RenderGlyphFrame(const uint8_t xdata *glyphData)
             {
                 WS2812DRV_SetPixelRgbFast(g_gpLedTempRowMapped, g_gpLedTempCol, 0x00U, 0x00U, 0x00U);
             }
+        }
+    }
+    GpLedAction_EndDirectFrame();
+}
+
+static void GpLedAction_RenderBitmapFrameRgb888(const uint8_t xdata *frameData, uint8_t brightness)
+{
+    const uint8_t xdata *bitmapData;
+    const uint8_t xdata *colorData;
+
+    bitmapData = frameData;
+    colorData = &frameData[GP_MATRIX_BITMAP_ROWS_BYTES];
+    g_gpLedPrimaryR = GpLedAction_ScaleColor(colorData[0], brightness);
+    g_gpLedPrimaryG = GpLedAction_ScaleColor(colorData[1], brightness);
+    g_gpLedPrimaryB = GpLedAction_ScaleColor(colorData[2], brightness);
+    g_gpLedBackgroundR = GpLedAction_ScaleColor(colorData[3], brightness);
+    g_gpLedBackgroundG = GpLedAction_ScaleColor(colorData[4], brightness);
+    g_gpLedBackgroundB = GpLedAction_ScaleColor(colorData[5], brightness);
+
+    GpLedAction_BeginDirectFrame();
+    for (g_gpLedTempRow = 0U; g_gpLedTempRow < GP_MATRIX_HEIGHT; ++g_gpLedTempRow)
+    {
+        g_gpLedTempRowMapped = (uint8_t)((GP_MATRIX_HEIGHT - 1U) - g_gpLedTempRow);
+        g_gpLedTempRowBits = (uint16_t)bitmapData[(uint16_t)g_gpLedTempRow * 2U];
+        g_gpLedTempRowBits |= (uint16_t)bitmapData[(uint16_t)g_gpLedTempRow * 2U + 1U] << 8;
+        for (g_gpLedTempCol = 0U; g_gpLedTempCol < GP_MATRIX_WIDTH; ++g_gpLedTempCol)
+        {
+            if ((g_gpLedTempRowBits & (uint16_t)(0x8000U >> g_gpLedTempCol)) != 0U)
+            {
+                g_gpLedTempR = g_gpLedPrimaryR;
+                g_gpLedTempG = g_gpLedPrimaryG;
+                g_gpLedTempB = g_gpLedPrimaryB;
+            }
+            else
+            {
+                g_gpLedTempR = g_gpLedBackgroundR;
+                g_gpLedTempG = g_gpLedBackgroundG;
+                g_gpLedTempB = g_gpLedBackgroundB;
+            }
+            WS2812DRV_SetPixelRgbFast(g_gpLedTempRowMapped, g_gpLedTempCol, g_gpLedTempR, g_gpLedTempG, g_gpLedTempB);
         }
     }
     GpLedAction_EndDirectFrame();
@@ -328,6 +374,30 @@ GpMatrixStatusCode GpLedAction_ApplyFrameRgb332(const uint8_t xdata *frameData, 
     }
 
     GpLedAction_RenderRgb332Frame(frameData, g_gpLedDefaultBrightness);
+
+    return kGpMatrixStatusOk;
+}
+
+GpMatrixStatusCode GpLedAction_ApplyFrameBitmapRgb888(const uint8_t xdata *frameData,
+                                                      uint16_t length,
+                                                      GpMatrixMode mode)
+{
+    if (GpLedAction_IsHostControlEnabled() == 0U)
+    {
+        return kGpMatrixStatusBusy;
+    }
+
+    if ((frameData == 0) || (length < GP_MATRIX_BITMAP_RGB888_FRAME_SIZE))
+    {
+        return kGpMatrixStatusBadLength;
+    }
+
+    if (mode != kGpMatrixModeSolidFrame)
+    {
+        return kGpMatrixStatusUnsupported;
+    }
+
+    GpLedAction_RenderBitmapFrameRgb888(frameData, g_gpLedDefaultBrightness);
 
     return kGpMatrixStatusOk;
 }

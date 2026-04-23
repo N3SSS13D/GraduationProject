@@ -28,6 +28,7 @@ Requirements:
 9. Preserve the event-driven UART receive model in `GP_Port/transport/`; do not reintroduce per-call polling reads in `ReadPacket()`.
 10. For `16x16` pattern preview tasks, prefer the host-side debug websocket path: the local Python script should run a dedicated websocket server for data transport, the `AI端` should connect as client and send touch-triggered requests, and the host should respond with compact preview payloads such as `bitmap_rows_hex + primary_rgb888`. The `AI端` should render the returned pattern locally in the Preview area and print websocket configuration and payload logs in monitor. Keep MCP focused on LLM-facing control/tool integration; use HTTP preview only as a secondary fallback for snapshots or generic PNG/JPEG preview debugging.
 11. For LLM-facing MCP bridge scripts, use self-descriptive filenames, tool names, and argument names so the intent is obvious without reading the implementation. Prefer names like `gp_display_mcp_bridge.py`, `draw_python`, `show_text`, `python_source`, `frame_interval_ms`, and `text`.
+12. When the `AI端` needs to forward a `16x16` pattern to the `LED端` over Bluetooth, prefer compact `bitmap_rows + RGB888` transfer instead of expanding to a full `256`-byte RGB332 frame. Keep `FrameChunk` sizing consistent on both sides with the shared protocol constant `64` bytes.
 
 Useful tools:
 

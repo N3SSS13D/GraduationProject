@@ -129,7 +129,7 @@ python External/xiaozhi-esp32/GP_Port/gp_display_mcp_bridge.py
 - 同时启动本地 HTTP 端点：`/snapshot`、`/control/snapshot`、`/control/matrix_16x16`、`/control/matrix_prompt_16x16`、`/control/device_preview`、`/status`。
 - 对外暴露更适合 LLM 直接理解的 MCP 工具：`self.screen.matrix_16x16.draw_frame`、`self.screen.matrix_16x16.draw_python`、`self.screen.matrix_16x16.show_text`。
 - 设备侧 `S` 按键把 PNG 直接上传到 `/snapshot`。
-- 调试菜单触摸按钮不再走旧的 LLM/MCP 触摸分析链路；其中 `Draw` 按键会通过独立 debug websocket 向主机发起请求，由主机随机选择 `16x16` 图案并返回位图数据，再由 `AI端` 本地绘制到 `Preview` 区域。
+- 调试菜单触摸按钮不再走旧的 LLM/MCP 触摸分析链路；其中 `Draw` 按键会通过独立 debug websocket 向主机发起请求，由主机随机选择 `16x16` 图案并返回位图数据，再由 `AI端` 本地绘制到 `Preview` 区域，并继续通过蓝牙把紧凑 `bitmap + RGB888` 图案转发到 `LED端` 显示。
 - 主机侧可通过 `/control/snapshot` 请求脚本调用设备 MCP 工具 `self.screen.debug_snapshot.capture`。
 - 主机侧也可通过 MCP 直接调用 `self.screen.matrix_16x16.draw_python` 生成任意 `16x16` 图案，或调用 `self.screen.matrix_16x16.show_text` 逐帧显示文字。
 - 主机侧也可通过 `/control/device_preview` 按 `device_ip` 把本地 PNG/JPEG 直接发到设备 `POST /debug/preview_image`，设备收到后会在二级菜单预览卡片中显示。
@@ -186,7 +186,7 @@ python GP_Port/gp_display_mcp_bridge.py \
 - 本地脚本握手后会持续等待，同时接受主机 `/control/snapshot` 请求和 `AI端` 发起的 debug websocket 连接。
 - 可返回 `tools/list`，包含计算器、调试圆点和截图相关工具。
 - 设备触摸 `S` 走本地 HTTP `/snapshot` 上传链路。
-- 调试菜单 `Draw` 按键走 `AI端 debug websocket client -> 本地 Python websocket server -> matrix_pattern_result -> AI 本地 Preview`。
+- 调试菜单 `Draw` 按键走 `AI端 debug websocket client -> 本地 Python websocket server -> matrix_pattern_result -> AI 本地 Preview -> Bluetooth compact bitmap relay -> LED端`。
 - 主机触发截图走 `/control/snapshot` -> MCP `self.screen.debug_snapshot.capture` -> 设备执行上传。
 
 ## English

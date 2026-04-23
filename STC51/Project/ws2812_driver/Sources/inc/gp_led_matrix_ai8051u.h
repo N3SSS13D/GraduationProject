@@ -25,6 +25,7 @@ typedef struct
     uint8_t transportEndpoint;
     uint8_t brightness;
     uint8_t mode;
+    uint8_t frameFormat;
     uint8_t lastSequence;
     uint8_t lastCommand;
     uint8_t lastStatus;

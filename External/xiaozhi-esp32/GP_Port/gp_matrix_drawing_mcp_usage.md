@@ -163,3 +163,5 @@ for y in range(0, 16, 4):
 - Single-frame tools prefer debug websocket delivery when available.
 - Single-frame tools can fall back to the existing HTTP preview flow.
 - Text display is intended to use the debug websocket path.
+- After the `AI端` receives `matrix_pattern_result`, it now forwards `bitmap_rows + RGB888` to the `LED端` over Bluetooth using the compact frame format instead of expanding to a full RGB332 frame.
+- Keep Bluetooth `FrameChunk` sizing aligned with the shared protocol constant: `64` bytes on both the `AI端` and `LED端`.

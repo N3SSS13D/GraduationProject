@@ -21,6 +21,9 @@ GpLedControlMode GpLedAction_GetControlMode(void);
 uint8_t GpLedAction_ShouldBypassDrawScheduler(void);
 GpMatrixStatusCode GpLedAction_ApplyAction(const GpMatrixActionPayload xdata *payload);
 GpMatrixStatusCode GpLedAction_ApplyFrameRgb332(const uint8_t xdata *frameData, uint16_t length, GpMatrixMode mode);
+GpMatrixStatusCode GpLedAction_ApplyFrameBitmapRgb888(const uint8_t xdata *frameData,
+                                                      uint16_t length,
+                                                      GpMatrixMode mode);
 GpMatrixStatusCode GpLedAction_ApplyGlyphRows(const uint8_t xdata *glyphData,
                                               uint16_t length,
                                               uint8_t glyphCount,

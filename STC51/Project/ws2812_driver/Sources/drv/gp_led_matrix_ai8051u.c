@@ -60,6 +60,7 @@ static void GpLedMatrixAi8051u_ResetFrameTransfer(GpLedMatrixAi8051uContext xdat
 {
     context->expectedBytes = 0U;
     context->receivedBytes = 0U;
+    context->frameFormat = 0U;
 }
 
 static void GpLedMatrixAi8051u_ResetGlyphTransfer(GpLedMatrixAi8051uContext xdata *context)
@@ -300,23 +301,41 @@ static GpMatrixStatusCode GpLedMatrixAi8051u_HandleSetAction(void)
 
 static GpMatrixStatusCode GpLedMatrixAi8051u_HandleFrameStart(void)
 {
+    uint8_t frameFormat;
+
     if (g_gpMatrixPayloadLength != GP_MATRIX_FRAME_START_PAYLOAD_BYTES)
     {
         return kGpMatrixStatusBadLength;
     }
-    if ((g_gpMatrixPayload[0] != GP_MATRIX_PAYLOAD_FORMAT_RGB332)
-        || (g_gpMatrixPayload[1] != GP_MATRIX_WIDTH)
+    if ((g_gpMatrixPayload[1] != GP_MATRIX_WIDTH)
         || (g_gpMatrixPayload[2] != GP_MATRIX_HEIGHT))
     {
         return kGpMatrixStatusUnsupported;
     }
 
+    frameFormat = g_gpMatrixPayload[0];
     g_gpMatrixTotalBytes = GpLedMatrixAi8051u_ReadLe16(&g_gpMatrixPayload[3]);
-    if (g_gpMatrixTotalBytes > GP_MATRIX_RGB332_FRAME_SIZE)
+    if (frameFormat == GP_MATRIX_PAYLOAD_FORMAT_RGB332)
     {
-        return kGpMatrixStatusBadLength;
+        if (g_gpMatrixTotalBytes > GP_MATRIX_RGB332_FRAME_SIZE)
+        {
+            return kGpMatrixStatusBadLength;
+        }
+    }
+    else if (frameFormat == GP_MATRIX_PAYLOAD_FORMAT_BITMAP_RGB888)
+    {
+        if (g_gpMatrixTotalBytes != GP_MATRIX_BITMAP_RGB888_FRAME_SIZE)
+        {
+            return kGpMatrixStatusBadLength;
+        }
+    }
+    else
+    {
+        return kGpMatrixStatusUnsupported;
     }
 
+    /* Compact bitmap uploads reuse the same staged frame buffer as full RGB332 frames. */
+    g_gpMatrixCtx->frameFormat = frameFormat;
     g_gpMatrixCtx->expectedBytes = g_gpMatrixTotalBytes;
     g_gpMatrixCtx->receivedBytes = 0U;
     return kGpMatrixStatusOk;
@@ -370,7 +389,16 @@ static GpMatrixStatusCode GpLedMatrixAi8051u_HandleFrameCommit(void)
         return kGpMatrixStatusBadLength;
     }
 
-    status = GpLedAction_ApplyFrameRgb332(g_gpMatrixCtx->frameBuffer, g_gpMatrixCtx->receivedBytes, mode);
+    if (g_gpMatrixCtx->frameFormat == GP_MATRIX_PAYLOAD_FORMAT_BITMAP_RGB888)
+    {
+        status = GpLedAction_ApplyFrameBitmapRgb888(g_gpMatrixCtx->frameBuffer,
+                                                    g_gpMatrixCtx->receivedBytes,
+                                                    mode);
+    }
+    else
+    {
+        status = GpLedAction_ApplyFrameRgb332(g_gpMatrixCtx->frameBuffer, g_gpMatrixCtx->receivedBytes, mode);
+    }
     GpLedMatrixAi8051u_ResetFrameTransfer(g_gpMatrixCtx);
     return status;
 }

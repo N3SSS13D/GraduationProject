@@ -105,6 +105,7 @@
 - `frame_rgb332_hex` 需要提供 `256` 个 RGB332 字节，即 `512` 个十六进制字符。
 - 也可使用紧凑编码：`bitmap_rows_hex` 提供 `16` 行位图，共 `64` 个十六进制字符；`primary_rgb888` 提供单个前景色，共 `3` 字节。位图中 `1` 表示图案像素，`0` 表示黑色背景。
 - 当 `AI端` debug websocket 已连接时，主机优先通过 websocket 下发 `matrix_pattern_result` 预览数据。
+- 当 `AI端` 需要继续把图案转发到 `LED端` 时，会优先把 `bitmap_rows_hex + RGB888` 编码成紧凑蓝牙帧，而不是回退到 `256` 字节 RGB332 整帧上传。
 - 当 websocket 不可用且返回里包含完整 `frame_rgb332_hex` 时，主机回退到原有的 HTTP 预览链路。
 - 蓝牙 `LED端` 发送链路仍可继续使用现有矩阵帧协议，但 `AI端` 预览不再依赖主机直接向设备私网地址推送图片。
 

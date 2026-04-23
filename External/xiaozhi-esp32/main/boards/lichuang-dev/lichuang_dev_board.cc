@@ -1144,14 +1144,28 @@ private:
                                                  scheduled_background_rgb,
                                                  transcript_text]() {
                 auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display_);
+                auto* matrix_led = led_matrix_.get();
+                bool led_forwarded = false;
 
                 if (debug_display != nullptr) {
                     debug_display->ApplyMatrixBitmapPreview(scheduled_rows,
                                                             scheduled_primary_rgb,
                                                             scheduled_background_rgb);
                 }
+
+                if (matrix_led != nullptr) {
+                    led_forwarded = matrix_led->ShowBitmapFrame(scheduled_rows.data(),
+                                                                scheduled_rows.size(),
+                                                                scheduled_primary_rgb,
+                                                                scheduled_background_rgb,
+                                                                kGpMatrixModeSolidFrame);
+                    if (!led_forwarded) {
+                        ESP_LOGW(TAG, "[DBG_WS] failed to relay pattern to LED side over Bluetooth");
+                    }
+                }
+
                 if (display_ != nullptr) {
-                    display_->ShowNotification("WS pattern received", 1500);
+                    display_->ShowNotification(led_forwarded ? "WS pattern relayed" : "WS pattern preview only", 1500);
                     if (!transcript_text.empty()) {
                         display_->SetChatMessage("system", transcript_text.c_str());
                     }
@@ -2097,7 +2111,11 @@ cleanup:
                     if (debug_display != nullptr) {
                         debug_display->ApplyMatrixBitmapPreview(*bitmap_rows, *primary_rgb, 0x000000U);
                     }
-                    applied = matrix_led->ShowRgb332Frame(frame.data(), frame.size(), kGpMatrixModeSolidFrame);
+                    applied = matrix_led->ShowBitmapFrame(bitmap_rows->data(),
+                                                          bitmap_rows->size(),
+                                                          *primary_rgb,
+                                                          0x000000U,
+                                                          kGpMatrixModeSolidFrame);
 
                     char rgb_text[16] = {0};
                     std::snprintf(rgb_text, sizeof(rgb_text), "#%06X", static_cast<unsigned int>(*primary_rgb & 0xFFFFFFU));

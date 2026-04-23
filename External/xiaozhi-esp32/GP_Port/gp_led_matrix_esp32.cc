@@ -53,6 +53,12 @@ uint8_t ExtractRgb888Channel(uint32_t rgb, uint8_t shift) {
     return static_cast<uint8_t>((rgb >> shift) & 0xFFU);
 }
 
+void WriteRgb888(uint8_t* dest, uint32_t rgb) {
+    dest[0] = ExtractRgb888Channel(rgb, 16);
+    dest[1] = ExtractRgb888Channel(rgb, 8);
+    dest[2] = ExtractRgb888Channel(rgb, 0);
+}
+
 uint8_t BuildMatrixAnimStep(const GpColorDebugState& state) {
     if (state.animation_period_ms <= 900U) {
         return 2U;
@@ -296,6 +302,55 @@ bool GpLedMatrixEsp32::ShowRgb332Frame(const uint8_t* frame, size_t length, GpMa
         payload[0] = static_cast<uint8_t>(offset / GP_MATRIX_MAX_CHUNK_DATA);
         payload[1] = chunk_size;
         std::memcpy(payload.data() + sizeof(GpMatrixFrameChunkPrefix), frame + offset, chunk_size);
+        if (!SendCommand(kGpMatrixCommandFrameChunk, payload.data(), payload.size(), true)) {
+            return false;
+        }
+    }
+
+    uint8_t mode_payload[1] = {static_cast<uint8_t>(mode)};
+    return SendCommand(kGpMatrixCommandFrameCommit, mode_payload, sizeof(mode_payload), true);
+}
+
+bool GpLedMatrixEsp32::ShowBitmapFrame(const uint16_t* bitmap_rows,
+                                       size_t row_count,
+                                       uint32_t primary_rgb888,
+                                       uint32_t background_rgb888,
+                                       GpMatrixMode mode) {
+    std::array<uint8_t, GP_MATRIX_BITMAP_RGB888_FRAME_SIZE> frame_payload = {};
+    size_t row_index;
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if ((bitmap_rows == nullptr) || (row_count != GP_MATRIX_HEIGHT)) {
+        return false;
+    }
+
+    for (row_index = 0; row_index < GP_MATRIX_HEIGHT; ++row_index) {
+        frame_payload[row_index * 2U] = static_cast<uint8_t>(bitmap_rows[row_index] & 0xFFU);
+        frame_payload[row_index * 2U + 1U] = static_cast<uint8_t>((bitmap_rows[row_index] >> 8) & 0xFFU);
+    }
+    WriteRgb888(frame_payload.data() + GP_MATRIX_BITMAP_ROWS_BYTES, primary_rgb888);
+    WriteRgb888(frame_payload.data() + GP_MATRIX_BITMAP_ROWS_BYTES + 3U, background_rgb888);
+
+    uint8_t start_payload[GP_MATRIX_FRAME_START_PAYLOAD_BYTES] = {
+        GP_MATRIX_PAYLOAD_FORMAT_BITMAP_RGB888,
+        GP_MATRIX_WIDTH,
+        GP_MATRIX_HEIGHT,
+        static_cast<uint8_t>(frame_payload.size() & 0xFFU),
+        static_cast<uint8_t>((frame_payload.size() >> 8) & 0xFFU),
+    };
+    if (!SendCommand(kGpMatrixCommandFrameStart, start_payload, sizeof(start_payload), true)) {
+        return false;
+    }
+
+    /* Compact bitmap uploads stay on the same ACK-gated frame path as full RGB332 frames. */
+    for (size_t offset = 0; offset < frame_payload.size(); offset += GP_MATRIX_MAX_CHUNK_DATA) {
+        const auto chunk_size = static_cast<uint8_t>(
+            std::min(frame_payload.size() - offset, static_cast<size_t>(GP_MATRIX_MAX_CHUNK_DATA)));
+        std::vector<uint8_t> payload(sizeof(GpMatrixFrameChunkPrefix) + chunk_size);
+        payload[0] = static_cast<uint8_t>(offset / GP_MATRIX_MAX_CHUNK_DATA);
+        payload[1] = chunk_size;
+        std::memcpy(payload.data() + sizeof(GpMatrixFrameChunkPrefix), frame_payload.data() + offset, chunk_size);
         if (!SendCommand(kGpMatrixCommandFrameChunk, payload.data(), payload.size(), true)) {
             return false;
         }

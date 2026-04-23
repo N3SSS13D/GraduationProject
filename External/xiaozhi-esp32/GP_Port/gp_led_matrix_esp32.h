@@ -44,6 +44,13 @@ public:
     /* Send one full RGB332 frame through the current matrix transport. */
     bool ShowRgb332Frame(const uint8_t* frame, size_t length, GpMatrixMode mode = kGpMatrixModeSolidFrame);
 
+    /* Send one compact bitmap plus foreground/background RGB888 colors over Bluetooth. */
+    bool ShowBitmapFrame(const uint16_t* bitmap_rows,
+                         size_t row_count,
+                         uint32_t primary_rgb888,
+                         uint32_t background_rgb888 = 0x000000U,
+                         GpMatrixMode mode = kGpMatrixModeSolidFrame);
+
     /* Send one built-in 16x16 RGB332 frame preset through the current matrix transport. */
     bool ShowRgb332FramePreset(GpColorDebugPreset preset);
 
