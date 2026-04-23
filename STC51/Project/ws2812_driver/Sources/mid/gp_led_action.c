@@ -5,6 +5,7 @@
 #include "ws2812_drv.h"
 
 #define GP_LED_COMM_ACTIVE_TIMEOUT_TICKS 300U
+#define GP_LED_DEBUG_FLOW_INTERVAL_TICKS 100U
 
 static uint8_t g_gpLedRemoteActive = 0U;
 static uint8_t g_gpLedDirectFrameActive = 0U;
@@ -13,7 +14,10 @@ static uint8_t g_gpLedCommOnline = 0U;
 static uint8_t g_gpLedManualOverrideEnabled = 0U;
 static uint8_t g_gpLedManualOverrideOnline = 0U;
 static uint8_t g_gpLedEffectiveOnline = 0U;
+static uint8_t g_gpLedDebugFlowEnabled = 0U;
+static uint8_t g_gpLedDebugFlowIndex = 0U;
 static uint16_t g_gpLedCommActiveTicks = 0U;
+static uint16_t g_gpLedDebugFlowTicks = 0U;
 /* Direct-frame rendering shares a single scratch area to reduce EDATA usage. */
 static DrawDrv_RenderConfig_t xdata g_gpLedRenderCfg;
 static uint8_t xdata g_gpLedTempRow = 0U;
@@ -52,7 +56,7 @@ static void GpLedAction_UpdateControlMode(void)
     }
 
     g_gpLedEffectiveOnline = nextOnline;
-    if (g_gpLedEffectiveOnline == 0U)
+    if ((g_gpLedEffectiveOnline == 0U) && (g_gpLedManualOverrideEnabled != 0U))
     {
         GpLedAction_ReleaseRemoteMode();
     }
@@ -199,7 +203,10 @@ void GpLedAction_Init(void)
     g_gpLedManualOverrideEnabled = 0U;
     g_gpLedManualOverrideOnline = 0U;
     g_gpLedEffectiveOnline = 0U;
+    g_gpLedDebugFlowEnabled = 0U;
+    g_gpLedDebugFlowIndex = 0U;
     g_gpLedCommActiveTicks = 0U;
+    g_gpLedDebugFlowTicks = 0U;
 }
 
 void GpLedAction_SetBrightness(uint8_t brightness)
@@ -218,6 +225,9 @@ void GpLedAction_ReleaseRemoteMode(void)
 {
     g_gpLedRemoteActive = 0U;
     g_gpLedDirectFrameActive = 0U;
+    g_gpLedDebugFlowEnabled = 0U;
+    g_gpLedDebugFlowTicks = 0U;
+    PORT2_ClearDebugLeds();
     DrawDrv_RequestRebuild();
 }
 
@@ -237,6 +247,17 @@ void GpLedAction_Task10ms(void)
         {
             g_gpLedCommOnline = 0U;
             GpLedAction_UpdateControlMode();
+        }
+    }
+
+    if (g_gpLedDebugFlowEnabled != 0U)
+    {
+        g_gpLedDebugFlowTicks++;
+        if (g_gpLedDebugFlowTicks >= GP_LED_DEBUG_FLOW_INTERVAL_TICKS)
+        {
+            g_gpLedDebugFlowTicks = 0U;
+            PORT2_SetDebugLedDigit(g_gpLedDebugFlowIndex);
+            g_gpLedDebugFlowIndex = (uint8_t)((g_gpLedDebugFlowIndex + 1U) % (GP_MATRIX_DEBUG_LED_MAX_INDEX + 1U));
         }
     }
 }
@@ -276,6 +297,29 @@ GpLedControlMode GpLedAction_GetControlMode(void)
 uint8_t GpLedAction_ShouldBypassDrawScheduler(void)
 {
     return g_gpLedDirectFrameActive;
+}
+
+GpMatrixStatusCode GpLedAction_SetDebugLedFlow(uint8_t enable)
+{
+    if (GpLedAction_IsHostControlEnabled() == 0U)
+    {
+        return kGpMatrixStatusBusy;
+    }
+
+    if (enable != 0U)
+    {
+        g_gpLedDebugFlowEnabled = 1U;
+        g_gpLedDebugFlowIndex = 0U;
+        g_gpLedDebugFlowTicks = 0U;
+        PORT2_SetDebugLedDigit(g_gpLedDebugFlowIndex);
+        g_gpLedDebugFlowIndex = 1U;
+        return kGpMatrixStatusOk;
+    }
+
+    g_gpLedDebugFlowEnabled = 0U;
+    g_gpLedDebugFlowTicks = 0U;
+    PORT2_ClearDebugLeds();
+    return kGpMatrixStatusOk;
 }
 
 GpMatrixStatusCode GpLedAction_ApplyAction(const GpMatrixActionPayload xdata *payload)
@@ -382,6 +426,8 @@ GpMatrixStatusCode GpLedAction_ApplyFrameBitmapRgb888(const uint8_t xdata *frame
                                                       uint16_t length,
                                                       GpMatrixMode mode)
 {
+    const uint8_t xdata *colorData;
+
     if (GpLedAction_IsHostControlEnabled() == 0U)
     {
         return kGpMatrixStatusBusy;
@@ -397,7 +443,18 @@ GpMatrixStatusCode GpLedAction_ApplyFrameBitmapRgb888(const uint8_t xdata *frame
         return kGpMatrixStatusUnsupported;
     }
 
+    colorData = &frameData[GP_MATRIX_BITMAP_ROWS_BYTES];
     GpLedAction_RenderBitmapFrameRgb888(frameData, g_gpLedDefaultBrightness);
+    printf("[GP_DRAW] bmp len=%u fg=%02X%02X%02X bg=%02X%02X%02X bri=%u cols=%u\r\n",
+           (unsigned int)length,
+           (unsigned int)colorData[0],
+           (unsigned int)colorData[1],
+           (unsigned int)colorData[2],
+           (unsigned int)colorData[3],
+           (unsigned int)colorData[4],
+           (unsigned int)colorData[5],
+           (unsigned int)g_gpLedDefaultBrightness,
+           (unsigned int)WS2812DRV_GetActiveCols());
 
     return kGpMatrixStatusOk;
 }

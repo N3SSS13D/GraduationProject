@@ -19,6 +19,7 @@ uint8_t GpLedAction_IsOnlineModeActive(void);
 uint8_t GpLedAction_IsHostControlEnabled(void);
 GpLedControlMode GpLedAction_GetControlMode(void);
 uint8_t GpLedAction_ShouldBypassDrawScheduler(void);
+GpMatrixStatusCode GpLedAction_SetDebugLedFlow(uint8_t enable);
 GpMatrixStatusCode GpLedAction_ApplyAction(const GpMatrixActionPayload xdata *payload);
 GpMatrixStatusCode GpLedAction_ApplyFrameRgb332(const uint8_t xdata *frameData, uint16_t length, GpMatrixMode mode);
 GpMatrixStatusCode GpLedAction_ApplyFrameBitmapRgb888(const uint8_t xdata *frameData,

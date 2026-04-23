@@ -2,6 +2,7 @@
 #include "gp_led_action.h"
 #include "gp_led_matrix_ai8051u.h"
 #include "gp_led_matrix_bt_debug.h"
+#include "port.h"
 
 #define GP_MATRIX_PROTOCOL_MIN_PACKET_LENGTH GP_MATRIX_PACKET_OVERHEAD_SIZE
 #define GP_MATRIX_STATUS_PAYLOAD_BYTES 4U
@@ -70,6 +71,91 @@ static void GpLedMatrixAi8051u_ResetGlyphTransfer(GpLedMatrixAi8051uContext xdat
     context->glyphCount = 0U;
     context->glyphWidth = 0U;
     context->glyphSpacing = 0U;
+}
+
+static const char *GpLedMatrixAi8051u_CommandName(uint8_t command)
+{
+    switch (command)
+    {
+        case kGpMatrixCommandPing:
+            return "ping";
+
+        case kGpMatrixCommandSetBrightness:
+            return "bri";
+
+        case kGpMatrixCommandSetMode:
+            return "mode";
+
+        case kGpMatrixCommandStateHint:
+            return "state";
+
+        case kGpMatrixCommandSetAction:
+            return "act";
+
+        case kGpMatrixCommandSetDebugLed:
+            return "dled";
+
+        case kGpMatrixCommandSetDebugLedFlow:
+            return "dflw";
+
+        case kGpMatrixCommandFrameStart:
+            return "fstr";
+
+        case kGpMatrixCommandFrameChunk:
+            return "fchk";
+
+        case kGpMatrixCommandFrameCommit:
+            return "fcom";
+
+        case kGpMatrixCommandScrollGlyphStart:
+            return "gstr";
+
+        case kGpMatrixCommandScrollGlyphChunk:
+            return "gchk";
+
+        case kGpMatrixCommandScrollGlyphCommit:
+            return "gcom";
+
+        case kGpMatrixCommandHeartbeat:
+            return "beat";
+
+        case kGpMatrixCommandStatus:
+            return "stat";
+
+        case kGpMatrixCommandError:
+            return "err";
+
+        default:
+            return "cmd";
+    }
+}
+
+static void GpLedMatrixAi8051u_LogPacketRx(uint8_t command, uint8_t sequence, uint16_t payloadLength)
+{
+    printf("[GP_RX] cmd=%s seq=%u len=%u\r\n",
+           GpLedMatrixAi8051u_CommandName(command),
+           (unsigned int)sequence,
+           (unsigned int)payloadLength);
+}
+
+static void GpLedMatrixAi8051u_LogPacketDrop(uint8_t command, uint8_t sequence, const char *reason)
+{
+    printf("[GP_DROP] cmd=%s seq=%u reason=%s\r\n",
+           GpLedMatrixAi8051u_CommandName(command),
+           (unsigned int)sequence,
+           reason);
+}
+
+static void GpLedMatrixAi8051u_LogReply(uint8_t replyCommand,
+                                        uint8_t sequence,
+                                        GpMatrixStatusCode status,
+                                        uint8_t sourceCommand)
+{
+    printf("[GP_TX] cmd=%s seq=%u for=%s st=%u\r\n",
+           GpLedMatrixAi8051u_CommandName(replyCommand),
+           (unsigned int)sequence,
+           GpLedMatrixAi8051u_CommandName(sourceCommand),
+           (unsigned int)status);
 }
 
 static void GpLedMatrixAi8051u_ResetPacketAssembly(void)
@@ -214,6 +300,8 @@ static void GpLedMatrixAi8051u_PushStreamByte(GpLedMatrixAi8051uContext xdata *c
 
 static void GpLedMatrixAi8051u_BuildReply(GpMatrixStatusCode status)
 {
+    uint8_t replyCommand;
+
     if (g_gpMatrixCtx == 0)
     {
         return;
@@ -233,7 +321,8 @@ static void GpLedMatrixAi8051u_BuildReply(GpMatrixStatusCode status)
     g_gpMatrixCtx->txBuffer[0] = GP_MATRIX_PROTOCOL_MAGIC0;
     g_gpMatrixCtx->txBuffer[1] = GP_MATRIX_PROTOCOL_MAGIC1;
     g_gpMatrixCtx->txBuffer[2] = GP_MATRIX_PROTOCOL_VERSION;
-    g_gpMatrixCtx->txBuffer[3] = (status == kGpMatrixStatusOk) ? (uint8_t)kGpMatrixCommandStatus : (uint8_t)kGpMatrixCommandError;
+    replyCommand = (status == kGpMatrixStatusOk) ? (uint8_t)kGpMatrixCommandStatus : (uint8_t)kGpMatrixCommandError;
+    g_gpMatrixCtx->txBuffer[3] = replyCommand;
     g_gpMatrixCtx->txBuffer[4] = g_gpMatrixSequence;
     g_gpMatrixCtx->txBuffer[5] = 0U;
     g_gpMatrixCtx->txBuffer[6] = GP_MATRIX_STATUS_PAYLOAD_BYTES;
@@ -245,7 +334,9 @@ static void GpLedMatrixAi8051u_BuildReply(GpMatrixStatusCode status)
         GpMatrixComputeChecksum(g_gpMatrixCtx->txBuffer, g_gpMatrixPacketLength - 1U);
     g_gpMatrixCtx->txLength = g_gpMatrixPacketLength;
     g_gpMatrixCtx->txPending = 1U;
+    g_gpMatrixCtx->packetReplyPrepared = 1U;
     g_gpMatrixCtx->lastStatus = (uint8_t)status;
+    GpLedMatrixAi8051u_LogReply(replyCommand, g_gpMatrixSequence, status, g_gpMatrixCommand);
 }
 
 static GpMatrixStatusCode GpLedMatrixAi8051u_HandleSetBrightness(void)
@@ -297,6 +388,49 @@ static GpMatrixStatusCode GpLedMatrixAi8051u_HandleSetAction(void)
     g_gpMatrixAction.gradient_span = g_gpMatrixPayload[16];
     g_gpMatrixAction.flags = g_gpMatrixPayload[17];
     return GpLedAction_ApplyAction(&g_gpMatrixAction);
+}
+
+static GpMatrixStatusCode GpLedMatrixAi8051u_HandleSetDebugLed(void)
+{
+    if (g_gpMatrixPayloadLength != GP_MATRIX_DEBUG_LED_PAYLOAD_BYTES)
+    {
+        return kGpMatrixStatusBadLength;
+    }
+
+    if (g_gpMatrixPayload[0] == GP_MATRIX_DEBUG_LED_CLEAR)
+    {
+        (void)GpLedAction_SetDebugLedFlow(0U);
+        PORT2_ClearDebugLeds();
+        return kGpMatrixStatusOk;
+    }
+
+    if (g_gpMatrixPayload[0] > GP_MATRIX_DEBUG_LED_MAX_INDEX)
+    {
+        return kGpMatrixStatusUnsupported;
+    }
+
+    (void)GpLedAction_SetDebugLedFlow(0U);
+    PORT2_SetDebugLedDigit(g_gpMatrixPayload[0]);
+    return kGpMatrixStatusOk;
+}
+
+static GpMatrixStatusCode GpLedMatrixAi8051u_HandleSetDebugLedFlow(void)
+{
+    if (g_gpMatrixPayloadLength != GP_MATRIX_DEBUG_LED_FLOW_PAYLOAD_BYTES)
+    {
+        return kGpMatrixStatusBadLength;
+    }
+
+    if (g_gpMatrixPayload[0] == GP_MATRIX_DEBUG_LED_FLOW_START)
+    {
+        return GpLedAction_SetDebugLedFlow(1U);
+    }
+    if (g_gpMatrixPayload[0] == GP_MATRIX_DEBUG_LED_FLOW_STOP)
+    {
+        return GpLedAction_SetDebugLedFlow(0U);
+    }
+
+    return kGpMatrixStatusUnsupported;
 }
 
 static GpMatrixStatusCode GpLedMatrixAi8051u_HandleFrameStart(void)
@@ -495,28 +629,33 @@ static GpMatrixStatusCode GpLedMatrixAi8051u_ProcessPacket(GpLedMatrixAi8051uCon
     {
         return kGpMatrixStatusUnsupported;
     }
-    if (GpMatrixComputeChecksum(packet, (uint16_t)packetLength - 1U) != packet[packetLength - 1U])
-    {
-        return kGpMatrixStatusBadChecksum;
-    }
 
     command = packet[3];
     sequence = packet[4];
     payloadLength = GpLedMatrixAi8051u_ReadLe16(&packet[6]);
+    g_gpMatrixCtx = context;
+    g_gpMatrixCommand = command;
+    g_gpMatrixSequence = sequence;
+
+    if (GpMatrixComputeChecksum(packet, (uint16_t)packetLength - 1U) != packet[packetLength - 1U])
+    {
+        GpLedMatrixAi8051u_LogPacketDrop(command, sequence, "checksum");
+        return kGpMatrixStatusBadChecksum;
+    }
+
     expectedLength = (uint8_t)(GP_MATRIX_PACKET_HEADER_SIZE + payloadLength + 1U);
     if (expectedLength != packetLength)
     {
+        GpLedMatrixAi8051u_LogPacketDrop(command, sequence, "length");
         return kGpMatrixStatusBadLength;
     }
 
     context->lastCommand = command;
     context->lastSequence = sequence;
     payload = &packet[GP_MATRIX_PACKET_HEADER_SIZE];
-    g_gpMatrixCtx = context;
-    g_gpMatrixCommand = command;
-    g_gpMatrixSequence = sequence;
     g_gpMatrixPayload = payload;
     g_gpMatrixPayloadLength = payloadLength;
+    GpLedMatrixAi8051u_LogPacketRx(command, sequence, payloadLength);
     GpLedAction_NotifyCommunicationActive();
     status = kGpMatrixStatusUnsupported;
 
@@ -537,6 +676,14 @@ static GpMatrixStatusCode GpLedMatrixAi8051u_ProcessPacket(GpLedMatrixAi8051uCon
 
         case kGpMatrixCommandSetAction:
             status = GpLedMatrixAi8051u_HandleSetAction();
+            break;
+
+        case kGpMatrixCommandSetDebugLed:
+            status = GpLedMatrixAi8051u_HandleSetDebugLed();
+            break;
+
+        case kGpMatrixCommandSetDebugLedFlow:
+            status = GpLedMatrixAi8051u_HandleSetDebugLedFlow();
             break;
 
         case kGpMatrixCommandFrameStart:
@@ -682,6 +829,7 @@ void GpLedMatrixAi8051u_Poll(GpLedMatrixAi8051uContext xdata *context)
         g_gpMatrixStreamIdleTicks++;
         if (g_gpMatrixStreamIdleTicks >= GP_MATRIX_UART2_STREAM_IDLE_RESET_TICKS)
         {
+            printf("[GP_SYNC] idle_reset len=%u\r\n", (unsigned int)g_gpMatrixStreamLength);
             GpLedMatrixAi8051u_ResetPacketAssembly();
         }
     }

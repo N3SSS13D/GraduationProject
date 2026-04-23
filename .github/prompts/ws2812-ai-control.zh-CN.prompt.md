@@ -36,6 +36,12 @@ model: "GPT-5 (copilot)"
 9. 若任务涉及 Wi-Fi 图片预览链路，先从 `AI端` monitor 日志 `WiFi STA IP: ...` 获取设备地址，再优先使用主机脚本 `/control/device_preview` 将本地 PNG/JPEG 发送到 `http://<device_ip>:8781/debug/preview_image`；设备侧应复用现有预览路径，并同步显示到调试二级菜单预览卡片中。
 10. 面向 LLM 的 MCP 桥接脚本、工具名和参数名必须尽量自解释，优先使用一眼可懂的命名，例如 `gp_display_mcp_bridge.py`、`draw_python`、`show_text`、`python_source`、`frame_interval_ms`、`text`。
 11. 当 `AI端` 需要把 `16x16` 图案通过蓝牙转发到 `LED端` 时，优先使用紧凑 `bitmap_rows + RGB888` 传输，而不是先展开成 `256` 字节 RGB332 整帧；`FrameChunk` 的分片基准必须在两端保持一致，统一使用共享协议里的 `64` 字节常量。
+12. 蓝牙联调时，以 `LED端` 的协议级 `[GP_TX]`、`[GP_RX]`、`[GP_DROP]`、`[GP_SYNC]` 日志为准；`[BT_MON]` 只是一个有上限的原始 UART 抓包窗口，可能裁剪长包，不能单独据此判断整帧是否完整到达。
+13. 需要确认 `LED端` ACK 是否真实返回到 `AI端` 时，优先查看 `AI端` monitor 中新增的 `[BT_RX]` 日志；它会打印通过 HC-05 收到的完整协议回包摘要和原始十六进制内容。
+14. 如果任务需要点亮 `LED端` 板载调试 LED 做链路验证，必须使用独立的 GP 协议调试 LED 命令，不要再向 HC-05 发送裸 `LED n` 文本。
+15. 如果任务需要验证 `LED端` 是否能持续稳定接收协议包，而不仅是回一条短 ACK，优先让 `AI端` 创建 `1s` 周期任务，持续发送 GP 协议调试 LED 命令，让 `LED端` P2 调试 LED 按正常 ACK 流程做流水灯。
+16. 当 `SetAction` 这类短包能工作、而 `FrameChunk` 这类长包上传失败时，应先检查 `LED端` UART2 接收节奏与组包时机，再考虑修改位图渲染逻辑。
+17. `LED端` 显示通过蓝牙传输的图像后，应保持最后一帧显示，直到显式释放远程模式或本地切换控制模式；不能仅因为通信活动超时就自动清空。
 
 验证入口：
 

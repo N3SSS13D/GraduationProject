@@ -32,6 +32,55 @@ struct GpMatrixRxPacket {
     uint8_t data[kBtMaxPacketBytes] = {};
 };
 
+const char* CommandName(uint8_t command) {
+    switch (command) {
+    case kGpMatrixCommandPing:
+        return "ping";
+    case kGpMatrixCommandSetBrightness:
+        return "bri";
+    case kGpMatrixCommandSetMode:
+        return "mode";
+    case kGpMatrixCommandStateHint:
+        return "state";
+    case kGpMatrixCommandSetAction:
+        return "act";
+    case kGpMatrixCommandSetDebugLed:
+        return "dled";
+    case kGpMatrixCommandFrameStart:
+        return "fstr";
+    case kGpMatrixCommandFrameChunk:
+        return "fchk";
+    case kGpMatrixCommandFrameCommit:
+        return "fcom";
+    case kGpMatrixCommandScrollGlyphStart:
+        return "gstr";
+    case kGpMatrixCommandScrollGlyphChunk:
+        return "gchk";
+    case kGpMatrixCommandScrollGlyphCommit:
+        return "gcom";
+    case kGpMatrixCommandHeartbeat:
+        return "beat";
+    case kGpMatrixCommandStatus:
+        return "stat";
+    case kGpMatrixCommandError:
+        return "err";
+    default:
+        return "cmd";
+    }
+}
+
+void LogRxPacket(const uint8_t* data, size_t length) {
+    const uint16_t payload_length = static_cast<uint16_t>(data[6]) | (static_cast<uint16_t>(data[7]) << 8);
+
+    ESP_LOGI(TAG,
+             "[BT_RX] cmd=%s seq=%u payload=%u raw=%u",
+             CommandName(data[3]),
+             static_cast<unsigned int>(data[4]),
+             static_cast<unsigned int>(payload_length),
+             static_cast<unsigned int>(length));
+    ESP_LOG_BUFFER_HEX_LEVEL(TAG, data, length, ESP_LOG_INFO);
+}
+
 class GpMatrixBtUartTransport final : public GpMatrixTransport {
 public:
     GpMatrixBtUartTransport(int uart_port,
@@ -284,6 +333,7 @@ private:
 
         packet->length = static_cast<uint16_t>(packet_length);
         std::memcpy(packet->data, rx_buffer_.data(), packet_length);
+        LogRxPacket(packet->data, packet_length);
         rx_buffer_.erase(rx_buffer_.begin(), rx_buffer_.begin() + packet_length);
         return true;
     }

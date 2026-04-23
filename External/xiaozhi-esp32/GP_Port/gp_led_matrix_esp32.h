@@ -57,8 +57,11 @@ public:
     /* Send one packed glyph-row buffer for subtitle-style rendering. */
     bool ShowGlyphRows(const uint16_t* rows, size_t row_count, uint8_t glyph_count, uint8_t glyph_width, uint8_t glyph_spacing);
 
-    /* Send one LED debug text step over the HC-05 transparent UART link. */
+    /* Send one protocol-scoped debug LED command; use GP_MATRIX_DEBUG_LED_CLEAR to clear. */
     bool SendBtDebugLedCommand(uint8_t led_index);
+
+    /* Start or stop the LED-side 1-second debug LED chase test. */
+    bool SetDebugLedFlow(bool enable);
 
 private:
     using Rgb332Frame = std::array<uint8_t, GP_MATRIX_RGB332_FRAME_SIZE>;

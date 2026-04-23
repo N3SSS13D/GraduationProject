@@ -24,10 +24,10 @@
 #define UART2_PIN_MASK                  ((uint8_t)((1U << 2) | (1U << 3)))
 #define UART2_BT_AT_PIN_MASK            PIN_1
 #define UART2_RX_RING_SIZE              192U
-#define UART2_RX_DEBUG_SIZE             48U
+#define UART2_RX_DEBUG_SIZE             96U
 #define UART2_DMA_RX_BUFFER_SIZE        192U
 #define UART2_DMA_TX_BUFFER_SIZE        128U
-#define UART2_DMA_RX_IDLE_REARM_TICKS   2U
+#define UART2_DMA_RX_IDLE_REARM_TICKS   32U
 #define UART2_TX_READY_TIMEOUT          60000U
 #define UART2_S2CFG_INIT_VALUE          0x01U
 #define UART2_S2CON_INIT_VALUE          0x50U
@@ -426,8 +426,6 @@ uint8_t UART2_TakeRxOverflow(void)
 
 uint8_t UART2_TryPopByte(uint8_t *rxByte)
 {
-    UART2_ServiceRxDmaInternal();
-
     if ((rxByte == 0) || (g_uart2RxReadIndex == g_uart2RxWriteIndex))
     {
         return 0U;

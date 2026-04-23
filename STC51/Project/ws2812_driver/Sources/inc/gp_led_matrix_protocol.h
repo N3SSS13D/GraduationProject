@@ -36,6 +36,12 @@
 #define GP_MATRIX_FRAME_CHUNK_PREFIX_BYTES 2U
 #define GP_MATRIX_SCROLL_START_PAYLOAD_BYTES 5U
 #define GP_MATRIX_ACTION_PAYLOAD_BYTES 18U
+#define GP_MATRIX_DEBUG_LED_PAYLOAD_BYTES 1U
+#define GP_MATRIX_DEBUG_LED_FLOW_PAYLOAD_BYTES 1U
+#define GP_MATRIX_DEBUG_LED_CLEAR 0xFFU
+#define GP_MATRIX_DEBUG_LED_MAX_INDEX 7U
+#define GP_MATRIX_DEBUG_LED_FLOW_STOP 0x00U
+#define GP_MATRIX_DEBUG_LED_FLOW_START 0x01U
 
 typedef enum GpMatrixCommand {
     kGpMatrixCommandPing = 0x01,
@@ -43,6 +49,8 @@ typedef enum GpMatrixCommand {
     kGpMatrixCommandSetMode = 0x03,
     kGpMatrixCommandStateHint = 0x04,
     kGpMatrixCommandSetAction = 0x05,
+    kGpMatrixCommandSetDebugLed = 0x06,
+    kGpMatrixCommandSetDebugLedFlow = 0x07,
     kGpMatrixCommandFrameStart = 0x10,
     kGpMatrixCommandFrameChunk = 0x11,
     kGpMatrixCommandFrameCommit = 0x12,

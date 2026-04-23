@@ -1737,8 +1737,11 @@ cleanup:
         self->led_matrix_->RunStartupLinkTest();
 
         while (true) {
-            self->led_matrix_->SendBtDebugLedCommand(led_index);
-            led_index = static_cast<uint8_t>((led_index + 1U) % 8U);
+            if (!self->led_matrix_->SendBtDebugLedCommand(led_index)) {
+                ESP_LOGW(TAG, "P2 LED chase command failed: led=%u", static_cast<unsigned int>(led_index));
+            }
+
+            led_index = static_cast<uint8_t>((led_index + 1U) % (GP_MATRIX_DEBUG_LED_MAX_INDEX + 1U));
             vTaskDelay(pdMS_TO_TICKS(kBtBridgeTickMs));
         }
     }

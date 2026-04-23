@@ -29,6 +29,11 @@ Requirements:
 10. For `16x16` pattern preview tasks, prefer the host-side debug websocket path: the local Python script should run a dedicated websocket server for data transport, the `AI端` should connect as client and send touch-triggered requests, and the host should respond with compact preview payloads such as `bitmap_rows_hex + primary_rgb888`. The `AI端` should render the returned pattern locally in the Preview area and print websocket configuration and payload logs in monitor. Keep MCP focused on LLM-facing control/tool integration; use HTTP preview only as a secondary fallback for snapshots or generic PNG/JPEG preview debugging.
 11. For LLM-facing MCP bridge scripts, use self-descriptive filenames, tool names, and argument names so the intent is obvious without reading the implementation. Prefer names like `gp_display_mcp_bridge.py`, `draw_python`, `show_text`, `python_source`, `frame_interval_ms`, and `text`.
 12. When the `AI端` needs to forward a `16x16` pattern to the `LED端` over Bluetooth, prefer compact `bitmap_rows + RGB888` transfer instead of expanding to a full `256`-byte RGB332 frame. Keep `FrameChunk` sizing consistent on both sides with the shared protocol constant `64` bytes.
+13. For Bluetooth transport debugging, treat LED-side protocol logs such as `[GP_TX]`, `[GP_RX]`, `[GP_DROP]`, and `[GP_SYNC]` as authoritative. The raw `[BT_MON]` line is only a bounded UART sniff window and may clip long packets.
+14. If a task needs to light the LED-side debug LEDs for transport verification, use the dedicated GP protocol debug-LED command instead of sending raw `LED n` text over HC-05.
+15. If a task needs to verify sustained packet reception on the LED side, prefer an AI-side `1s` task that repeatedly sends the GP debug-LED command, so the LED-side P2 debug LEDs run as a chase under normal protocol ACK flow.
+16. When diagnosing why `SetAction` works but `FrameChunk` uploads fail, first inspect the LED-side UART receive cadence and packet assembly path before changing bitmap rendering logic.
+17. After the LED side renders a remotely transferred frame, keep the last frame displayed until an explicit remote release or local control-mode switch occurs; do not clear it solely because the communication-active timeout expires.
 
 Useful tools:
 

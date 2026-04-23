@@ -391,28 +391,22 @@ bool GpLedMatrixEsp32::ShowGlyphRows(const uint16_t* rows, size_t row_count, uin
 
 bool GpLedMatrixEsp32::SendBtDebugLedCommand(uint8_t led_index) {
     std::lock_guard<std::mutex> lock(mutex_);
-    char buffer[16] = {0};
-    int text_length;
+    uint8_t payload[GP_MATRIX_DEBUG_LED_PAYLOAD_BYTES] = {led_index};
 
-    if (transport_ == nullptr) {
-        link_verified_ = false;
-        NotifyLinkStatus(false, "Bluetooth offline\nuart not ready");
+    if ((led_index != GP_MATRIX_DEBUG_LED_CLEAR) && (led_index > GP_MATRIX_DEBUG_LED_MAX_INDEX)) {
         return false;
     }
 
-    text_length = std::snprintf(buffer, sizeof(buffer), "LED %u\r\n", static_cast<unsigned int>(led_index % 8U));
-    if ((text_length <= 0) || (static_cast<size_t>(text_length) >= sizeof(buffer))) {
-        return false;
-    }
+    return SendCommand(kGpMatrixCommandSetDebugLed, payload, sizeof(payload), true);
+}
 
-    if (!transport_->WritePacket(reinterpret_cast<const uint8_t*>(buffer), static_cast<size_t>(text_length), 100)) {
-        link_verified_ = false;
-        NotifyLinkStatus(false, "Bluetooth offline\nLED send failed");
-        return false;
-    }
+bool GpLedMatrixEsp32::SetDebugLedFlow(bool enable) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    uint8_t payload[GP_MATRIX_DEBUG_LED_FLOW_PAYLOAD_BYTES] = {
+        static_cast<uint8_t>(enable ? GP_MATRIX_DEBUG_LED_FLOW_START : GP_MATRIX_DEBUG_LED_FLOW_STOP)
+    };
 
-    NotifyLinkStatus(link_verified_, BuildHeartbeatStatusText(static_cast<uint8_t>(led_index % 8U)));
-    return true;
+    return SendCommand(kGpMatrixCommandSetDebugLedFlow, payload, sizeof(payload), true);
 }
 
 bool GpLedMatrixEsp32::SendCommand(uint8_t command, const uint8_t* payload, size_t payload_length, bool ack_required) {
@@ -436,6 +430,12 @@ bool GpLedMatrixEsp32::SendCommand(uint8_t command, const uint8_t* payload, size
     }
     buffer.back() = GpMatrixComputeChecksum(buffer.data(), buffer.size() - 1);
     last_payload_summary_ = BuildPayloadSummary(command, payload, payload_length);
+    ESP_LOGI(TAG,
+             "[GP_TX] cmd=%s seq=%u len=%u %s",
+             CommandShortName(command),
+             static_cast<unsigned int>(sequence),
+             static_cast<unsigned int>(payload_length),
+             last_payload_summary_.c_str());
 
     if ((transport_ == nullptr) || !transport_->WritePacket(buffer.data(), buffer.size(), 100)) {
         link_verified_ = false;
@@ -501,12 +501,22 @@ bool GpLedMatrixEsp32::ReadReply(uint8_t expected_sequence, uint8_t expected_com
             }
 
             reply_status = static_cast<GpMatrixStatusCode>(reply[8]);
+            ESP_LOGI(TAG,
+                     "[GP_RX] cmd=%s seq=%u reply=%s st=%u",
+                     CommandShortName(expected_command),
+                     static_cast<unsigned int>(expected_sequence),
+                     (reply[3] == kGpMatrixCommandStatus) ? "status" : "error",
+                     static_cast<unsigned int>(reply_status));
             return true;
         }
 
         vTaskDelay(pdMS_TO_TICKS(kReplyPollIntervalMs));
     }
 
+    ESP_LOGW(TAG,
+             "[GP_RX] cmd=%s seq=%u timeout",
+             CommandShortName(expected_command),
+             static_cast<unsigned int>(expected_sequence));
     return false;
 }
 
@@ -583,6 +593,25 @@ std::string GpLedMatrixEsp32::BuildPayloadSummary(uint8_t command, const uint8_t
 
     if ((command == kGpMatrixCommandSetBrightness) && (payload != nullptr) && (payload_length == 1U)) {
         std::snprintf(buffer, sizeof(buffer), "brightness 0x%02X", static_cast<unsigned int>(payload[0]));
+        return buffer;
+    }
+
+    if ((command == kGpMatrixCommandSetDebugLed) && (payload != nullptr)
+        && (payload_length == GP_MATRIX_DEBUG_LED_PAYLOAD_BYTES)) {
+        if (payload[0] == GP_MATRIX_DEBUG_LED_CLEAR) {
+            std::snprintf(buffer, sizeof(buffer), "dbgled clear");
+        } else {
+            std::snprintf(buffer, sizeof(buffer), "dbgled %u", static_cast<unsigned int>(payload[0]));
+        }
+        return buffer;
+    }
+
+    if ((command == kGpMatrixCommandSetDebugLedFlow) && (payload != nullptr)
+        && (payload_length == GP_MATRIX_DEBUG_LED_FLOW_PAYLOAD_BYTES)) {
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "dbgflow %s",
+                      (payload[0] == GP_MATRIX_DEBUG_LED_FLOW_START) ? "start" : "stop");
         return buffer;
     }
 
@@ -677,6 +706,10 @@ const char* GpLedMatrixEsp32::CommandShortName(uint8_t command) {
         return "state";
     case kGpMatrixCommandSetAction:
         return "act";
+    case kGpMatrixCommandSetDebugLed:
+        return "dled";
+    case kGpMatrixCommandSetDebugLedFlow:
+        return "dflw";
     case kGpMatrixCommandFrameStart:
         return "fstr";
     case kGpMatrixCommandFrameChunk:

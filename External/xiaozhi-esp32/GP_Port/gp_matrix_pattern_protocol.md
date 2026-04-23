@@ -66,6 +66,11 @@ curl -X POST http://127.0.0.1:8765/control/matrix_prompt_16x16 \
 3. 如果服务端更适合走 HTTP，可直接向 `/control/matrix_prompt_16x16` 发起 POST。
 4. 最终向 `LED端` 的传输固定使用 `FrameStart + FrameChunk + FrameCommit`，每片 `64` 字节，并在每一步等待 ACK。
 5. 当服务端已经有 `bitmap_rows_hex + primary_rgb888/background_rgb888` 时，`AI端` 应优先把它编码成紧凑 `bitmap + RGB888` 蓝牙帧，再转发到 `LED端`，不要先膨胀成 `256` 字节 RGB332。
+6. 联调时应优先查看协议级 `[GP_TX] / [GP_RX] / [GP_DROP] / [GP_SYNC]` 日志；`[BT_MON]` 只是一段有上限的原始串口抓包窗口，可能会裁剪长包，不能单独用来判断整帧是否完整到达。
+7. 若需要点亮 `LED端` 板载调试 LED，统一使用独立的 `SetDebugLed` 协议命令；不要再从 `AI端` 向 HC-05 发送裸 `LED n` 文本命令。
+8. 若需要验证链路能否稳定持续收发，而不仅仅是收一条短 ACK，`AI端` 可通过 `1s` 周期任务持续发送 `SetDebugLed` 命令，在 `LED端` 板载调试 LED 上做 `0..7` 的流水灯。
+9. 当前 `LED端` UART2 接收链路已针对长包分片做修正：主协议循环在进入 `TryPopByte()` 前统一执行一次 `UART2_ServiceRx()`，不再在逐字节出队过程中重复推进 DMA idle 重装判定，以减少 `FrameChunk` 尾字节被过早丢弃的风险。
+10. `LED端` 成功显示通过蓝牙传输的图像后，会保持最后一帧输出；后续只有显式释放远程模式或本地切换控制模式时才会退出该显示。
 
 ## English
 
@@ -77,3 +82,5 @@ The AI-side device now emits a dedicated `custom` request named `matrix_pattern_
 - Recommended HTTP control endpoint: `POST /control/matrix_prompt_16x16`
 - Final Bluetooth upload mode: `FrameStart + FrameChunk + FrameCommit`, `64` bytes per chunk, ACK required at each stage.
 - When `bitmap_rows_hex` is available, the `AI side` should prefer compact `bitmap + RGB888` Bluetooth payloads over expanding to a full `256`-byte RGB332 frame.
+- For link debugging, rely on protocol-level `[GP_TX] / [GP_RX] / [GP_DROP] / [GP_SYNC]` logs first; `[BT_MON]` is only a bounded raw UART sniff window and may clip long packets.
+- If the task needs to light the LED-side debug LEDs, use the dedicated `SetDebugLed` protocol command instead of sending raw `LED n` text over HC-05.

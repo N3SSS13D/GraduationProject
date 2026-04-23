@@ -5,12 +5,13 @@
 
 #include "config.h"
 #include "gp_led_matrix_bt_debug.h"
+#include "gp_led_matrix_protocol.h"
 #include "port.h"
 
 #define GP_MATRIX_BT_COMMAND_BUFFER_SIZE 64U
 #define GP_MATRIX_BT_REPLY_BUFFER_SIZE   96U
 #define GP_MATRIX_BT_HEX_BUFFER_SIZE     (GP_MATRIX_BT_REPLY_BUFFER_SIZE * 3U + 1U)
-#define GP_MATRIX_BT_SNIFF_BUFFER_SIZE   48U
+#define GP_MATRIX_BT_SNIFF_BUFFER_SIZE   96U
 #define GP_MATRIX_BT_REPLY_TIMEOUT_MS    800U
 #define GP_MATRIX_BT_REPLY_IDLE_MS       12U
 #define GP_MATRIX_BT_TASK_IDLE_TICKS     2U
@@ -48,6 +49,7 @@ static uint8_t GpLedMatrixBtDebug_ReadReply(char *replyBuffer, uint8_t maxLength
 static void GpLedMatrixBtDebug_SendText(const char *payload);
 static uint8_t GpLedMatrixBtDebug_ProbeAtWithRetry(void);
 static void GpLedMatrixBtDebug_RunAutoSetup(void);
+static uint8_t GpLedMatrixBtDebug_ContainsProtocolPacket(const uint8_t *buffer, uint8_t length);
 
 static uint8_t GpLedMatrixBtDebug_IsSpace(uint8_t value)
 {
@@ -310,6 +312,27 @@ static uint8_t GpLedMatrixBtDebug_ReplyContainsOk(const char *replyBuffer, uint8
     for (index = 0U; index + 1U < replyLength; ++index)
     {
         if ((replyBuffer[index] == 'O') && (replyBuffer[index + 1U] == 'K'))
+        {
+            return 1U;
+        }
+    }
+
+    return 0U;
+}
+
+static uint8_t GpLedMatrixBtDebug_ContainsProtocolPacket(const uint8_t *buffer, uint8_t length)
+{
+    uint8_t index;
+
+    if ((buffer == 0) || (length < 2U))
+    {
+        return 0U;
+    }
+
+    for (index = 0U; index + 1U < length; ++index)
+    {
+        if ((buffer[index] == GP_MATRIX_PROTOCOL_MAGIC0)
+            && (buffer[index + 1U] == GP_MATRIX_PROTOCOL_MAGIC1))
         {
             return 1U;
         }
@@ -670,8 +693,17 @@ void GpLedMatrixBtDebug_Task(void)
 
     GpLedMatrixBtDebug_FormatAscii((const char *)g_gpMatrixBtSniff, sniffLength);
     GpLedMatrixBtDebug_FormatHex((const char *)g_gpMatrixBtSniff, sniffLength);
+    if (sniffLength >= GP_MATRIX_BT_SNIFF_BUFFER_SIZE)
+    {
+        printf("[BT_MON] clip=1 cap=%u\r\n", (unsigned int)GP_MATRIX_BT_SNIFF_BUFFER_SIZE);
+    }
     printf("[BT_MON] len=%u ascii=%s\r\n", (unsigned int)sniffLength, g_gpMatrixBtAscii);
     printf("[BT_MON] hex=%s\r\n", g_gpMatrixBtHex);
+
+    if (GpLedMatrixBtDebug_ContainsProtocolPacket(g_gpMatrixBtSniff, sniffLength) != 0U)
+    {
+        return;
+    }
 
     if (sniffLength >= GP_MATRIX_BT_COMMAND_BUFFER_SIZE)
     {
