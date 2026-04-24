@@ -41,6 +41,7 @@ constexpr int kPreviewPanelHeight = 96;
 constexpr int kLinkPanelMinHeight = 92;
 constexpr int kInfoPanelMinHeight = 116;
 constexpr int kDebugPageCount = 2;
+constexpr uint32_t kDebugAnimationTimerPeriodMs = 40;
 constexpr int kMatrixPreviewGridSize = 64;
 constexpr int kMatrixPreviewTop = 24;
 constexpr int kMatrixPreviewRightInset = 12;
@@ -318,6 +319,10 @@ void GpDebugLcdDisplay::SetPreviewImage(std::unique_ptr<LvglImage> image) {
     }
 
     has_matrix_bitmap_preview_ = false;
+    has_matrix_animation_preview_ = false;
+    matrix_preview_frame_count_ = 0U;
+    matrix_preview_available_frames_ = 0U;
+    matrix_preview_rendered_index_ = matrix_preview_frames_.size();
     lv_image_set_src(debug_image_preview_, preview_image_cached_->image_dsc());
     UpdatePreviewImagePlacement();
     lv_obj_remove_flag(debug_image_preview_, LV_OBJ_FLAG_HIDDEN);
@@ -797,32 +802,78 @@ void GpDebugLcdDisplay::ApplyMatrixBitmapPreview(const std::array<uint16_t, 16>&
         return;
     }
 
-    has_matrix_bitmap_preview_ = true;
-    if (debug_image_preview_ != nullptr) {
-        lv_obj_add_flag(debug_image_preview_, LV_OBJ_FLAG_HIDDEN);
+    has_matrix_animation_preview_ = false;
+    matrix_preview_frame_count_ = 0U;
+    matrix_preview_available_frames_ = 0U;
+    matrix_preview_rendered_index_ = matrix_preview_frames_.size();
+    RenderMatrixPreviewFrame({bitmap_rows, primary_rgb888, background_rgb888, true});
+}
+
+void GpDebugLcdDisplay::BeginMatrixAnimationPreview(size_t frame_count, uint16_t frame_interval_ms) {
+    size_t frame_index;
+
+    if (debug_dot_ == nullptr) {
+        CreateDebugOverlay();
     }
 
-    for (size_t row = 0; row < 16U; ++row) {
-        for (size_t column = 0; column < 16U; ++column) {
-            lv_obj_t* pixel = debug_matrix_pixels_[row * 16U + column];
-            const bool enabled = ((bitmap_rows[row] >> (15U - column)) & 0x0001U) != 0U;
+    DisplayLockGuard lock(this);
+    matrix_preview_frame_count_ = std::min(frame_count, matrix_preview_frames_.size());
+    matrix_preview_available_frames_ = 0U;
+    matrix_preview_rendered_index_ = matrix_preview_frames_.size();
+    matrix_preview_frame_interval_ms_ = std::max<uint16_t>(1U, frame_interval_ms);
+    matrix_preview_animation_start_us_ = static_cast<uint64_t>(esp_timer_get_time());
+    has_matrix_animation_preview_ = false;
+    for (frame_index = 0U; frame_index < matrix_preview_frames_.size(); ++frame_index) {
+        matrix_preview_frames_[frame_index].valid = false;
+    }
+    EnsureAnimationTimer();
+}
 
-            if (pixel == nullptr) {
-                continue;
-            }
-
-            lv_obj_set_style_bg_color(pixel,
-                                      lv_color_hex(enabled ? primary_rgb888 : background_rgb888),
-                                      0);
-        }
+void GpDebugLcdDisplay::ApplyMatrixAnimationPreviewFrame(size_t frame_index,
+                                                         const std::array<uint16_t, 16>& bitmap_rows,
+                                                         uint32_t primary_rgb888,
+                                                         uint32_t background_rgb888) {
+    if (debug_dot_ == nullptr) {
+        CreateDebugOverlay();
     }
 
-    lv_obj_remove_flag(debug_dot_, LV_OBJ_FLAG_HIDDEN);
-    UpdatePreviewImagePlacement();
-    UpdateDotPlacement(current_state_.dot_size_px);
-    if (debug_menu_visible_) {
-        RefreshAnimatedDot();
+    DisplayLockGuard lock(this);
+    if ((debug_dot_ == nullptr) || (debug_matrix_preview_ == nullptr)) {
+        return;
     }
+    if (frame_index >= matrix_preview_frame_count_) {
+        return;
+    }
+
+    matrix_preview_frames_[frame_index].bitmap_rows = bitmap_rows;
+    matrix_preview_frames_[frame_index].primary_rgb888 = primary_rgb888;
+    matrix_preview_frames_[frame_index].background_rgb888 = background_rgb888;
+    matrix_preview_frames_[frame_index].valid = true;
+
+    matrix_preview_available_frames_ = 0U;
+    while ((matrix_preview_available_frames_ < matrix_preview_frame_count_)
+        && matrix_preview_frames_[matrix_preview_available_frames_].valid) {
+        matrix_preview_available_frames_++;
+    }
+
+    if (matrix_preview_available_frames_ != 0U) {
+        has_matrix_animation_preview_ = true;
+        RefreshMatrixAnimationPreview();
+    }
+    EnsureAnimationTimer();
+}
+
+void GpDebugLcdDisplay::EndMatrixAnimationPreview() {
+    DisplayLockGuard lock(this);
+
+    if (matrix_preview_available_frames_ == 0U) {
+        return;
+    }
+
+    has_matrix_animation_preview_ = true;
+    matrix_preview_rendered_index_ = matrix_preview_frames_.size();
+    matrix_preview_animation_start_us_ = static_cast<uint64_t>(esp_timer_get_time());
+    RefreshMatrixAnimationPreview();
 }
 
 void GpDebugLcdDisplay::SetMatrixDebugStateCallback(MatrixDebugStateCallback callback) {
@@ -855,6 +906,9 @@ void GpDebugLcdDisplay::SetDebugMenuVisible(bool visible) {
             lv_obj_add_flag(menu_entry_button_, LV_OBJ_FLAG_HIDDEN);
         }
         RelayoutDebugMenuSections();
+        EnsureAnimationTimer();
+        RefreshAnimatedDot();
+        RefreshMatrixAnimationPreview();
 
         /* Avoid large state churn on the first visible frame. The menu content
          * is initialized during construction, so showing the panel can stay
@@ -868,15 +922,78 @@ void GpDebugLcdDisplay::SetDebugMenuVisible(bool visible) {
 }
 
 void GpDebugLcdDisplay::EnsureAnimationTimer() {
-    /* Disabled while stabilizing DBG open/close. Timer-driven UI updates add
-     * another re-entrant source during the first frame after the menu opens. */
+    if (debug_animation_timer_ != nullptr) {
+        return;
+    }
+
+    debug_animation_timer_ = lv_timer_create(&GpDebugLcdDisplay::OnAnimationTimer,
+                                             kDebugAnimationTimerPeriodMs,
+                                             this);
 }
 
 void GpDebugLcdDisplay::OnAnimationTimer(lv_timer_t* timer) {
     auto* self = static_cast<GpDebugLcdDisplay*>(lv_timer_get_user_data(timer));
     if (self != nullptr) {
         self->RefreshAnimatedDot();
+        self->RefreshMatrixAnimationPreview();
     }
+}
+
+void GpDebugLcdDisplay::RenderMatrixPreviewFrame(const MatrixPreviewFrame& frame) {
+    if ((debug_dot_ == nullptr) || (debug_matrix_preview_ == nullptr)) {
+        return;
+    }
+
+    has_matrix_bitmap_preview_ = true;
+    if (debug_image_preview_ != nullptr) {
+        lv_obj_add_flag(debug_image_preview_, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    for (size_t row = 0; row < 16U; ++row) {
+        for (size_t column = 0; column < 16U; ++column) {
+            lv_obj_t* pixel = debug_matrix_pixels_[row * 16U + column];
+            const bool enabled = ((frame.bitmap_rows[row] >> (15U - column)) & 0x0001U) != 0U;
+
+            if (pixel == nullptr) {
+                continue;
+            }
+
+            lv_obj_set_style_bg_color(pixel,
+                                      lv_color_hex(enabled ? frame.primary_rgb888 : frame.background_rgb888),
+                                      0);
+        }
+    }
+
+    lv_obj_remove_flag(debug_dot_, LV_OBJ_FLAG_HIDDEN);
+    UpdatePreviewImagePlacement();
+    UpdateDotPlacement(current_state_.dot_size_px);
+    if (debug_menu_visible_) {
+        RefreshAnimatedDot();
+    }
+}
+
+void GpDebugLcdDisplay::RefreshMatrixAnimationPreview() {
+    size_t frame_index;
+    uint64_t elapsed_ms;
+
+    if ((debug_dot_ == nullptr) || (debug_matrix_preview_ == nullptr)) {
+        return;
+    }
+    if ((has_matrix_animation_preview_ == false) || (matrix_preview_available_frames_ == 0U)) {
+        return;
+    }
+
+    frame_index = 0U;
+    if (matrix_preview_available_frames_ > 1U) {
+        elapsed_ms = (static_cast<uint64_t>(esp_timer_get_time()) - matrix_preview_animation_start_us_) / 1000U;
+        frame_index = static_cast<size_t>((elapsed_ms / matrix_preview_frame_interval_ms_) % matrix_preview_available_frames_);
+    }
+    if (frame_index == matrix_preview_rendered_index_) {
+        return;
+    }
+
+    RenderMatrixPreviewFrame(matrix_preview_frames_[frame_index]);
+    matrix_preview_rendered_index_ = frame_index;
 }
 
 void GpDebugLcdDisplay::OnAsyncMenuVisibility(void* user_data) {

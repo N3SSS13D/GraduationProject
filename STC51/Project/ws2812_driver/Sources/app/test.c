@@ -366,6 +366,8 @@ static void Test_ApplyPresetMode(uint8_t presetMode)
 static void Test_OnSchedTickExpired(void)
 {
     MidTask_Tick1ms();
+    /* Animation playback needs the raw 1 ms cadence instead of the 10 ms cooperative task slot. */
+    GpLedAction_Tick1ms();
     TIMER0_StartOneShotUs(TEST_SCHED_TICK_US);
 }
 

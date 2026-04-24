@@ -8,6 +8,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include "device_state.h"
 #include "ui/gp_debug_display.h"
@@ -19,6 +20,12 @@ class GpMatrixTransport;
 class GpLedMatrixEsp32 : public Led {
 public:
     using LinkStatusCallback = std::function<void(bool online, const std::string& status_text)>;
+
+    struct BitmapAnimationFrame {
+        std::array<uint16_t, GP_MATRIX_HEIGHT> bitmap_rows = {};
+        uint32_t primary_rgb888 = 0xF5F5F5U;
+        uint32_t background_rgb888 = 0x000000U;
+    };
 
     /* Create the ESP32-side matrix driver around the active transport backend. */
     GpLedMatrixEsp32(std::unique_ptr<GpMatrixTransport> transport, uint8_t brightness = 0x40);
@@ -50,6 +57,10 @@ public:
                          uint32_t primary_rgb888,
                          uint32_t background_rgb888 = 0x000000U,
                          GpMatrixMode mode = kGpMatrixModeSolidFrame);
+
+    /* Upload one indexed compact bitmap animation batch for LED-side loop playback. */
+    bool ShowBitmapAnimation(const std::vector<BitmapAnimationFrame>& frames,
+                             uint16_t frame_interval_ms = GP_MATRIX_ANIMATION_DEFAULT_INTERVAL_MS);
 
     /* Send one built-in 16x16 RGB332 frame preset through the current matrix transport. */
     bool ShowRgb332FramePreset(GpColorDebugPreset preset);

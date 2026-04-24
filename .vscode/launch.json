@@ -8,8 +8,8 @@
       "args": [],
       "stopAtEntry": false,
       "externalConsole": true,
-      "cwd": "d:/GraduationProject/STC51/Project/ws2812_driver/Sources/hal",
-      "program": "d:/GraduationProject/STC51/Project/ws2812_driver/Sources/hal/build/Debug/outDebug",
+      "cwd": "d:/GraduationProject/External/xiaozhi-esp32",
+      "program": "d:/GraduationProject/External/xiaozhi-esp32/build/Debug/outDebug",
       "MIMode": "gdb",
       "miDebuggerPath": "gdb",
       "setupCommands": [

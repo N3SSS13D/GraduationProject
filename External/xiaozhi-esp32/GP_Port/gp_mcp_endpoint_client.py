@@ -67,17 +67,26 @@ DEFAULT_STARTUP_PREVIEW_READY_WAIT_SECONDS = 15.0
 DEFAULT_STARTUP_PREVIEW_POLL_SECONDS = 1.0
 DEFAULT_STARTUP_PREVIEW_RETRY_COUNT = 2
 DEFAULT_TEXT_FRAME_INTERVAL_MS = 420
-DEFAULT_ANIMATION_FRAME_INTERVAL_MS = 100
+DEFAULT_ANIMATION_FRAME_INTERVAL_MS = 42
+TEXT_FRAME_INTERVAL_MIN_MS = 20
+TEXT_FRAME_INTERVAL_MAX_MS = 5000
+ANIMATION_FRAME_INTERVAL_MIN_MS = 1
+ANIMATION_FRAME_INTERVAL_MAX_MS = 65535
 STATUS_RESULT_TEXT_LIMIT = 320
 STATUS_HISTORY_LIMIT = 8
 MATRIX_WIDTH = 16
 MATRIX_HEIGHT = 16
 MATRIX_FRAME_BYTES = MATRIX_WIDTH * MATRIX_HEIGHT
+MATRIX_BITMAP_ROW_BYTES = MATRIX_WIDTH // 8
+MATRIX_BITMAP_BYTES = MATRIX_BITMAP_ROW_BYTES * MATRIX_HEIGHT
+MATRIX_BITMAP_HEX_CHARS = MATRIX_BITMAP_BYTES * 2
+RGB888_BYTES = 3
+MATRIX_COMPACT_FRAME_BYTES = MATRIX_BITMAP_BYTES + (RGB888_BYTES * 2)
 MAX_DRAWING_SOURCE_CHARS = 4000
 MAX_DRAWING_AST_NODES = 512
 MAX_DRAWING_RANGE_STEPS = 256
 MAX_TEXT_FRAME_COUNT = 48
-MAX_ANIMATION_FRAME_COUNT = 10
+MAX_ANIMATION_FRAME_COUNT = 24
 LOCAL_MCP_SERVER_NAME = "gp-display-mcp-bridge"
 
 DRAW_FRAME_TOOL_NAMES = frozenset({
@@ -718,6 +727,7 @@ def build_matrix_frame_payload_from_bitmap_rows(
         "content_type": content_type,
         "frame_rgb332_hex": frame_bytes.hex(),
         "bitmap_rows_hex": "".join(f"{row:04x}" for row in normalized_rows),
+        "compact_frame_format": build_compact_bitmap_format_metadata(),
         "width": MATRIX_WIDTH,
         "height": MATRIX_HEIGHT,
         "primary_rgb888": format_rgb888(resolved_primary_rgb),
@@ -765,6 +775,209 @@ def build_bitmap_rows_from_mask_image(mask_image: Image.Image) -> list[int]:
         bitmap_rows.append(row_bits)
 
     return bitmap_rows
+
+
+def normalize_bitmap_rows_hex_value(bitmap_rows_hex: Any, field_name: str) -> str:
+    def normalize_bitmap_row_token(row_token: Any) -> str:
+        if isinstance(row_token, int):
+            row_value = row_token
+        else:
+            row_text = str(row_token).strip().lower()
+            if row_text.startswith("0x"):
+                row_text = row_text[2:]
+            if (not row_text) or (len(row_text) > 4) or (re.fullmatch(r"[0-9a-f]+", row_text) is None):
+                raise ValueError(
+                    f"{field_name} row tokens must be 1-4 hex digits or 0x-prefixed 16-bit values"
+                )
+            row_value = int(row_text, 16)
+
+        if row_value < 0 or row_value > 0xFFFF:
+            raise ValueError(f"{field_name} row tokens must stay within 0x0000..0xFFFF")
+
+        return f"{row_value:04x}"
+
+    def normalize_bitmap_row_sequence(row_sequence: Sequence[Any]) -> str:
+        if len(row_sequence) != MATRIX_HEIGHT:
+            raise ValueError(f"{field_name} must contain exactly {MATRIX_HEIGHT} row values when row tokens are used")
+
+        return "".join(normalize_bitmap_row_token(row_token) for row_token in row_sequence)
+
+    if isinstance(bitmap_rows_hex, (list, tuple)):
+        return normalize_bitmap_row_sequence(bitmap_rows_hex)
+
+    bitmap_rows_hex_text = str(bitmap_rows_hex).strip()
+    normalized_bitmap_rows_hex = "".join(ch for ch in bitmap_rows_hex_text if not ch.isspace())
+
+    if normalized_bitmap_rows_hex.lower().startswith("0x"):
+        normalized_bitmap_rows_hex = normalized_bitmap_rows_hex[2:]
+
+    if len(normalized_bitmap_rows_hex) == MATRIX_BITMAP_HEX_CHARS:
+        int(normalized_bitmap_rows_hex, 16)
+        return normalized_bitmap_rows_hex.lower()
+
+    parsed_row_sequence: Optional[Sequence[Any]] = None
+
+    try:
+        literal_value = ast.literal_eval(bitmap_rows_hex_text)
+    except (SyntaxError, ValueError):
+        literal_value = None
+
+    if isinstance(literal_value, (list, tuple)):
+        parsed_row_sequence = literal_value
+    elif any(separator in bitmap_rows_hex_text for separator in (",", "[", "]", "(", ")", "{", "}", "|", "\n", "\r", "\t")) or ("0x" in bitmap_rows_hex_text.lower()):
+        row_tokens = re.findall(r"0x[0-9a-fA-F]{1,4}|[0-9a-fA-F]{1,4}", bitmap_rows_hex_text)
+        if len(row_tokens) == MATRIX_HEIGHT:
+            parsed_row_sequence = row_tokens
+
+    if parsed_row_sequence is not None:
+        return normalize_bitmap_row_sequence(parsed_row_sequence)
+
+    raise ValueError(
+        f"{field_name} must contain either exactly {MATRIX_BITMAP_HEX_CHARS} hex characters "
+        f"or {MATRIX_HEIGHT} row tokens of 1-4 hex digits (16 rows x 16 bits = {MATRIX_BITMAP_BYTES} bytes)"
+    )
+
+
+def normalize_animation_bitmap_rows_hex_list(
+    bitmap_rows_hex_list: Sequence[Any],
+    frame_interval_ms: int,
+) -> tuple[list[str], int, Optional[int]]:
+    def is_likely_row_token(token: Any) -> bool:
+        if isinstance(token, int):
+            return 0 <= token <= 0xFFFF
+
+        token_text = str(token).strip().lower()
+        if token_text.startswith("0x"):
+            token_text = token_text[2:]
+
+        return bool(token_text) and (len(token_text) <= 4) and (re.fullmatch(r"[0-9a-f]+", token_text) is not None)
+
+    if len(bitmap_rows_hex_list) == MATRIX_HEIGHT and all(is_likely_row_token(row_token) for row_token in bitmap_rows_hex_list):
+        normalized_frames = [normalize_bitmap_rows_hex_value(bitmap_rows_hex_list, "bitmap_rows_hex_list")]
+    else:
+        normalized_frames = [
+            normalize_bitmap_rows_hex_value(bitmap_rows_hex, "bitmap_rows_hex_list[]")
+            for bitmap_rows_hex in bitmap_rows_hex_list
+        ]
+
+    source_frame_count = len(normalized_frames)
+
+    if source_frame_count <= MAX_ANIMATION_FRAME_COUNT:
+        return normalized_frames, frame_interval_ms, None
+
+    sampled_frames: list[str] = []
+
+    # Preserve the first and last keyframes while collapsing long sequences to the LED buffer budget.
+    for frame_index in range(MAX_ANIMATION_FRAME_COUNT):
+        source_index = (frame_index * (source_frame_count - 1)) // (MAX_ANIMATION_FRAME_COUNT - 1)
+        sampled_frames.append(normalized_frames[source_index])
+
+    scaled_interval_ms = (frame_interval_ms * source_frame_count + MAX_ANIMATION_FRAME_COUNT - 1) // MAX_ANIMATION_FRAME_COUNT
+    scaled_interval_ms = max(ANIMATION_FRAME_INTERVAL_MIN_MS, min(ANIMATION_FRAME_INTERVAL_MAX_MS, scaled_interval_ms))
+    return sampled_frames, int(scaled_interval_ms), source_frame_count
+
+
+def resolve_animation_bitmap_rows_hex_sources(
+    *,
+    bitmap_rows_hex_list: Any,
+    frames: Any,
+    primary_rgb888: str,
+    background_rgb888: str,
+    source: str,
+) -> list[Any]:
+    has_bitmap_rows_hex_list = isinstance(bitmap_rows_hex_list, (list, tuple)) and len(bitmap_rows_hex_list) > 0
+    has_frames = isinstance(frames, (list, tuple)) and len(frames) > 0
+
+    if has_bitmap_rows_hex_list and has_frames:
+        raise ValueError("Provide either bitmap_rows_hex_list or frames, not both")
+
+    if frames not in (None, "", []) and not isinstance(frames, (list, tuple)):
+        raise ValueError("frames must be an array")
+
+    if has_frames:
+        normalized_sources: list[str] = []
+
+        for frame_index, frame in enumerate(frames):
+            frame_field_name = f"frames[{frame_index}]"
+
+            if not isinstance(frame, dict):
+                normalized_sources.append(normalize_bitmap_rows_hex_value(frame, frame_field_name))
+                continue
+
+            frame_bitmap_rows_hex = frame.get("bitmap_rows_hex", "")
+            frame_bitmap_rows = frame.get("bitmap_rows")
+            frame_python_source = str(frame.get("python_source", ""))
+            frame_eval_source = str(frame.get("eval_source", ""))
+            has_bitmap_rows_hex = bool(str(frame_bitmap_rows_hex).strip())
+            has_bitmap_rows = frame_bitmap_rows is not None
+            has_draw_code = bool(frame_python_source.strip() or frame_eval_source.strip())
+            selected_source_count = int(has_bitmap_rows_hex) + int(has_bitmap_rows) + int(has_draw_code)
+
+            if selected_source_count != 1:
+                raise ValueError(
+                    f"{frame_field_name} must provide exactly one of bitmap_rows_hex, bitmap_rows, or python_source/eval_source"
+                )
+
+            if has_bitmap_rows_hex:
+                normalized_sources.append(
+                    normalize_bitmap_rows_hex_value(frame_bitmap_rows_hex, f"{frame_field_name}.bitmap_rows_hex")
+                )
+                continue
+
+            if has_bitmap_rows:
+                normalized_sources.append(
+                    normalize_bitmap_rows_hex_value(frame_bitmap_rows, f"{frame_field_name}.bitmap_rows")
+                )
+                continue
+
+            rendered_frame_payload = render_python_source_to_matrix_frame(
+                python_source=frame_python_source,
+                eval_source=frame_eval_source,
+                primary_rgb888=str(frame.get("primary_rgb888", primary_rgb888)),
+                background_rgb888=str(frame.get("background_rgb888", background_rgb888)),
+                source=source,
+                transcript=str(frame.get("transcript", f"animation frame {frame_index}")),
+            )
+            normalized_sources.append(
+                normalize_bitmap_rows_hex_value(
+                    rendered_frame_payload.get("bitmap_rows_hex", ""),
+                    f"{frame_field_name}.python_bitmap_rows_hex",
+                )
+            )
+
+        return normalized_sources
+
+    if isinstance(bitmap_rows_hex_list, str) and bitmap_rows_hex_list.strip():
+        return [bitmap_rows_hex_list]
+
+    if has_bitmap_rows_hex_list:
+        return list(bitmap_rows_hex_list)
+
+    raise ValueError("bitmap_rows_hex_list or frames is required")
+
+
+def normalize_rgb888_color(color_value: Any, field_name: str) -> str:
+    try:
+        return format_rgb888(parse_rgb888(str(color_value)))
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be a #RRGGBB RGB888 color") from exc
+
+
+def build_compact_bitmap_format_metadata() -> Dict[str, Any]:
+    return {
+        "encoding": "bitmap_1bit_rgb888_compact_v1",
+        "bit_on": 1,
+        "bit_off": 0,
+        "row_order": "top_to_bottom",
+        "bit_order": "msb_left_to_right",
+        "row_count": MATRIX_HEIGHT,
+        "row_bits": MATRIX_WIDTH,
+        "row_bytes": MATRIX_BITMAP_ROW_BYTES,
+        "bitmap_bytes": MATRIX_BITMAP_BYTES,
+        "primary_rgb888_bytes": RGB888_BYTES,
+        "background_rgb888_bytes": RGB888_BYTES,
+        "compact_frame_bytes": MATRIX_COMPACT_FRAME_BYTES,
+    }
 
 
 def try_extract_binary_bitmap_fields_from_frame_hex(frame_hex: str) -> Optional[tuple[str, str, str]]:
@@ -1073,10 +1286,10 @@ def render_bitmap_animation_frame_sequence(
 ) -> Dict[str, Any]:
     if not bitmap_rows_hex_list:
         raise ValueError("bitmap_rows_hex_list is required")
-    if len(bitmap_rows_hex_list) > MAX_ANIMATION_FRAME_COUNT:
-        raise ValueError(f"bitmap_rows_hex_list is too long; keep it under {MAX_ANIMATION_FRAME_COUNT} frames")
-    if frame_interval_ms < 60 or frame_interval_ms > 5000:
-        raise ValueError("frame_interval_ms must be between 60 and 5000")
+    if frame_interval_ms < ANIMATION_FRAME_INTERVAL_MIN_MS or frame_interval_ms > ANIMATION_FRAME_INTERVAL_MAX_MS:
+        raise ValueError(
+            f"frame_interval_ms must be between {ANIMATION_FRAME_INTERVAL_MIN_MS} and {ANIMATION_FRAME_INTERVAL_MAX_MS}"
+        )
 
     resolved_primary_rgb888 = primary_rgb888 or "#F5F5F5"
     resolved_background_rgb888 = background_rgb888 or "#000000"
@@ -1084,16 +1297,14 @@ def render_bitmap_animation_frame_sequence(
     parse_rgb888(resolved_background_rgb888)
 
     frames: list[Dict[str, Any]] = []
-    total_frames = len(bitmap_rows_hex_list)
-    transcript_text = transcript or f"play {total_frames}-frame animation"
+    normalized_bitmap_rows_hex_list, normalized_frame_interval_ms, source_frame_count = normalize_animation_bitmap_rows_hex_list(
+        bitmap_rows_hex_list,
+        frame_interval_ms,
+    )
+    total_frames = len(normalized_bitmap_rows_hex_list)
+    transcript_text = transcript or f"play {len(bitmap_rows_hex_list)}-frame animation"
 
-    for frame_index, bitmap_rows_hex in enumerate(bitmap_rows_hex_list):
-        normalized_bitmap_rows_hex = "".join(ch for ch in str(bitmap_rows_hex) if ch.strip())
-
-        if len(normalized_bitmap_rows_hex) != 64:
-            raise ValueError("Each bitmap_rows_hex_list entry must contain exactly 64 hex characters")
-        int(normalized_bitmap_rows_hex, 16)
-
+    for frame_index, normalized_bitmap_rows_hex in enumerate(normalized_bitmap_rows_hex_list):
         bitmap_rows = [int(normalized_bitmap_rows_hex[index:index + 4], 16) for index in range(0, 64, 4)]
         frame_payload = build_matrix_frame_payload_from_bitmap_rows(
             bitmap_rows=bitmap_rows,
@@ -1108,12 +1319,13 @@ def render_bitmap_animation_frame_sequence(
         )
         frames.append(frame_payload)
 
-    return {
+    result = {
         "data_format": "matrix_frame_sequence_v1",
         "content_type": "animation",
+        "compact_frame_format": build_compact_bitmap_format_metadata(),
         "width": MATRIX_WIDTH,
         "height": MATRIX_HEIGHT,
-        "frame_interval_ms": int(frame_interval_ms),
+        "frame_interval_ms": int(normalized_frame_interval_ms),
         "frame_count": total_frames,
         "primary_rgb888": format_rgb888(parse_rgb888(resolved_primary_rgb888)),
         "background_rgb888": format_rgb888(parse_rgb888(resolved_background_rgb888)),
@@ -1123,6 +1335,13 @@ def render_bitmap_animation_frame_sequence(
         "applied": True,
         "tool_name": "self.screen.matrix_16x16.draw_animation",
     }
+
+    if source_frame_count is not None:
+        result["source_frame_count"] = int(source_frame_count)
+        result["source_frame_interval_ms"] = int(frame_interval_ms)
+        result["frame_sampling_applied"] = True
+
+    return result
 
 
 def render_text_glyph_to_mask_image(glyph: str) -> Image.Image:
@@ -1185,8 +1404,10 @@ def render_text_to_matrix_frame_sequence(
         raise ValueError("text is required")
     if len(text_input) > MAX_TEXT_FRAME_COUNT:
         raise ValueError(f"text is too long; keep it under {MAX_TEXT_FRAME_COUNT} characters")
-    if frame_interval_ms < 60 or frame_interval_ms > 5000:
-        raise ValueError("frame_interval_ms must be between 60 and 5000")
+    if frame_interval_ms < TEXT_FRAME_INTERVAL_MIN_MS or frame_interval_ms > TEXT_FRAME_INTERVAL_MAX_MS:
+        raise ValueError(
+            f"frame_interval_ms must be between {TEXT_FRAME_INTERVAL_MIN_MS} and {TEXT_FRAME_INTERVAL_MAX_MS}"
+        )
 
     frames: list[Dict[str, Any]] = []
     total_frames = len(text_input)
@@ -1448,7 +1669,7 @@ def build_tool_list() -> list[Dict[str, Any]]:
         },
         {
             "name": "self.screen.matrix_16x16.draw_frame",
-            "description": "Low-level tool. Return or deliver one 16x16 matrix frame when you already have frame_rgb332_hex or bitmap_rows_hex.",
+            "description": "Low-level tool. Return or deliver one 16x16 matrix frame when you already have frame_rgb332_hex or the compact 38-byte LED bitmap format.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1463,15 +1684,15 @@ def build_tool_list() -> list[Dict[str, Any]]:
                     },
                     "bitmap_rows_hex": {
                         "type": "string",
-                        "description": "Optional compact format. Exactly 64 hex characters, one 16-bit row mask per line.",
+                        "description": "Optional compact bitmap field only. Exactly 64 hex characters = 16 rows x 2 bytes = 32 bitmap bytes. Bit 1 means LED on, bit 0 means off; rows are top to bottom, and the high bit in each 16-bit row is the leftmost LED. Together with primary_rgb888 and background_rgb888 it forms one 38-byte LED-ready frame.",
                     },
                     "primary_rgb888": {
                         "type": "string",
-                        "description": "Required with bitmap_rows_hex. Foreground color in #RRGGBB.",
+                        "description": "Required with bitmap_rows_hex. Foreground color in #RRGGBB. Stored as RGB888 (3 bytes) after the 32-byte bitmap.",
                     },
                     "background_rgb888": {
                         "type": "string",
-                        "description": "Optional background color for bitmap_rows_hex. Defaults to #000000.",
+                        "description": "Optional background color for bitmap_rows_hex. Defaults to #000000. Stored as RGB888 (3 bytes) after the foreground color, so bitmap_rows_hex + primary_rgb888 + background_rgb888 = 38 bytes.",
                     },
                     "source": {"type": "string"},
                     "transcript": {"type": "string"},
@@ -1521,9 +1742,9 @@ def build_tool_list() -> list[Dict[str, Any]]:
                     },
                     "frame_interval_ms": {
                         "type": "integer",
-                        "minimum": 60,
+                        "minimum": 20,
                         "maximum": 5000,
-                        "description": "Delay between consecutive frames sent to the AI preview.",
+                        "description": "Delay between consecutive frames sent to the AI preview sequence.",
                     },
                     "primary_rgb888": {"type": "string"},
                     "background_rgb888": {"type": "string"},
@@ -1535,37 +1756,63 @@ def build_tool_list() -> list[Dict[str, Any]]:
         },
         {
             "name": "self.screen.matrix_16x16.draw_animation",
-            "description": "Transmit a compact 16x16 bitmap animation sequence for LED-side Bluetooth playback. Prefer 10 frames at 100 ms for a 10 fps effect.",
+            "description": "Transmit a compact 16x16 bitmap animation sequence for LED-side buffered playback. Each frame is a 32-byte 1-bit bitmap plus foreground/background RGB888, for a total compact frame size of 38 bytes. The LED side buffers 24 frames; if more frames are supplied, the bridge resamples them to 24 and scales frame_interval_ms to preserve the overall duration. Do not implement timing in python_source with sleep/yield style logic; animation timing is controlled only by frame_interval_ms.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "bitmap_rows_hex_list": {
                         "type": "array",
-                        "description": "An array of compact 16x16 bitmap masks. Each entry must contain exactly 64 hex characters.",
+                        "description": "An array of animation frame masks. Preferred: each item is 64 hex characters = 32 bitmap bytes. Compatibility: if this field itself is exactly 16 row tokens (1-4 hex digits), it will be treated as one frame rather than 16 frames. Bit 1 means LED on, bit 0 means off; rows are top to bottom, and the high bit in each 16-bit row is the leftmost LED. Together with primary_rgb888 and background_rgb888, each frame becomes one 38-byte LED-ready compact frame.",
                         "minItems": 1,
-                        "maxItems": 10,
+                        "maxItems": 96,
                         "items": {
                             "type": "string"
                         }
                     },
+                    "frames": {
+                        "type": "array",
+                        "description": "Alternative animation input. Each frame object must provide exactly one source: bitmap_rows_hex (64 hex), bitmap_rows (16 row values), or python_source/eval_source. This mode is recommended when LLM output is easier to express as row arrays or restricted Python drawing snippets.",
+                        "minItems": 1,
+                        "maxItems": 96,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "bitmap_rows_hex": {"type": "string"},
+                                "bitmap_rows": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                },
+                                "python_source": {"type": "string"},
+                                "eval_source": {"type": "string"},
+                                "primary_rgb888": {"type": "string"},
+                                "background_rgb888": {"type": "string"},
+                                "transcript": {"type": "string"}
+                            }
+                        }
+                    },
                     "frame_interval_ms": {
                         "type": "integer",
-                        "minimum": 60,
-                        "maximum": 5000,
-                        "description": "Delay between consecutive frames. Use 100 for a 10 fps animation.",
+                        "minimum": 1,
+                        "maximum": 65535,
+                        "description": "Delay between consecutive frames in milliseconds. Use 42 for the default near-24 fps playback.",
                     },
                     "primary_rgb888": {
                         "type": "string",
-                        "description": "Foreground color in #RRGGBB. All set bits use this color.",
+                        "description": "Foreground color in #RRGGBB. All set bits use this color, stored as 3 RGB888 bytes after the 32-byte bitmap.",
                     },
                     "background_rgb888": {
                         "type": "string",
-                        "description": "Background color in #RRGGBB. Empty pixels use this color.",
+                        "description": "Background color in #RRGGBB. Empty pixels use this color, stored as 3 RGB888 bytes after the foreground color.",
                     },
                     "source": {"type": "string"},
                     "transcript": {"type": "string"},
                 },
-                "required": ["bitmap_rows_hex_list"],
+                "anyOf": [
+                    {"required": ["bitmap_rows_hex_list"]},
+                    {"required": ["frames"]}
+                ],
             },
         },
         {
@@ -1987,9 +2234,12 @@ def handle_local_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Dict[st
         primary_rgb888 = str(arguments.get("primary_rgb888", ""))
         background_rgb888 = str(arguments.get("background_rgb888", "#000000"))
         normalized_frame_rgb332_hex = "".join(ch for ch in matrix_frame_rgb332_hex if ch.strip())
-        normalized_bitmap_rows_hex = "".join(ch for ch in bitmap_rows_hex if ch.strip())
+        normalized_bitmap_rows_hex = ""
         tool_source = str(arguments.get("source", "mcp"))
         transcript_text = str(arguments.get("transcript", ""))
+
+        if str(bitmap_rows_hex).strip():
+            normalized_bitmap_rows_hex = normalize_bitmap_rows_hex_value(bitmap_rows_hex, "bitmap_rows_hex")
 
         if not preset_name and not normalized_frame_rgb332_hex and not normalized_bitmap_rows_hex:
             raise ValueError("Either preset, frame_rgb332_hex, or bitmap_rows_hex is required")
@@ -2000,9 +2250,6 @@ def handle_local_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Dict[st
                 raise ValueError("frame_rgb332_hex must contain 512 hex characters")
             int(normalized_frame_rgb332_hex, 16)
         if normalized_bitmap_rows_hex:
-            if len(normalized_bitmap_rows_hex) != 64:
-                raise ValueError("bitmap_rows_hex must contain 64 hex characters")
-            int(normalized_bitmap_rows_hex, 16)
             parse_rgb888(primary_rgb888)
 
         if background_rgb888:
@@ -2045,6 +2292,7 @@ def handle_local_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Dict[st
             if compact_fields is not None:
                 compact_bitmap_rows_hex, compact_primary_rgb888, compact_background_rgb888 = compact_fields
                 result_payload["bitmap_rows_hex"] = compact_bitmap_rows_hex
+                result_payload["compact_frame_format"] = build_compact_bitmap_format_metadata()
                 if not result_payload["primary_rgb888"]:
                     result_payload["primary_rgb888"] = compact_primary_rgb888
                 if not result_payload["background_rgb888"]:
@@ -2073,12 +2321,23 @@ def handle_local_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Dict[st
         )
 
     if tool_name in ANIMATION_SEQUENCE_TOOL_NAMES:
-        return render_bitmap_animation_frame_sequence(
+        resolved_primary_rgb888 = str(arguments.get("primary_rgb888", "#F5F5F5"))
+        resolved_background_rgb888 = str(arguments.get("background_rgb888", "#000000"))
+        resolved_source = str(arguments.get("source", "mcp_animation"))
+        animation_sources = resolve_animation_bitmap_rows_hex_sources(
             bitmap_rows_hex_list=arguments.get("bitmap_rows_hex_list", []),
-            primary_rgb888=str(arguments.get("primary_rgb888", "#F5F5F5")),
-            background_rgb888=str(arguments.get("background_rgb888", "#000000")),
+            frames=arguments.get("frames", []),
+            primary_rgb888=resolved_primary_rgb888,
+            background_rgb888=resolved_background_rgb888,
+            source=resolved_source,
+        )
+
+        return render_bitmap_animation_frame_sequence(
+            bitmap_rows_hex_list=animation_sources,
+            primary_rgb888=resolved_primary_rgb888,
+            background_rgb888=resolved_background_rgb888,
             frame_interval_ms=int(arguments.get("frame_interval_ms", DEFAULT_ANIMATION_FRAME_INTERVAL_MS)),
-            source=str(arguments.get("source", "mcp_animation")),
+            source=resolved_source,
             transcript=str(arguments.get("transcript", "")),
         )
 
@@ -2187,22 +2446,51 @@ class McpBridgeServer:
         frames = payload.get("frames")
         if isinstance(frames, list) and frames:
             frame_interval_ms = int(payload.get("frame_interval_ms", DEFAULT_TEXT_FRAME_INTERVAL_MS))
-            frame_interval_ms = max(60, frame_interval_ms)
+            frame_interval_ms = max(1, frame_interval_ms)
 
-            for frame_index, frame_payload in enumerate(frames):
+            await self.debug_ws_server.send_json({
+                "type": "matrix_animation_start",
+                "content_type": payload.get("content_type", "animation"),
+                "frame_count": len(frames),
+                "frame_interval_ms": frame_interval_ms,
+                "source": payload.get("source", ""),
+                "transcript": payload.get("transcript", ""),
+            })
+
+            for frame_payload in frames:
                 if not isinstance(frame_payload, dict):
                     raise ValueError("frames must contain JSON objects")
-                if not str(frame_payload.get("bitmap_rows_hex", "")).strip():
-                    raise ValueError("debug websocket delivery requires bitmap_rows_hex for every frame")
+
+                normalized_frame_payload = dict(frame_payload)
+                normalized_frame_payload["bitmap_rows_hex"] = normalize_bitmap_rows_hex_value(
+                    frame_payload.get("bitmap_rows_hex", ""),
+                    "frames[].bitmap_rows_hex",
+                )
+                normalized_frame_payload["primary_rgb888"] = normalize_rgb888_color(
+                    frame_payload.get("primary_rgb888", ""),
+                    "frames[].primary_rgb888",
+                )
+                normalized_frame_payload["background_rgb888"] = normalize_rgb888_color(
+                    frame_payload.get("background_rgb888", ""),
+                    "frames[].background_rgb888",
+                )
+                normalized_frame_payload["compact_frame_format"] = build_compact_bitmap_format_metadata()
 
                 await self.debug_ws_server.send_json({
                     "type": "matrix_pattern_result",
-                    **frame_payload,
+                    "frame_interval_ms": frame_interval_ms,
+                    **normalized_frame_payload,
                 })
-                update_matrix_status(self.status, frame_payload, "debug_ws_sent")
+                update_matrix_status(self.status, normalized_frame_payload, "debug_ws_sent")
 
-                if frame_index + 1 < len(frames):
-                    await asyncio.sleep(frame_interval_ms / 1000.0)
+            await self.debug_ws_server.send_json({
+                "type": "matrix_animation_end",
+                "content_type": payload.get("content_type", "animation"),
+                "frame_count": len(frames),
+                "frame_interval_ms": frame_interval_ms,
+                "source": payload.get("source", ""),
+                "transcript": payload.get("transcript", ""),
+            })
 
             return {
                 "requested": True,
@@ -2212,14 +2500,26 @@ class McpBridgeServer:
                 "frame_interval_ms": frame_interval_ms,
             }
 
-        if not str(payload.get("bitmap_rows_hex", "")).strip():
-            raise ValueError("debug websocket delivery requires bitmap_rows_hex")
+        normalized_payload = dict(payload)
+        normalized_payload["bitmap_rows_hex"] = normalize_bitmap_rows_hex_value(
+            payload.get("bitmap_rows_hex", ""),
+            "bitmap_rows_hex",
+        )
+        normalized_payload["primary_rgb888"] = normalize_rgb888_color(
+            payload.get("primary_rgb888", ""),
+            "primary_rgb888",
+        )
+        normalized_payload["background_rgb888"] = normalize_rgb888_color(
+            payload.get("background_rgb888", ""),
+            "background_rgb888",
+        )
+        normalized_payload["compact_frame_format"] = build_compact_bitmap_format_metadata()
 
         await self.debug_ws_server.send_json({
             "type": "matrix_pattern_result",
-            **payload,
+            **normalized_payload,
         })
-        update_matrix_status(self.status, payload, "debug_ws_sent")
+        update_matrix_status(self.status, normalized_payload, "debug_ws_sent")
         return {
             "requested": True,
             "transport": "debug_ws",

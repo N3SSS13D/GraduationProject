@@ -19,6 +19,13 @@
 #define GP_MATRIX_PAYLOAD_FORMAT_GLYPH_ROWS 0x02U
 #define GP_MATRIX_PAYLOAD_FORMAT_BITMAP_RGB888 0x03U
 
+/* Animation batches keep compact bitmap frames indexed inside one explicit start/end window. */
+#define GP_MATRIX_ANIMATION_MAX_FRAMES 24U
+#define GP_MATRIX_ANIMATION_DEFAULT_INTERVAL_MS 42U
+#define GP_MATRIX_ANIMATION_INTERVAL_MS_MIN 1U
+#define GP_MATRIX_ANIMATION_INTERVAL_MS_MAX 65535U
+#define GP_MATRIX_ANIMATION_FLAG_LOOP 0x01U
+
 #define GP_MATRIX_WIDTH 16U
 #define GP_MATRIX_HEIGHT 16U
 #define GP_MATRIX_FRAME_PIXELS (GP_MATRIX_WIDTH * GP_MATRIX_HEIGHT)
@@ -34,6 +41,9 @@
 #define GP_MATRIX_PACKET_OVERHEAD_SIZE (GP_MATRIX_PACKET_HEADER_SIZE + 1U)
 #define GP_MATRIX_FRAME_START_PAYLOAD_BYTES 5U
 #define GP_MATRIX_FRAME_CHUNK_PREFIX_BYTES 2U
+#define GP_MATRIX_ANIMATION_START_PAYLOAD_BYTES 5U
+#define GP_MATRIX_ANIMATION_FRAME_PREFIX_BYTES 1U
+#define GP_MATRIX_ANIMATION_END_PAYLOAD_BYTES 1U
 #define GP_MATRIX_SCROLL_START_PAYLOAD_BYTES 5U
 #define GP_MATRIX_ACTION_PAYLOAD_BYTES 18U
 #define GP_MATRIX_DEBUG_LED_PAYLOAD_BYTES 1U
@@ -54,6 +64,9 @@ typedef enum GpMatrixCommand {
     kGpMatrixCommandFrameStart = 0x10,
     kGpMatrixCommandFrameChunk = 0x11,
     kGpMatrixCommandFrameCommit = 0x12,
+    kGpMatrixCommandAnimationStart = 0x13,
+    kGpMatrixCommandAnimationFrame = 0x14,
+    kGpMatrixCommandAnimationEnd = 0x15,
     kGpMatrixCommandScrollGlyphStart = 0x20,
     kGpMatrixCommandScrollGlyphChunk = 0x21,
     kGpMatrixCommandScrollGlyphCommit = 0x22,
@@ -115,6 +128,21 @@ typedef enum GpMatrixStatusCode {
     kGpMatrixStatusBadLength = 0x05,
     kGpMatrixStatusInternalError = 0x7f,
 } GpMatrixStatusCode;
+
+typedef struct {
+    uint8_t format;
+    uint8_t frame_count;
+    uint16_t frame_interval_ms;
+    uint8_t flags;
+} GpMatrixAnimationStartPayload;
+
+typedef struct {
+    uint8_t frame_index;
+} GpMatrixAnimationFramePrefix;
+
+typedef struct {
+    uint8_t frame_count;
+} GpMatrixAnimationEndPayload;
 
 typedef struct {
     uint8_t source;

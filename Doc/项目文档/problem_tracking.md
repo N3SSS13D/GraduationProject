@@ -45,6 +45,23 @@
   - `External/xiaozhi-esp32/GP_Port/transport/`
   - `External/xiaozhi-esp32/GP_Port/ui/`
 
+### 2026-04-24 MCP 动画输入多次失败与约束收敛
+
+- 现象：在 `draw_animation` 调用中，`LLM` 多次把“单帧 16 行 token”误传成“16 帧列表”，并反复尝试 `yield_frame/time.sleep/import` 这类不受支持的时序实现，导致参数校验连续失败，最终退化为文字播放。
+- 根因：
+  - 动画输入契约对 `LLM` 不够直观，`bitmap_rows_hex_list` 的“每项应为完整帧”语义容易与“16 行 row token”混淆。
+  - 文档对动画时序控制边界不够强，未明确禁止在绘图语句中自行实现播放时序。
+- 处理结果：
+  - MCP 桥接新增动画输入归一化层，支持 `frames[]` 模式（每帧三选一：`bitmap_rows_hex`、`bitmap_rows`、`python_source/eval_source`）。
+  - 保留 `bitmap_rows_hex_list` 后向兼容，并新增“16 行 token 视为单帧”的容错归一化，降低历史高频误用失败率。
+  - 动画 schema 与说明文档补充详细约束、禁用实现方式、可复制示例和调用顺序。
+- 相关路径：
+  - `External/xiaozhi-esp32/GP_Port/gp_mcp_endpoint_client.py`
+  - `External/xiaozhi-esp32/GP_Port/gp_matrix_drawing_mcp_usage.md`
+  - `External/xiaozhi-esp32/GP_Port/gp_matrix_pattern_protocol.md`
+  - `.github/prompts/ws2812-ai-control.prompt.md`
+  - `.github/prompts/ws2812-ai-control.zh-CN.prompt.md`
+
 ## 当前已知约束
 
 ### AI端经典蓝牙约束

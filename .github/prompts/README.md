@@ -27,38 +27,22 @@
 - Prompt 或 README 维护只看 `.github/prompts/`、`External/xiaozhi-esp32/GP_Port/*.prompt.md` 和直接相关文档。
 - 不要默认扫描无关第三方目录。
 
-## Prompt 入口
+## Prompt 入口（精简后）
 
-### 通用开发
-
-- [ws2812-led-system-dev.zh-CN.prompt.md](./ws2812-led-system-dev.zh-CN.prompt.md)
-- [ws2812-led-system-dev.prompt.md](./ws2812-led-system-dev.prompt.md)
-
-### AI端动作与接入
+### AI端主开发入口
 
 - [ws2812-ai-control.zh-CN.prompt.md](./ws2812-ai-control.zh-CN.prompt.md)
 - [ws2812-ai-control.prompt.md](./ws2812-ai-control.prompt.md)
 
-### LED端驱动与效果
-
-- [ws2812-display-driver.zh-CN.prompt.md](./ws2812-display-driver.zh-CN.prompt.md)
-- [ws2812-display-driver.prompt.md](./ws2812-display-driver.prompt.md)
-- [ws2812-animation-effects.zh-CN.prompt.md](./ws2812-animation-effects.zh-CN.prompt.md)
-- [ws2812-animation-effects.prompt.md](./ws2812-animation-effects.prompt.md)
-
-### 审查
+### 代码审查入口
 
 - [ws2812-code-review.zh-CN.prompt.md](./ws2812-code-review.zh-CN.prompt.md)
 - [ws2812-code-review.prompt.md](./ws2812-code-review.prompt.md)
 
-### GP_Port 阶段 Prompt
+说明：
 
-- `External/xiaozhi-esp32/GP_Port/gp_project_master.prompt.md`
-- `External/xiaozhi-esp32/GP_Port/gp_phase_1_architecture.prompt.md`
-- `External/xiaozhi-esp32/GP_Port/gp_phase_2_esp32_interface.prompt.md`
-- `External/xiaozhi-esp32/GP_Port/gp_phase_3_protocol.prompt.md`
-- `External/xiaozhi-esp32/GP_Port/gp_phase_4_ai8051u.prompt.md`
-- `External/xiaozhi-esp32/GP_Port/gp_phase_5_validation.prompt.md`
+- 其余阶段性或细分 prompt 已并入上述主入口，避免重复维护。
+- `GP_Port/` 内的阶段 prompt 已下线，相关规则统一在主 prompt 与关键说明文档中维护。
 
 ## 使用要求
 

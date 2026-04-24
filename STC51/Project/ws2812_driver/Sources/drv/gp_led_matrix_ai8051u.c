@@ -108,6 +108,15 @@ static const char *GpLedMatrixAi8051u_CommandName(uint8_t command)
         case kGpMatrixCommandFrameCommit:
             return "fcom";
 
+        case kGpMatrixCommandAnimationStart:
+            return "astr";
+
+        case kGpMatrixCommandAnimationFrame:
+            return "afrm";
+
+        case kGpMatrixCommandAnimationEnd:
+            return "aend";
+
         case kGpMatrixCommandScrollGlyphStart:
             return "gstr";
 
@@ -620,6 +629,41 @@ static GpMatrixStatusCode GpLedMatrixAi8051u_HandleGlyphCommit(void)
     return status;
 }
 
+static GpMatrixStatusCode GpLedMatrixAi8051u_HandleAnimationStart(void)
+{
+    if (g_gpMatrixPayloadLength != GP_MATRIX_ANIMATION_START_PAYLOAD_BYTES)
+    {
+        return kGpMatrixStatusBadLength;
+    }
+
+    return GpLedAction_BeginAnimationUpload(g_gpMatrixPayload[0],
+                                            g_gpMatrixPayload[1],
+                                            GpLedMatrixAi8051u_ReadLe16(&g_gpMatrixPayload[2]),
+                                            g_gpMatrixPayload[4]);
+}
+
+static GpMatrixStatusCode GpLedMatrixAi8051u_HandleAnimationFrame(void)
+{
+    if (g_gpMatrixPayloadLength != (GP_MATRIX_ANIMATION_FRAME_PREFIX_BYTES + GP_MATRIX_BITMAP_RGB888_FRAME_SIZE))
+    {
+        return kGpMatrixStatusBadLength;
+    }
+
+    return GpLedAction_StoreAnimationFrame(g_gpMatrixPayload[0],
+                                           &g_gpMatrixPayload[GP_MATRIX_ANIMATION_FRAME_PREFIX_BYTES],
+                                           GP_MATRIX_BITMAP_RGB888_FRAME_SIZE);
+}
+
+static GpMatrixStatusCode GpLedMatrixAi8051u_HandleAnimationEnd(void)
+{
+    if (g_gpMatrixPayloadLength != GP_MATRIX_ANIMATION_END_PAYLOAD_BYTES)
+    {
+        return kGpMatrixStatusBadLength;
+    }
+
+    return GpLedAction_CommitAnimation(g_gpMatrixPayload[0]);
+}
+
 static GpMatrixStatusCode GpLedMatrixAi8051u_ProcessPacket(GpLedMatrixAi8051uContext xdata *context,
                                                            const uint8_t xdata *packet,
                                                            uint8_t packetLength)
@@ -710,6 +754,18 @@ static GpMatrixStatusCode GpLedMatrixAi8051u_ProcessPacket(GpLedMatrixAi8051uCon
 
         case kGpMatrixCommandFrameCommit:
             status = GpLedMatrixAi8051u_HandleFrameCommit();
+            break;
+
+        case kGpMatrixCommandAnimationStart:
+            status = GpLedMatrixAi8051u_HandleAnimationStart();
+            break;
+
+        case kGpMatrixCommandAnimationFrame:
+            status = GpLedMatrixAi8051u_HandleAnimationFrame();
+            break;
+
+        case kGpMatrixCommandAnimationEnd:
+            status = GpLedMatrixAi8051u_HandleAnimationEnd();
             break;
 
         case kGpMatrixCommandScrollGlyphStart:

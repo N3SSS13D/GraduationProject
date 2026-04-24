@@ -1,6 +1,7 @@
 #ifndef GP_DEBUG_DISPLAY_H
 #define GP_DEBUG_DISPLAY_H
 
+#include "gp_led_matrix_protocol.h"
 #include "display/lcd_display.h"
 
 #include <array>
@@ -63,6 +64,18 @@ public:
         uint32_t primary_rgb888,
         uint32_t background_rgb888 = 0x000000);
 
+    /* Start one buffered matrix preview sequence that can loop locally while frames arrive. */
+    void BeginMatrixAnimationPreview(size_t frame_count, uint16_t frame_interval_ms);
+
+    /* Store one preview frame inside the local animation buffer. */
+    void ApplyMatrixAnimationPreviewFrame(size_t frame_index,
+        const std::array<uint16_t, 16>& bitmap_rows,
+        uint32_t primary_rgb888,
+        uint32_t background_rgb888 = 0x000000);
+
+    /* Mark the buffered preview sequence complete and keep looping it locally. */
+    void EndMatrixAnimationPreview();
+
     /* Register the callback used to push debug-menu color changes to the matrix layer. */
     void SetMatrixDebugStateCallback(MatrixDebugStateCallback callback);
 
@@ -97,6 +110,13 @@ private:
         TouchAdjust adjust = TouchAdjust::kPrevPreset;
     };
 
+    struct MatrixPreviewFrame {
+        std::array<uint16_t, 16> bitmap_rows = {};
+        uint32_t primary_rgb888 = 0xF5F5F5U;
+        uint32_t background_rgb888 = 0x000000U;
+        bool valid = false;
+    };
+
     lv_obj_t* menu_entry_button_ = nullptr;
     lv_obj_t* debug_menu_panel_ = nullptr;
     lv_obj_t* debug_header_panel_ = nullptr;
@@ -127,13 +147,20 @@ private:
     bool debug_menu_visible_ = false;
     bool pending_menu_visible_ = false;
     bool has_matrix_bitmap_preview_ = false;
+    bool has_matrix_animation_preview_ = false;
     std::string ai_link_status_text_;
     MatrixDebugStateCallback matrix_debug_state_callback_;
     DebugSnapshotCallback debug_snapshot_callback_;
     TouchCommandCallback touch_command_callback_;
     std::array<MenuButtonContext, 2> menu_button_contexts_;
     std::array<TouchButtonContext, 6> touch_button_contexts_;
+    std::array<MatrixPreviewFrame, GP_MATRIX_ANIMATION_MAX_FRAMES> matrix_preview_frames_ = {};
     std::array<lv_obj_t*, 256> debug_matrix_pixels_ = {};
+    size_t matrix_preview_frame_count_ = 0U;
+    size_t matrix_preview_available_frames_ = 0U;
+    size_t matrix_preview_rendered_index_ = GP_MATRIX_ANIMATION_MAX_FRAMES;
+    uint16_t matrix_preview_frame_interval_ms_ = 42U;
+    uint64_t matrix_preview_animation_start_us_ = 0U;
 
     void CreateMenuEntryButton();
     void CreateDebugMenuOverlay();
@@ -154,6 +181,8 @@ private:
     void HandleTouchAdjust(TouchAdjust adjust);
     std::string BuildTouchCommandTranscript(TouchAdjust adjust) const;
     void EnsureAnimationTimer();
+    void RenderMatrixPreviewFrame(const MatrixPreviewFrame& frame);
+    void RefreshMatrixAnimationPreview();
     static void OnAnimationTimer(lv_timer_t* timer);
     static void OnAsyncMenuVisibility(void* user_data);
     static void OnMenuButtonEvent(lv_event_t* event);

@@ -1,6 +1,6 @@
 # GP Matrix Drawing MCP Reference
 
-## Canonical Entry
+## 0. Canonical Entry
 
 Run the local MCP bridge with:
 
@@ -12,41 +12,88 @@ Canonical LLM-facing entry: `GP_Port/gp_display_mcp_bridge.py`
 
 Compatibility entry: `GP_Port/gp_mcp_endpoint_client.py`
 
-## Tool Selection
+## 1. Slice Index (For Auto-Segmented LLM Reading)
 
-Use these tools in this order:
+Use this index when the document is automatically chunked.
 
-1. `self.screen.matrix_16x16.draw_python`
-Primary tool for most custom drawings.
+- `Section 2`: Global invariants and hard constraints (always apply).
+- `Section 3`: Tool selection decision tree.
+- `Section 4`: Per-tool contracts (`draw_python`, `show_text`, `draw_animation`, `draw_frame`, `render_prompt`).
+- `Section 5`: Standard anti-failure animation templates (slow blink, breathing, marquee).
+- `Section 6`: Flexible animation construction patterns for diverse effects.
+- `Section 7`: Common failure patterns and direct fixes.
+- `Section 8`: Output payload quick reference.
+- `Section 9`: LLM final checklist before tool call.
 
-2. `self.screen.matrix_16x16.show_text`
-Use when the request is naturally text and should become a short frame sequence.
+## 1.1 Tool-Gated Knowledge Template (Must Query Tool First)
 
-3. `self.screen.matrix_16x16.draw_animation`
-Use when you already have a compact `bitmap_rows_hex` sequence and want a LED-side animation, especially `10` frames at `100 ms` for `10 fps` playback.
+Use this template when a topic must never be answered directly and always requires a tool query first.
 
-4. `self.screen.matrix_16x16.draw_frame`
-Use when you already have `frame_rgb332_hex` or `bitmap_rows_hex`.
+### 1.1.1 Generic Template
 
-5. `self.screen.matrix_16x16.render_prompt`
-Legacy fallback for vague natural-language prompts when you do not want to author draw code directly.
+```text
+本文档包含 "xxxxx" 等相关内容。当用户提及这些内容时，我不能直接作答，必须在每次对话中调用该工具查询资料后，再依据查询结果进行回答。
 
-## Shared Rules
+## 以下是 “xxxxx” 的内容
+(这里填写文档的总结内容)
+```
 
-- The matrix is always `16x16`.
-- Single-frame tools return `matrix_frame_v1`.
-- `primary_rgb888` colors painted pixels.
-- `background_rgb888` colors empty pixels.
+### 1.1.2 Recommended Filled Template (Copy And Edit)
+
+```text
+本文档包含 "16x16 动画输入规范"、"bitmap_rows_hex 格式约束"、"draw_animation 反失败模板" 等相关内容。当用户提及这些内容时，我不能直接作答，必须在每次对话中先调用工具查询资料（例如查询最新工具 schema、规则段落或示例模板），再依据查询结果进行回答。
+
+## 以下是 “16x16 动画输入规范” 的内容
+1. 动画优先使用 frames 模式，每帧只允许一种输入源：bitmap_rows_hex 或 bitmap_rows 或 python_source/eval_source。
+2. 禁止在绘图语句中实现时序：禁止 yield_frame、time.sleep、import。
+3. 动画时序只通过 frame_interval_ms 控制。
+4. 位图字段与 RGB332 字段不可混用：bitmap_rows_hex 是 64 hex，frame_rgb332_hex 是 512 hex。
+5. 若输入帧数超过 24，桥接会重采样到 24 并缩放间隔以尽量保持总时长。
+```
+
+### 1.1.3 LLM Execution Notes
+
+- If user asks about any protected topic in `xxxxx`, call the required lookup tool first.
+- Do not answer from stale memory if tool lookup is required by policy.
+- In the final answer, use the tool result as the source of truth and keep wording aligned with queried data.
+
+## 2. Global Invariants (Always True)
+
+- Matrix resolution is always `16x16`.
+- Compact LED-ready frame is always `38 bytes`:
+  - `32-byte bitmap` + `3-byte primary RGB888` + `3-byte background RGB888`.
+- `bitmap_rows_hex` is only the bitmap portion.
+  - Canonical form: exactly `64` hex characters (`16 rows x 16 bits = 32 bytes`).
+- Bitmap semantics are fixed:
+  - `1 = LED on`, `0 = LED off`.
+  - Rows are `top -> bottom`.
+  - In each row, high bit (`bit15`) is the leftmost LED.
+- Do not pass `0/1` arrays, ASCII art, spaced binary strings, or `256-byte frame_rgb332_hex` into `bitmap_rows_hex` fields.
 - Include `source` and `transcript` whenever possible for traceability.
-- Downstream transfer to `LED端` should prefer compact `bitmap_rows_hex + RGB888` over expanding to a full `256`-byte RGB332 frame.
+- For downstream transfer to `LED端`, prefer compact `bitmap_rows_hex + RGB888` over expanded `256-byte RGB332`.
+- Buffered animation playback uses one shared `frame_interval_ms` per batch.
+- If animation input has more than `24` frames, host bridge resamples to `24` and scales interval to preserve total duration.
 
-## `self.screen.matrix_16x16.draw_python`
+## 3. Tool Selection (Decision Tree)
 
-### When To Use It
+1. Need one custom pattern from code-like instructions:
+   - Use `self.screen.matrix_16x16.draw_python`.
+2. Need scrolling or per-character text sequence:
+   - Use `self.screen.matrix_16x16.show_text`.
+3. Need buffered LED-side animation sequence:
+   - Use `self.screen.matrix_16x16.draw_animation`.
+4. Already have one final bitmap or full RGB332 frame:
+   - Use `self.screen.matrix_16x16.draw_frame`.
+5. Only have vague natural language prompt and no explicit draw plan:
+   - Use `self.screen.matrix_16x16.render_prompt`.
 
-Use `draw_python` for arbitrary patterns, especially when an LLM needs programmatic control.
+## 4. Tool Contracts
 
-### Input Schema
+### 4.1 `self.screen.matrix_16x16.draw_python`
+
+Use when generating one frame from restricted drawing logic.
+
+#### Input
 
 ```json
 {
@@ -61,142 +108,34 @@ Use `draw_python` for arbitrary patterns, especially when an LLM needs programma
 
 At least one of `python_source` or `eval_source` is required.
 
-### Execution Model
+#### Execution model
 
-- `python_source`: restricted Python statements executed with `exec(...)`.
-- `eval_source`: restricted Python expression evaluated with `eval(...)`.
-- If both are present, `python_source` runs first, then `eval_source` runs in the same scope.
-- Inside `python_source`, `eval("<expression>")` is also available and uses the same restrictions as `eval_source`.
+- `python_source` runs as restricted statements (`exec`).
+- `eval_source` runs as restricted expression (`eval`).
+- If both exist: run `python_source` first, then `eval_source` in same scope.
 
-### Choose Between `python_source` And `eval_source`
+#### Allowed helper names
 
-- Prefer `python_source` for readable imperative steps, variable assignments, and short `for` loops.
-- Prefer `eval_source` for list comprehensions, conditional expressions, or compact expression-heavy drawing logic.
-- Prefer using both only when `python_source` needs to define reusable variables before `eval_source` runs.
+- `range`, `min`, `max`, `abs`, `int`, `eval`
+- `clear`, `point`, `line`, `rectangle`, `fill_rectangle`
+- `ellipse`, `fill_ellipse`, `circle`, `fill_circle`, `polygon`
 
-### Allowed Helpers
+#### Allowed `draw.<method>`
 
-- `range`
-- `min`
-- `max`
-- `abs`
-- `int`
-- `eval`
-- `clear`
-- `point`
-- `line`
-- `rectangle`
-- `fill_rectangle`
-- `ellipse`
-- `fill_ellipse`
-- `circle`
-- `fill_circle`
-- `polygon`
+- `draw.point`, `draw.line`, `draw.rectangle`, `draw.ellipse`
+- `draw.polygon`, `draw.arc`, `draw.pieslice`, `draw.chord`
 
-### Allowed `draw.<method>` Calls
+#### Forbidden constructs
 
-- `draw.point`
-- `draw.line`
-- `draw.rectangle`
-- `draw.ellipse`
-- `draw.polygon`
-- `draw.arc`
-- `draw.pieslice`
-- `draw.chord`
+- `import`, `while`, function/class definitions, async comprehensions.
+- File/network access.
+- Attribute access other than allowed `draw.<method>`.
 
-### Allowed Statement/Expression Shapes
+### 4.2 `self.screen.matrix_16x16.show_text`
 
-- simple assignments such as `step = 4`
-- `for ... in range(...)`
-- `if` blocks with numeric or boolean conditions
-- arithmetic expressions
-- list literals and tuple literals
-- list comprehensions in `eval_source`
-- conditional expressions in `eval_source`
+Use when each character should become one frame.
 
-### Forbidden Constructs
-
-- `import`
-- `while`
-- function definitions
-- class definitions
-- async comprehensions
-- file access
-- network access
-- arbitrary attribute access other than `draw.<allowed_method>`
-
-### Color Rules
-
-- Drawing code always creates a binary mask.
-- Painted pixels use `primary_rgb888`.
-- Unpainted pixels use `background_rgb888`.
-
-### Copyable Examples
-
-Imperative diagonal cross:
-
-```json
-{
-  "python_source": "for i in range(16):\n    point(i, i)\n    point(15 - i, i)",
-  "primary_rgb888": "#00FF66",
-  "background_rgb888": "#000000",
-  "source": "mcp_python",
-  "transcript": "draw a green X"
-}
-```
-
-`eval_source` with a comprehension:
-
-```json
-{
-  "eval_source": "[(point(i, i), point(15 - i, i)) for i in range(16)]",
-  "primary_rgb888": "#FFFFFF",
-  "background_rgb888": "#000000",
-  "source": "mcp_eval",
-  "transcript": "draw a white X through eval_source"
-}
-```
-
-Mixed mode with a shared variable:
-
-```json
-{
-  "python_source": "step = 4",
-  "eval_source": "[fill_rectangle(x, 0, x + 1, 1) for x in range(0, 16, step)]",
-  "primary_rgb888": "#FFD60A",
-  "background_rgb888": "#101010",
-  "source": "mcp_python",
-  "transcript": "draw yellow bars with a shared step"
-}
-```
-
-Nested `eval(...)` inside `python_source`:
-
-```json
-{
-  "python_source": "step = 4\neval(\"[fill_rectangle(x, 0, x + 1, 1) for x in range(0, 16, step)]\")",
-  "primary_rgb888": "#14B8A6",
-  "background_rgb888": "#000000",
-  "source": "mcp_python",
-  "transcript": "draw cyan bars with nested eval"
-}
-```
-
-Checker blocks with statement control flow:
-
-```json
-{
-  "python_source": "for y in range(0, 16, 4):\n    for x in range(0, 16, 4):\n        if ((x + y) // 4) % 2 == 0:\n            fill_rectangle(x, y, x + 3, y + 3)",
-  "primary_rgb888": "#FF9F0A",
-  "background_rgb888": "#000000",
-  "source": "mcp_python",
-  "transcript": "draw orange checker blocks"
-}
-```
-
-## `self.screen.matrix_16x16.show_text`
-
-### Input Schema
+#### Input
 
 ```json
 {
@@ -209,17 +148,18 @@ Checker blocks with statement control flow:
 }
 ```
 
-Rules:
+#### Rules
 
-- each character becomes one `16x16` frame
-- frames are sent one by one to `AI端` through the debug websocket when connected
-- `frame_interval_ms` controls the interval between frames
+- One character -> one `16x16` frame.
+- `frame_interval_ms` controls sequence playback interval.
 
-## `self.screen.matrix_16x16.draw_animation`
+### 4.3 `self.screen.matrix_16x16.draw_animation`
 
-Use this when you already have a compact bitmap sequence that should play on the `LED端`.
+Use for multi-frame buffered animation.
 
-Example:
+#### Input mode A: `bitmap_rows_hex_list`
+
+Each item should be one full frame (`64` hex chars).
 
 ```json
 {
@@ -227,30 +167,69 @@ Example:
     "018003c007e00ff01ff83ffc7ffe3ffc1ff80ff007e003c00180",
     "00c001e003f007f80ffc1ffe3fff1ffe0ffc07f003f001e000c0"
   ],
-  "frame_interval_ms": 100,
+  "frame_interval_ms": 42,
   "primary_rgb888": "#3DDC97",
   "background_rgb888": "#000000",
   "source": "mcp_animation",
-  "transcript": "play a 10 fps pulse animation"
+  "transcript": "play pulse animation"
 }
 ```
 
-Rules:
+#### Input mode B: `frames` (recommended for LLM)
 
-- each `bitmap_rows_hex_list` entry must contain exactly `64` hex characters
-- prefer `10` frames and `100 ms` for a `10 fps` effect
-- this tool is optimized for the compact `bitmap_rows + RGB888` Bluetooth path to the `LED端`
+Each frame must provide exactly one source:
 
-## `self.screen.matrix_16x16.draw_frame`
+- `bitmap_rows_hex`
+- `bitmap_rows` (16 row tokens)
+- `python_source` / `eval_source`
 
-Use this when you already have frame data.
+```json
+{
+  "frames": [
+    {
+      "bitmap_rows": [
+        "0000", "0000", "0000", "0000",
+        "0000", "0000", "0000", "0000",
+        "0000", "0000", "0000", "0000",
+        "0000", "0000", "0000", "0000"
+      ]
+    },
+    {
+      "python_source": "fill_rectangle(0, 0, 15, 15)",
+      "primary_rgb888": "#00FF00",
+      "background_rgb888": "#000000"
+    }
+  ],
+  "frame_interval_ms": 420,
+  "primary_rgb888": "#00FF00",
+  "background_rgb888": "#000000",
+  "source": "mcp_animation",
+  "transcript": "blink green full frame"
+}
+```
 
-Preferred inputs:
+#### Compatibility fallback
 
-- `bitmap_rows_hex` plus `primary_rgb888` and optional `background_rgb888`
-- or `frame_rgb332_hex` when you already own the full RGB332 frame
+If `bitmap_rows_hex_list` itself is exactly `16` row tokens, bridge treats it as one frame.
 
-Example:
+#### Hard constraints
+
+- `frame_interval_ms` range: `1..65535`.
+- `42` is near-`24 fps` default.
+- `420` is a good obvious blink default.
+
+#### Forbidden animation authoring patterns
+
+- Do not call `yield_frame(...)`.
+- Do not call `time.sleep(...)`.
+- Do not write any `import` statements in drawing code.
+- Do not split one frame into `16` items in `bitmap_rows_hex_list` unless each item is full `64`-hex frame.
+
+### 4.4 `self.screen.matrix_16x16.draw_frame`
+
+Use when you already have final frame data.
+
+#### Input
 
 ```json
 {
@@ -258,15 +237,18 @@ Example:
   "primary_rgb888": "#F5F5F5",
   "background_rgb888": "#000000",
   "source": "mcp_frame",
-  "transcript": "draw a white X from a bitmap mask"
+  "transcript": "draw a white X from bitmap"
 }
 ```
 
-## `self.screen.matrix_16x16.render_prompt`
+#### Contract
 
-Use only as a fallback when a free-text description is easier than explicit draw code.
+- `bitmap_rows_hex`: exactly `64` hex chars.
+- `frame_rgb332_hex`: exactly `512` hex chars (if used instead).
 
-Example:
+### 4.5 `self.screen.matrix_16x16.render_prompt`
+
+Use as a fallback when no explicit drawing plan exists.
 
 ```json
 {
@@ -278,104 +260,162 @@ Example:
 }
 ```
 
-## Output Format
+## 5. Standard Anti-Failure Animation Templates
 
-### Single Frame
+All templates below are safe defaults for direct LLM use.
 
-`draw_python`, `draw_frame`, and `render_prompt` return:
-
-```json
-{
-  "data_format": "matrix_frame_v1",
-  "content_type": "python_draw",
-  "frame_rgb332_hex": "<512 hex chars>",
-  "bitmap_rows_hex": "<64 hex chars>",
-  "width": 16,
-  "height": 16,
-  "primary_rgb888": "#00FF66",
-  "background_rgb888": "#000000",
-  "source": "mcp_python",
-  "transcript": "draw a green X",
-  "python_source": "for i in range(16):\n    point(i, i)\n    point(15 - i, i)",
-  "eval_source": "[(point(i, i), point(15 - i, i)) for i in range(16)]",
-  "applied": true,
-  "tool_name": "self.screen.matrix_16x16.draw_python"
-}
-```
-
-### Text Sequence
-
-`show_text` returns:
+### 5.1 Template: Slow Blink
 
 ```json
 {
-  "data_format": "matrix_frame_sequence_v1",
-  "content_type": "text",
-  "text": "Hi",
-  "frame_interval_ms": 180,
-  "frame_count": 2,
-  "frames": [
-    {
-      "data_format": "matrix_frame_v1",
-      "content_type": "text",
-      "glyph": "H",
-      "frame_index": 0,
-      "frame_count": 2,
-      "frame_rgb332_hex": "<512 hex chars>",
-      "bitmap_rows_hex": "<64 hex chars>",
-      "primary_rgb888": "#FFFFFF",
-      "background_rgb888": "#000000"
-    }
-  ],
-  "source": "mcp_text",
-  "transcript": "show text Hi",
-  "applied": true
+  "tool": "self.screen.matrix_16x16.draw_animation",
+  "arguments": {
+    "frame_interval_ms": 420,
+    "primary_rgb888": "#00FF00",
+    "background_rgb888": "#000000",
+    "source": "mcp_animation",
+    "transcript": "slow blink green",
+    "frames": [
+      { "python_source": "clear(0)" },
+      { "python_source": "fill_rectangle(0, 0, 15, 15)" }
+    ]
+  }
 }
 ```
 
-### Animation Sequence
-
-`draw_animation` returns:
+### 5.2 Template: Breathing Pulse (Area breathing)
 
 ```json
 {
-  "data_format": "matrix_frame_sequence_v1",
-  "content_type": "animation",
-  "frame_interval_ms": 100,
-  "frame_count": 10,
-  "frames": [
-    {
-      "data_format": "matrix_frame_v1",
-      "content_type": "animation",
-      "frame_index": 0,
-      "frame_count": 10,
-      "frame_rgb332_hex": "<512 hex chars>",
-      "bitmap_rows_hex": "<64 hex chars>",
-      "primary_rgb888": "#3DDC97",
-      "background_rgb888": "#000000"
-    }
-  ],
-  "tool_name": "self.screen.matrix_16x16.draw_animation",
-  "applied": true
+  "tool": "self.screen.matrix_16x16.draw_animation",
+  "arguments": {
+    "frame_interval_ms": 120,
+    "primary_rgb888": "#00FF88",
+    "background_rgb888": "#000000",
+    "source": "mcp_animation",
+    "transcript": "breathing pulse",
+    "frames": [
+      { "python_source": "clear(0); fill_circle(8, 8, 1)" },
+      { "python_source": "clear(0); fill_circle(8, 8, 2)" },
+      { "python_source": "clear(0); fill_circle(8, 8, 3)" },
+      { "python_source": "clear(0); fill_circle(8, 8, 4)" },
+      { "python_source": "clear(0); fill_circle(8, 8, 5)" },
+      { "python_source": "clear(0); fill_circle(8, 8, 4)" },
+      { "python_source": "clear(0); fill_circle(8, 8, 3)" },
+      { "python_source": "clear(0); fill_circle(8, 8, 2)" }
+    ]
+  }
 }
 ```
 
-## LLM Calling Checklist
+### 5.3 Template: Marquee (Column scan)
 
-1. If you need a custom pattern, start with `self.screen.matrix_16x16.draw_python`.
-2. Use `python_source` for readable imperative steps.
-3. Use `eval_source` for compact expression-based drawing logic.
-4. If you need a LED-side animation sequence, call `draw_animation` with compact bitmap masks.
-5. If you already have a bitmap mask, skip code generation and call `draw_frame`.
-6. If the request is text, call `show_text`.
-7. Always provide explicit colors for reproducible output.
-8. Keep generated output bounded to one `16x16` frame unless text or animation playback is explicitly needed.
+```json
+{
+  "tool": "self.screen.matrix_16x16.draw_animation",
+  "arguments": {
+    "frame_interval_ms": 70,
+    "primary_rgb888": "#00FF00",
+    "background_rgb888": "#000000",
+    "source": "mcp_animation",
+    "transcript": "marquee scan",
+    "frames": [
+      { "python_source": "clear(0); fill_rectangle(0, 0, 0, 15)" },
+      { "python_source": "clear(0); fill_rectangle(1, 0, 1, 15)" },
+      { "python_source": "clear(0); fill_rectangle(2, 0, 2, 15)" },
+      { "python_source": "clear(0); fill_rectangle(3, 0, 3, 15)" },
+      { "python_source": "clear(0); fill_rectangle(4, 0, 4, 15)" },
+      { "python_source": "clear(0); fill_rectangle(5, 0, 5, 15)" },
+      { "python_source": "clear(0); fill_rectangle(6, 0, 6, 15)" },
+      { "python_source": "clear(0); fill_rectangle(7, 0, 7, 15)" },
+      { "python_source": "clear(0); fill_rectangle(8, 0, 8, 15)" },
+      { "python_source": "clear(0); fill_rectangle(9, 0, 9, 15)" },
+      { "python_source": "clear(0); fill_rectangle(10, 0, 10, 15)" },
+      { "python_source": "clear(0); fill_rectangle(11, 0, 11, 15)" },
+      { "python_source": "clear(0); fill_rectangle(12, 0, 12, 15)" },
+      { "python_source": "clear(0); fill_rectangle(13, 0, 13, 15)" },
+      { "python_source": "clear(0); fill_rectangle(14, 0, 14, 15)" },
+      { "python_source": "clear(0); fill_rectangle(15, 0, 15, 15)" }
+    ]
+  }
+}
+```
 
-## Delivery Notes
+## 6. Flexible Animation Patterns (Diversity Without Failure)
+
+Use these safe transformations on standard templates:
+
+- Speed variants:
+  - Slow: `frame_interval_ms = 300..700`
+  - Medium: `120..260`
+  - Fast: `40..100`
+- Color variants:
+  - Keep one structure, vary `primary_rgb888` only.
+- Direction variants:
+  - Reverse frame order for inverse motion.
+- Density variants:
+  - In marquee, use single column, dual columns, or 2-pixel bar.
+- Shape variants:
+  - Replace `fill_circle` with `fill_rectangle` or `polygon` for different pulse style.
+
+Safe generation prompt for LLM:
+
+```text
+Generate only the arguments object for self.screen.matrix_16x16.draw_animation.
+Constraints:
+1) Use frames[] mode.
+2) Each frame must contain exactly one source and use python_source only.
+3) No import, no time.sleep, no yield_frame.
+4) Frame count 6..24.
+5) frame_interval_ms 40..500.
+6) Every python_source starts with clear(0).
+7) Provide explicit primary_rgb888 and background_rgb888.
+Output JSON only.
+```
+
+## 7. Failure Patterns -> Direct Fix
+
+- Error pattern: `bitmap_rows_hex_list[] must contain ...`
+  - Fix: use `frames[]` mode or provide full `64`-hex frame per list item.
+- Error pattern: `Unsupported helper function: yield_frame`
+  - Fix: remove `yield_frame`, encode timing with `frame_interval_ms`.
+- Error pattern: syntax error from escaped newlines
+  - Fix: keep each frame logic short and single-purpose.
+- Error pattern: wrong hex length (`frame_rgb332_hex` / `bitmap_rows_hex`)
+  - Fix: `frame_rgb332_hex = 512` hex, `bitmap_rows_hex = 64` hex.
+
+## 8. Output Payload Quick Reference
+
+### 8.1 Single frame output (`draw_python`, `draw_frame`, `render_prompt`)
+
+- `data_format = matrix_frame_v1`
+- Includes `frame_rgb332_hex`, `bitmap_rows_hex`, colors, dimensions, trace fields.
+
+### 8.2 Sequence output (`show_text`, `draw_animation`)
+
+- `data_format = matrix_frame_sequence_v1`
+- Includes `frame_interval_ms`, `frame_count`, `frames[]`.
+- Animation output includes compact format metadata and per-frame indices.
+
+## 9. Final LLM Checklist Before Calling MCP
+
+1. Correct tool selected by intent.
+2. For animation, prefer `frames[]` mode.
+3. No `yield_frame`, `time.sleep`, or `import` in drawing code.
+4. Colors explicitly set.
+5. Timing only via `frame_interval_ms`.
+6. Bitmap fields are not confused with RGB332 fields.
+7. Payload is JSON-only, no explanation text mixed in.
+8. Keep each frame logic simple and deterministic.
+
+## 10. Delivery Notes
 
 - Single-frame tools prefer debug websocket delivery when available.
-- Single-frame tools can fall back to the existing HTTP preview flow.
-- Text and animation playback are intended to use the debug websocket path.
-- After the `AI端` receives `matrix_pattern_result`, it should forward `bitmap_rows + RGB888` to the `LED端` over Bluetooth using the compact frame format instead of expanding to a full RGB332 frame.
-- Keep Bluetooth `FrameChunk` sizing aligned with the shared protocol constant: `64` bytes on both the `AI端` and `LED端`.
-- Compact bitmap frames are only `38` bytes, so the `AI端` may send `FrameStart` and `FrameChunk` without waiting for intermediate ACKs and rely on the final `FrameCommit` ACK for low-latency animation playback.
+- Single-frame tools can fall back to HTTP preview flow.
+- Text and animation playback are intended for debug websocket path.
+- Animation sequence transport should use:
+  - `matrix_animation_start`
+  - indexed `matrix_pattern_result` frames
+  - `matrix_animation_end`
+- `AI端` should buffer and loop preview locally, then forward full batch to `LED端`.
+- Compact bitmap frames are `38` bytes, so low-latency flow can rely on final `FrameCommit` ACK when payload fits one chunk.

@@ -61,6 +61,7 @@ constexpr uint32_t kBtConfigInquiryTimeoutMs = 5000;
 constexpr uint32_t kBtConfigLinkTimeoutMs = 5000;
 constexpr uint32_t kBtConfigIdleBreakMs = 60;
 constexpr uint32_t kBtConfigSettleDelayMs = 120;
+constexpr uint16_t kDebugPreviewAnimationIntervalMs = 42;
 }
 
 namespace {
@@ -665,6 +666,11 @@ private:
         std::string text;
     };
 
+    struct PendingMatrixAnimation {
+        GpLedMatrixEsp32::BitmapAnimationFrame frame = {};
+        bool valid = false;
+    };
+
     i2c_master_bus_handle_t i2c_bus_;
     i2c_master_dev_handle_t pca9557_handle_;
     Button boot_button_;
@@ -687,7 +693,65 @@ private:
     std::string debug_preview_status_text_ = "HTTP preview init";
     std::string debug_websocket_status_text_ = "Debug WS init";
     uint32_t bt_transport_baudrate_ = GP_MATRIX_BT_UART_DATA_BAUDRATE;
+    std::array<PendingMatrixAnimation, GP_MATRIX_ANIMATION_MAX_FRAMES> pending_matrix_animation_frames_ = {};
+    size_t pending_matrix_animation_frame_count_ = 0U;
+    size_t pending_matrix_animation_ready_frames_ = 0U;
+    uint16_t pending_matrix_animation_interval_ms_ = kDebugPreviewAnimationIntervalMs;
+    std::string pending_matrix_animation_transcript_;
+    bool pending_matrix_animation_active_ = false;
     std::unique_ptr<WebSocket> debug_websocket_;
+
+    void ResetPendingMatrixAnimation() {
+        for (auto& frame : pending_matrix_animation_frames_) {
+            frame.valid = false;
+        }
+
+        pending_matrix_animation_frame_count_ = 0U;
+        pending_matrix_animation_ready_frames_ = 0U;
+        pending_matrix_animation_interval_ms_ = kDebugPreviewAnimationIntervalMs;
+        pending_matrix_animation_transcript_.clear();
+        pending_matrix_animation_active_ = false;
+    }
+
+    void BeginPendingMatrixAnimation(size_t frame_count,
+                                     uint16_t frame_interval_ms,
+                                     const std::string& transcript_text) {
+        ResetPendingMatrixAnimation();
+        pending_matrix_animation_frame_count_ = std::min(frame_count, pending_matrix_animation_frames_.size());
+        pending_matrix_animation_interval_ms_ = std::max<uint16_t>(1U, frame_interval_ms);
+        pending_matrix_animation_transcript_ = transcript_text;
+        pending_matrix_animation_active_ = (pending_matrix_animation_frame_count_ != 0U);
+    }
+
+    void StorePendingMatrixAnimationFrame(size_t frame_index,
+                                          const std::array<uint16_t, GP_MATRIX_HEIGHT>& bitmap_rows,
+                                          uint32_t primary_rgb888,
+                                          uint32_t background_rgb888,
+                                          const std::string& transcript_text) {
+        if (frame_index >= pending_matrix_animation_frame_count_) {
+            return;
+        }
+
+        pending_matrix_animation_frames_[frame_index].frame.bitmap_rows = bitmap_rows;
+        pending_matrix_animation_frames_[frame_index].frame.primary_rgb888 = primary_rgb888;
+        pending_matrix_animation_frames_[frame_index].frame.background_rgb888 = background_rgb888;
+        pending_matrix_animation_frames_[frame_index].valid = true;
+        if (!transcript_text.empty()) {
+            pending_matrix_animation_transcript_ = transcript_text;
+        }
+
+        pending_matrix_animation_ready_frames_ = 0U;
+        while ((pending_matrix_animation_ready_frames_ < pending_matrix_animation_frame_count_)
+            && pending_matrix_animation_frames_[pending_matrix_animation_ready_frames_].valid) {
+            pending_matrix_animation_ready_frames_++;
+        }
+    }
+
+    bool IsPendingMatrixAnimationComplete(size_t frame_count) const {
+        return pending_matrix_animation_active_
+            && (frame_count == pending_matrix_animation_frame_count_)
+            && (pending_matrix_animation_ready_frames_ == pending_matrix_animation_frame_count_);
+    }
 
     /* Reuse the existing debug-menu link panel to surface Wi-Fi preview status updates. */
     void UpdateDebugPreviewStatus(bool online, const std::string& status_text, size_t image_bytes = 0U) {
@@ -1106,12 +1170,51 @@ private:
             return;
         }
 
+        if (std::strcmp(type->valuestring, "matrix_animation_start") == 0) {
+            const auto* frame_count = cJSON_GetObjectItem(root, "frame_count");
+            const auto* frame_interval_ms = cJSON_GetObjectItem(root, "frame_interval_ms");
+            const auto* transcript = cJSON_GetObjectItem(root, "transcript");
+            uint16_t scheduled_interval_ms = kDebugPreviewAnimationIntervalMs;
+
+            if (!cJSON_IsNumber(frame_count) || (frame_count->valueint <= 0)
+                || (frame_count->valueint > static_cast<int>(GP_MATRIX_ANIMATION_MAX_FRAMES))) {
+                ESP_LOGW(TAG, "[DBG_WS] matrix_animation_start missing frame_count");
+                cJSON_Delete(root);
+                return;
+            }
+
+            if (cJSON_IsNumber(frame_interval_ms) && (frame_interval_ms->valueint > 0)) {
+                scheduled_interval_ms = static_cast<uint16_t>(frame_interval_ms->valueint);
+            }
+
+            const size_t scheduled_frame_count = static_cast<size_t>(frame_count->valueint);
+            const std::string transcript_text = cJSON_IsString(transcript) ? transcript->valuestring : "";
+            Application::GetInstance().Schedule([this,
+                                                 scheduled_frame_count,
+                                                 scheduled_interval_ms,
+                                                 transcript_text]() {
+                auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display_);
+
+                BeginPendingMatrixAnimation(scheduled_frame_count, scheduled_interval_ms, transcript_text);
+                if (debug_display != nullptr) {
+                    debug_display->BeginMatrixAnimationPreview(scheduled_frame_count, scheduled_interval_ms);
+                }
+            });
+            UpdateDebugWebsocketStatus(true, "Debug WS animation start received");
+            cJSON_Delete(root);
+            return;
+        }
+
         if (std::strcmp(type->valuestring, "matrix_pattern_result") == 0) {
             const auto* bitmap_rows_hex = cJSON_GetObjectItem(root, "bitmap_rows_hex");
             const auto* primary_rgb888 = cJSON_GetObjectItem(root, "primary_rgb888");
             const auto* background_rgb888 = cJSON_GetObjectItem(root, "background_rgb888");
+            const auto* frame_index = cJSON_GetObjectItem(root, "frame_index");
+            const auto* frame_count = cJSON_GetObjectItem(root, "frame_count");
+            const auto* frame_interval_ms = cJSON_GetObjectItem(root, "frame_interval_ms");
             const auto* transcript = cJSON_GetObjectItem(root, "transcript");
             uint32_t background_rgb = 0x000000U;
+            uint16_t scheduled_interval_ms = kDebugPreviewAnimationIntervalMs;
 
             if (!cJSON_IsString(bitmap_rows_hex) || !cJSON_IsString(primary_rgb888)) {
                 ESP_LOGW(TAG, "[DBG_WS] matrix_pattern_result missing bitmap/color fields");
@@ -1134,19 +1237,54 @@ private:
                 }
             }
 
+            if (cJSON_IsNumber(frame_interval_ms) && (frame_interval_ms->valueint > 0)) {
+                scheduled_interval_ms = static_cast<uint16_t>(frame_interval_ms->valueint);
+            }
+
             const std::array<uint16_t, GP_MATRIX_HEIGHT> scheduled_rows = *bitmap_rows;
             const uint32_t scheduled_primary_rgb = *primary_rgb;
             const uint32_t scheduled_background_rgb = background_rgb;
+            const int scheduled_frame_index = cJSON_IsNumber(frame_index) ? frame_index->valueint : -1;
+            const int scheduled_frame_count = cJSON_IsNumber(frame_count) ? frame_count->valueint : 0;
             const std::string transcript_text = cJSON_IsString(transcript) ? transcript->valuestring : "";
 
             Application::GetInstance().Schedule([this,
                                                  scheduled_rows,
                                                  scheduled_primary_rgb,
                                                  scheduled_background_rgb,
+                                                 scheduled_frame_index,
+                                                 scheduled_frame_count,
+                                                 scheduled_interval_ms,
                                                  transcript_text]() {
                 auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display_);
                 auto* matrix_led = led_matrix_.get();
                 bool led_forwarded = false;
+
+                if ((scheduled_frame_index >= 0) && (scheduled_frame_count > 1)) {
+                    const size_t frame_index_value = static_cast<size_t>(scheduled_frame_index);
+                    const size_t frame_count_value = static_cast<size_t>(scheduled_frame_count);
+
+                    if ((!pending_matrix_animation_active_)
+                        || (pending_matrix_animation_frame_count_ != frame_count_value)) {
+                        BeginPendingMatrixAnimation(frame_count_value, scheduled_interval_ms, transcript_text);
+                        if (debug_display != nullptr) {
+                            debug_display->BeginMatrixAnimationPreview(frame_count_value, scheduled_interval_ms);
+                        }
+                    }
+
+                    StorePendingMatrixAnimationFrame(frame_index_value,
+                                                    scheduled_rows,
+                                                    scheduled_primary_rgb,
+                                                    scheduled_background_rgb,
+                                                    transcript_text);
+                    if (debug_display != nullptr) {
+                        debug_display->ApplyMatrixAnimationPreviewFrame(frame_index_value,
+                                                                        scheduled_rows,
+                                                                        scheduled_primary_rgb,
+                                                                        scheduled_background_rgb);
+                    }
+                    return;
+                }
 
                 if (debug_display != nullptr) {
                     debug_display->ApplyMatrixBitmapPreview(scheduled_rows,
@@ -1173,6 +1311,58 @@ private:
                 }
             });
             UpdateDebugWebsocketStatus(true, "Debug WS pattern received");
+            cJSON_Delete(root);
+            return;
+        }
+
+        if (std::strcmp(type->valuestring, "matrix_animation_end") == 0) {
+            const auto* frame_count = cJSON_GetObjectItem(root, "frame_count");
+            const auto* transcript = cJSON_GetObjectItem(root, "transcript");
+
+            if (!cJSON_IsNumber(frame_count) || (frame_count->valueint <= 0)) {
+                ESP_LOGW(TAG, "[DBG_WS] matrix_animation_end missing frame_count");
+                cJSON_Delete(root);
+                return;
+            }
+
+            const size_t scheduled_frame_count = static_cast<size_t>(frame_count->valueint);
+            const std::string transcript_text = cJSON_IsString(transcript) ? transcript->valuestring : "";
+            Application::GetInstance().Schedule([this, scheduled_frame_count, transcript_text]() {
+                auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display_);
+                auto* matrix_led = led_matrix_.get();
+                bool led_forwarded = false;
+
+                if (debug_display != nullptr) {
+                    debug_display->EndMatrixAnimationPreview();
+                }
+
+                if (IsPendingMatrixAnimationComplete(scheduled_frame_count) && (matrix_led != nullptr)) {
+                    std::vector<GpLedMatrixEsp32::BitmapAnimationFrame> frames;
+
+                    frames.reserve(pending_matrix_animation_frame_count_);
+                    for (size_t frame_index_value = 0U;
+                         frame_index_value < pending_matrix_animation_frame_count_;
+                         ++frame_index_value) {
+                        frames.push_back(pending_matrix_animation_frames_[frame_index_value].frame);
+                    }
+                    led_forwarded = matrix_led->ShowBitmapAnimation(frames, pending_matrix_animation_interval_ms_);
+                    if (!led_forwarded) {
+                        ESP_LOGW(TAG, "[DBG_WS] failed to relay animation to LED side over Bluetooth");
+                    }
+                }
+
+                if (display_ != nullptr) {
+                    display_->ShowNotification(led_forwarded ? "WS animation relayed" : "WS animation preview only", 1500);
+                    if (!transcript_text.empty()) {
+                        display_->SetChatMessage("system", transcript_text.c_str());
+                    } else if (!pending_matrix_animation_transcript_.empty()) {
+                        display_->SetChatMessage("system", pending_matrix_animation_transcript_.c_str());
+                    }
+                }
+
+                ResetPendingMatrixAnimation();
+            });
+            UpdateDebugWebsocketStatus(true, "Debug WS animation end received");
             cJSON_Delete(root);
             return;
         }

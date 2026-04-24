@@ -52,6 +52,12 @@ const char* CommandName(uint8_t command) {
         return "fchk";
     case kGpMatrixCommandFrameCommit:
         return "fcom";
+    case kGpMatrixCommandAnimationStart:
+        return "astr";
+    case kGpMatrixCommandAnimationFrame:
+        return "afrm";
+    case kGpMatrixCommandAnimationEnd:
+        return "aend";
     case kGpMatrixCommandScrollGlyphStart:
         return "gstr";
     case kGpMatrixCommandScrollGlyphChunk:

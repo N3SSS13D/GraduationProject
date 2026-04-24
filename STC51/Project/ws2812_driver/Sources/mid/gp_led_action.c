@@ -6,7 +6,6 @@
 
 #define GP_LED_COMM_ACTIVE_TIMEOUT_TICKS 300U
 #define GP_LED_DEBUG_FLOW_INTERVAL_TICKS 100U
-
 static uint8_t g_gpLedRemoteActive = 0U;
 static uint8_t g_gpLedDirectFrameActive = 0U;
 static uint8_t g_gpLedDefaultBrightness = 200U;
@@ -16,10 +15,20 @@ static uint8_t g_gpLedManualOverrideOnline = 0U;
 static uint8_t g_gpLedEffectiveOnline = 0U;
 static uint8_t g_gpLedDebugFlowEnabled = 0U;
 static uint8_t g_gpLedDebugFlowIndex = 0U;
+static uint8_t g_gpLedAnimationUploadActive = 0U;
+static uint8_t g_gpLedAnimationLoopEnabled = 0U;
+static uint8_t g_gpLedAnimationActive = 0U;
+static uint8_t g_gpLedAnimationFrameCount = 0U;
+static uint8_t g_gpLedAnimationFrameIndex = 0U;
+static uint16_t g_gpLedAnimationFrameIntervalMs = GP_MATRIX_ANIMATION_DEFAULT_INTERVAL_MS;
+static uint16_t g_gpLedAnimationElapsedMs = 0U;
 static uint16_t g_gpLedCommActiveTicks = 0U;
 static uint16_t g_gpLedDebugFlowTicks = 0U;
 /* Direct-frame rendering shares a single scratch area to reduce EDATA usage. */
 static DrawDrv_RenderConfig_t xdata g_gpLedRenderCfg;
+/* Compact remote animations keep up to 24 bitmap frames for loop playback. */
+static uint8_t xdata g_gpLedAnimationFrames[GP_MATRIX_ANIMATION_MAX_FRAMES][GP_MATRIX_BITMAP_RGB888_FRAME_SIZE];
+static uint8_t xdata g_gpLedAnimationFrameValid[GP_MATRIX_ANIMATION_MAX_FRAMES];
 static uint8_t xdata g_gpLedTempRow = 0U;
 static uint8_t xdata g_gpLedTempCol = 0U;
 static uint8_t xdata g_gpLedTempRowMapped = 0U;
@@ -34,6 +43,50 @@ static uint8_t xdata g_gpLedBackgroundG = 0U;
 static uint8_t xdata g_gpLedBackgroundB = 0U;
 static uint16_t xdata g_gpLedTempPixelIndex = 0U;
 static uint16_t xdata g_gpLedTempRowBits = 0U;
+
+static void GpLedAction_RenderBitmapFrameRgb888(const uint8_t xdata *frameData, uint8_t brightness);
+
+static void GpLedAction_ResetAnimationState(void)
+{
+    uint8_t frameIndex;
+
+    g_gpLedAnimationUploadActive = 0U;
+    g_gpLedAnimationLoopEnabled = 0U;
+    g_gpLedAnimationActive = 0U;
+    g_gpLedAnimationFrameCount = 0U;
+    g_gpLedAnimationFrameIndex = 0U;
+    g_gpLedAnimationFrameIntervalMs = GP_MATRIX_ANIMATION_DEFAULT_INTERVAL_MS;
+    g_gpLedAnimationElapsedMs = 0U;
+    for (frameIndex = 0U; frameIndex < GP_MATRIX_ANIMATION_MAX_FRAMES; ++frameIndex)
+    {
+        g_gpLedAnimationFrameValid[frameIndex] = 0U;
+    }
+}
+
+static void GpLedAction_RenderAnimationFrame(uint8_t frameIndex)
+{
+    if ((frameIndex >= g_gpLedAnimationFrameCount) || (g_gpLedAnimationFrameValid[frameIndex] == 0U))
+    {
+        return;
+    }
+
+    GpLedAction_RenderBitmapFrameRgb888(g_gpLedAnimationFrames[frameIndex], g_gpLedDefaultBrightness);
+}
+
+static uint8_t GpLedAction_AreAnimationFramesReady(uint8_t frameCount)
+{
+    uint8_t frameIndex;
+
+    for (frameIndex = 0U; frameIndex < frameCount; ++frameIndex)
+    {
+        if (g_gpLedAnimationFrameValid[frameIndex] == 0U)
+        {
+            return 0U;
+        }
+    }
+
+    return 1U;
+}
 
 static uint8_t GpLedAction_GetRequestedOnline(void)
 {
@@ -207,6 +260,7 @@ void GpLedAction_Init(void)
     g_gpLedDebugFlowIndex = 0U;
     g_gpLedCommActiveTicks = 0U;
     g_gpLedDebugFlowTicks = 0U;
+    GpLedAction_ResetAnimationState();
 }
 
 void GpLedAction_SetBrightness(uint8_t brightness)
@@ -218,6 +272,12 @@ void GpLedAction_SetBrightness(uint8_t brightness)
     if (g_gpLedDirectFrameActive == 0U)
     {
         DrawDrv_RequestRebuild();
+        return;
+    }
+
+    if (g_gpLedAnimationActive != 0U)
+    {
+        GpLedAction_RenderAnimationFrame(g_gpLedAnimationFrameIndex);
     }
 }
 
@@ -227,6 +287,7 @@ void GpLedAction_ReleaseRemoteMode(void)
     g_gpLedDirectFrameActive = 0U;
     g_gpLedDebugFlowEnabled = 0U;
     g_gpLedDebugFlowTicks = 0U;
+    GpLedAction_ResetAnimationState();
     PORT2_ClearDebugLeds();
     DrawDrv_RequestRebuild();
 }
@@ -260,6 +321,37 @@ void GpLedAction_Task10ms(void)
             g_gpLedDebugFlowIndex = (uint8_t)((g_gpLedDebugFlowIndex + 1U) % (GP_MATRIX_DEBUG_LED_MAX_INDEX + 1U));
         }
     }
+}
+
+void GpLedAction_Tick1ms(void)
+{
+    /* Drive frame stepping from the 1 ms scheduler so host-provided intervals stay in millisecond units. */
+    if ((g_gpLedAnimationActive == 0U) || (g_gpLedAnimationFrameCount <= 1U))
+    {
+        return;
+    }
+
+    if ((uint16_t)(g_gpLedAnimationElapsedMs + 1U) < g_gpLedAnimationFrameIntervalMs)
+    {
+        g_gpLedAnimationElapsedMs++;
+        return;
+    }
+
+    g_gpLedAnimationElapsedMs = 0U;
+    g_gpLedAnimationFrameIndex++;
+    if (g_gpLedAnimationFrameIndex >= g_gpLedAnimationFrameCount)
+    {
+        if (g_gpLedAnimationLoopEnabled == 0U)
+        {
+            g_gpLedAnimationFrameIndex = (uint8_t)(g_gpLedAnimationFrameCount - 1U);
+            g_gpLedAnimationActive = 0U;
+            return;
+        }
+
+        g_gpLedAnimationFrameIndex = 0U;
+    }
+
+    GpLedAction_RenderAnimationFrame(g_gpLedAnimationFrameIndex);
 }
 
 void GpLedAction_ToggleModeOverride(void)
@@ -319,6 +411,87 @@ GpMatrixStatusCode GpLedAction_SetDebugLedFlow(uint8_t enable)
     g_gpLedDebugFlowEnabled = 0U;
     g_gpLedDebugFlowTicks = 0U;
     PORT2_ClearDebugLeds();
+    return kGpMatrixStatusOk;
+}
+
+GpMatrixStatusCode GpLedAction_BeginAnimationUpload(uint8_t frameFormat,
+                                                    uint8_t frameCount,
+                                                    uint16_t frameIntervalMs,
+                                                    uint8_t flags)
+{
+    if (GpLedAction_IsHostControlEnabled() == 0U)
+    {
+        return kGpMatrixStatusBusy;
+    }
+
+    if ((frameFormat != GP_MATRIX_PAYLOAD_FORMAT_BITMAP_RGB888)
+        || (frameCount == 0U)
+        || (frameCount > GP_MATRIX_ANIMATION_MAX_FRAMES))
+    {
+        return kGpMatrixStatusUnsupported;
+    }
+
+    GpLedAction_ResetAnimationState();
+    g_gpLedAnimationUploadActive = 1U;
+    g_gpLedAnimationFrameCount = frameCount;
+    g_gpLedAnimationFrameIntervalMs = frameIntervalMs;
+    if (g_gpLedAnimationFrameIntervalMs < GP_MATRIX_ANIMATION_INTERVAL_MS_MIN)
+    {
+        g_gpLedAnimationFrameIntervalMs = GP_MATRIX_ANIMATION_DEFAULT_INTERVAL_MS;
+    }
+    g_gpLedAnimationElapsedMs = 0U;
+    g_gpLedAnimationLoopEnabled = (uint8_t)((flags & GP_MATRIX_ANIMATION_FLAG_LOOP) != 0U);
+    return kGpMatrixStatusOk;
+}
+
+GpMatrixStatusCode GpLedAction_StoreAnimationFrame(uint8_t frameIndex,
+                                                   const uint8_t xdata *frameData,
+                                                   uint16_t length)
+{
+    uint8_t byteIndex;
+
+    if (GpLedAction_IsHostControlEnabled() == 0U)
+    {
+        return kGpMatrixStatusBusy;
+    }
+
+    if ((g_gpLedAnimationUploadActive == 0U)
+        || (frameIndex >= g_gpLedAnimationFrameCount)
+        || (length != GP_MATRIX_BITMAP_RGB888_FRAME_SIZE)
+        || (frameData == 0))
+    {
+        return kGpMatrixStatusBadSequence;
+    }
+
+    for (byteIndex = 0U; byteIndex < GP_MATRIX_BITMAP_RGB888_FRAME_SIZE; ++byteIndex)
+    {
+        g_gpLedAnimationFrames[frameIndex][byteIndex] = frameData[byteIndex];
+    }
+    g_gpLedAnimationFrameValid[frameIndex] = 1U;
+    return kGpMatrixStatusOk;
+}
+
+GpMatrixStatusCode GpLedAction_CommitAnimation(uint8_t frameCount)
+{
+    if (GpLedAction_IsHostControlEnabled() == 0U)
+    {
+        return kGpMatrixStatusBusy;
+    }
+
+    if ((g_gpLedAnimationUploadActive == 0U)
+        || (frameCount != g_gpLedAnimationFrameCount)
+        || (GpLedAction_AreAnimationFramesReady(frameCount) == 0U))
+    {
+        return kGpMatrixStatusBadSequence;
+    }
+
+    g_gpLedAnimationUploadActive = 0U;
+    g_gpLedAnimationActive = 1U;
+    g_gpLedAnimationFrameIndex = 0U;
+    g_gpLedAnimationElapsedMs = 0U;
+    g_gpLedRemoteActive = 1U;
+    g_gpLedDirectFrameActive = 1U;
+    GpLedAction_RenderAnimationFrame(0U);
     return kGpMatrixStatusOk;
 }
 
@@ -427,6 +600,7 @@ GpMatrixStatusCode GpLedAction_ApplyFrameBitmapRgb888(const uint8_t xdata *frame
                                                       GpMatrixMode mode)
 {
     const uint8_t xdata *colorData;
+    GpMatrixStatusCode status;
 
     if (GpLedAction_IsHostControlEnabled() == 0U)
     {
@@ -443,8 +617,28 @@ GpMatrixStatusCode GpLedAction_ApplyFrameBitmapRgb888(const uint8_t xdata *frame
         return kGpMatrixStatusUnsupported;
     }
 
+    status = GpLedAction_BeginAnimationUpload(GP_MATRIX_PAYLOAD_FORMAT_BITMAP_RGB888,
+                                              1U,
+                                              GP_MATRIX_ANIMATION_DEFAULT_INTERVAL_MS,
+                                              GP_MATRIX_ANIMATION_FLAG_LOOP);
+    if (status != kGpMatrixStatusOk)
+    {
+        return status;
+    }
+
+    status = GpLedAction_StoreAnimationFrame(0U, frameData, length);
+    if (status != kGpMatrixStatusOk)
+    {
+        return status;
+    }
+
+    status = GpLedAction_CommitAnimation(1U);
+    if (status != kGpMatrixStatusOk)
+    {
+        return status;
+    }
+
     colorData = &frameData[GP_MATRIX_BITMAP_ROWS_BYTES];
-    GpLedAction_RenderBitmapFrameRgb888(frameData, g_gpLedDefaultBrightness);
     printf("[GP_DRAW] bmp len=%u fg=%02X%02X%02X bg=%02X%02X%02X bri=%u cols=%u\r\n",
            (unsigned int)length,
            (unsigned int)colorData[0],

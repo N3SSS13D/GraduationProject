@@ -2,21 +2,26 @@
 
 ## 中文
 
-本目录用于承载 `AI端` 的自建扩展，当前重点是把动作对象通过经典蓝牙链路发送到 `LED端`。
+本目录用于承载 `AI端` 的自建扩展，当前重点是稳定 `AI端 -> 蓝牙 -> LED端` 的矩阵控制链路。
 
-### 目录分工
+### 关键文档（仅保留）
 
-- `gp_led_matrix_esp32.h/.cc`：`AI端` 矩阵驱动与动作下发入口
-- `transport/`：蓝牙传输层
-- `ui/`：调试界面与链路状态显示
-- `gp_led_matrix_protocol.h`：`AI端` 与 `LED端` 共享协议
-- `gp_project_master.prompt.md` 与 `gp_phase_*.prompt.md`：阶段任务入口
+1. `gp_port_project_overview.md`
+用途：目录总览与最小入口。
 
-### 当前目标
+2. `gp_matrix_drawing_mcp_usage.md`
+用途：LLM 侧 MCP 调用主文档（工具选择、输入约束、标准模板、失败修复）。
 
-1. 稳定 `AI端` 动作对象到 `LED端` 协议的映射。
-2. 稳定蓝牙链路日志、回包和错误追踪。
-3. 在不扩大无关范围的前提下继续做性能优化。
+3. `gp_matrix_pattern_protocol.md`
+用途：`AI端` 与主机间图案/动画请求和调试 websocket 交互约束。
+
+4. `gp_led_matrix_protocol_spec.md`
+用途：`AI端` 与 `LED端` 协议规范（包结构、命令、时序、错误码）。
+
+### 非关键文档处理策略
+
+- 重复或相近内容统一并入上述关键文档。
+- 阶段性 prompt、临时说明、旧版并行说明不再保留在 `GP_Port/`。
 
 ### 快速路径
 
@@ -26,4 +31,11 @@
 
 ## English
 
-This directory contains the custom `AI side` extension. The current focus is the Bluetooth-based action path from the AI side to the LED side.
+This folder keeps the AI-side custom extension for the matrix Bluetooth pipeline.
+
+Only four key docs are retained here:
+
+1. `gp_port_project_overview.md`
+2. `gp_matrix_drawing_mcp_usage.md`
+3. `gp_matrix_pattern_protocol.md`
+4. `gp_led_matrix_protocol_spec.md`

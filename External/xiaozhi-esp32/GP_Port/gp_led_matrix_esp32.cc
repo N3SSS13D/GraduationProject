@@ -59,6 +59,20 @@ void WriteRgb888(uint8_t* dest, uint32_t rgb) {
     dest[2] = ExtractRgb888Channel(rgb, 0);
 }
 
+void PackBitmapFramePayload(std::array<uint8_t, GP_MATRIX_BITMAP_RGB888_FRAME_SIZE>& frame_payload,
+                            const uint16_t* bitmap_rows,
+                            uint32_t primary_rgb888,
+                            uint32_t background_rgb888) {
+    size_t row_index;
+
+    for (row_index = 0; row_index < GP_MATRIX_HEIGHT; ++row_index) {
+        frame_payload[row_index * 2U] = static_cast<uint8_t>(bitmap_rows[row_index] & 0xFFU);
+        frame_payload[row_index * 2U + 1U] = static_cast<uint8_t>((bitmap_rows[row_index] >> 8) & 0xFFU);
+    }
+    WriteRgb888(frame_payload.data() + GP_MATRIX_BITMAP_ROWS_BYTES, primary_rgb888);
+    WriteRgb888(frame_payload.data() + GP_MATRIX_BITMAP_ROWS_BYTES + 3U, background_rgb888);
+}
+
 uint8_t BuildMatrixAnimStep(const GpColorDebugState& state) {
     if (state.animation_period_ms <= 900U) {
         return 2U;
@@ -327,7 +341,6 @@ bool GpLedMatrixEsp32::ShowBitmapFrame(const uint16_t* bitmap_rows,
                                        uint32_t background_rgb888,
                                        GpMatrixMode mode) {
     std::array<uint8_t, GP_MATRIX_BITMAP_RGB888_FRAME_SIZE> frame_payload = {};
-    size_t row_index;
 
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -335,12 +348,7 @@ bool GpLedMatrixEsp32::ShowBitmapFrame(const uint16_t* bitmap_rows,
         return false;
     }
 
-    for (row_index = 0; row_index < GP_MATRIX_HEIGHT; ++row_index) {
-        frame_payload[row_index * 2U] = static_cast<uint8_t>(bitmap_rows[row_index] & 0xFFU);
-        frame_payload[row_index * 2U + 1U] = static_cast<uint8_t>((bitmap_rows[row_index] >> 8) & 0xFFU);
-    }
-    WriteRgb888(frame_payload.data() + GP_MATRIX_BITMAP_ROWS_BYTES, primary_rgb888);
-    WriteRgb888(frame_payload.data() + GP_MATRIX_BITMAP_ROWS_BYTES + 3U, background_rgb888);
+    PackBitmapFramePayload(frame_payload, bitmap_rows, primary_rgb888, background_rgb888);
 
     /* Compact bitmap frames fit in one chunk, so only the final commit waits for an ACK. */
     return SendStagedFrame(GP_MATRIX_PAYLOAD_FORMAT_BITMAP_RGB888,
@@ -348,6 +356,58 @@ bool GpLedMatrixEsp32::ShowBitmapFrame(const uint16_t* bitmap_rows,
                            frame_payload.size(),
                            mode,
                            false);
+}
+
+bool GpLedMatrixEsp32::ShowBitmapAnimation(const std::vector<BitmapAnimationFrame>& frames,
+                                           uint16_t frame_interval_ms) {
+    uint8_t start_payload[GP_MATRIX_ANIMATION_START_PAYLOAD_BYTES] = {
+        GP_MATRIX_PAYLOAD_FORMAT_BITMAP_RGB888,
+        0U,
+        0U,
+        0U,
+        GP_MATRIX_ANIMATION_FLAG_LOOP,
+    };
+    uint8_t end_payload[GP_MATRIX_ANIMATION_END_PAYLOAD_BYTES] = {0U};
+    size_t frame_index;
+    uint16_t resolved_interval_ms;
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (frames.empty() || (frames.size() > GP_MATRIX_ANIMATION_MAX_FRAMES)) {
+        return false;
+    }
+
+    resolved_interval_ms = frame_interval_ms;
+    if (resolved_interval_ms < GP_MATRIX_ANIMATION_INTERVAL_MS_MIN) {
+        resolved_interval_ms = GP_MATRIX_ANIMATION_DEFAULT_INTERVAL_MS;
+    }
+
+    start_payload[1] = static_cast<uint8_t>(frames.size());
+    start_payload[2] = static_cast<uint8_t>(resolved_interval_ms & 0xFFU);
+    start_payload[3] = static_cast<uint8_t>((resolved_interval_ms >> 8) & 0xFFU);
+    if (!SendCommand(kGpMatrixCommandAnimationStart, start_payload, sizeof(start_payload), true)) {
+        return false;
+    }
+
+    for (frame_index = 0U; frame_index < frames.size(); ++frame_index) {
+        std::array<uint8_t, GP_MATRIX_ANIMATION_FRAME_PREFIX_BYTES + GP_MATRIX_BITMAP_RGB888_FRAME_SIZE> payload = {};
+        std::array<uint8_t, GP_MATRIX_BITMAP_RGB888_FRAME_SIZE> frame_payload = {};
+
+        payload[0] = static_cast<uint8_t>(frame_index);
+        PackBitmapFramePayload(frame_payload,
+                               frames[frame_index].bitmap_rows.data(),
+                               frames[frame_index].primary_rgb888,
+                               frames[frame_index].background_rgb888);
+        std::memcpy(payload.data() + GP_MATRIX_ANIMATION_FRAME_PREFIX_BYTES,
+                    frame_payload.data(),
+                    frame_payload.size());
+        if (!SendCommand(kGpMatrixCommandAnimationFrame, payload.data(), payload.size(), true)) {
+            return false;
+        }
+    }
+
+    end_payload[0] = static_cast<uint8_t>(frames.size());
+    return SendCommand(kGpMatrixCommandAnimationEnd, end_payload, sizeof(end_payload), true);
 }
 
 bool GpLedMatrixEsp32::ShowGlyphRows(const uint16_t* rows, size_t row_count, uint8_t glyph_count, uint8_t glyph_width, uint8_t glyph_spacing) {
@@ -654,6 +714,36 @@ std::string GpLedMatrixEsp32::BuildPayloadSummary(uint8_t command, const uint8_t
         return buffer;
     }
 
+    if ((command == kGpMatrixCommandAnimationStart) && (payload != nullptr)
+        && (payload_length == GP_MATRIX_ANIMATION_START_PAYLOAD_BYTES)) {
+        const unsigned int interval_ms = static_cast<unsigned int>(payload[2] | (payload[3] << 8));
+
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "anim %u@%ums",
+                      static_cast<unsigned int>(payload[1]),
+                      interval_ms);
+        return buffer;
+    }
+
+    if ((command == kGpMatrixCommandAnimationFrame) && (payload != nullptr)
+        && (payload_length == GP_MATRIX_ANIMATION_FRAME_PREFIX_BYTES + GP_MATRIX_BITMAP_RGB888_FRAME_SIZE)) {
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "anim frame %u",
+                      static_cast<unsigned int>(payload[0]));
+        return buffer;
+    }
+
+    if ((command == kGpMatrixCommandAnimationEnd) && (payload != nullptr)
+        && (payload_length == GP_MATRIX_ANIMATION_END_PAYLOAD_BYTES)) {
+        std::snprintf(buffer,
+                      sizeof(buffer),
+                      "anim end %u",
+                      static_cast<unsigned int>(payload[0]));
+        return buffer;
+    }
+
     std::snprintf(buffer, sizeof(buffer), "%s len=%u", CommandShortName(command), static_cast<unsigned int>(payload_length));
     return buffer;
 }
@@ -745,6 +835,12 @@ const char* GpLedMatrixEsp32::CommandShortName(uint8_t command) {
         return "fchk";
     case kGpMatrixCommandFrameCommit:
         return "fcom";
+    case kGpMatrixCommandAnimationStart:
+        return "astr";
+    case kGpMatrixCommandAnimationFrame:
+        return "afrm";
+    case kGpMatrixCommandAnimationEnd:
+        return "aend";
     case kGpMatrixCommandScrollGlyphStart:
         return "gstr";
     case kGpMatrixCommandScrollGlyphChunk:

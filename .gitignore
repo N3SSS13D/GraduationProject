@@ -34,6 +34,11 @@ STC51/Project/**/*.RAR
 *.lnp
 *.m51
 *.build_log.htm
+*.png
+*.log
+*.bak
+*.png
+
 
 # Flash/programmer and temporary runtime files
 *.log
@@ -88,3 +93,28 @@ STC51/Project/ws2812_driver/ws2812_driver.uvproj
 *.pyc
 Pic/jd-xhh.jpg
 Pic/jd-xhh-16-16.jpg
+build/CMakeCache.txt
+build/.cmake/api/v1/query/client-vscode/query.json
+build/.cmake/api/v1/reply/error-2026-04-21T05-29-13-0223.json
+build/.cmake/api/v1/reply/error-2026-04-21T07-14-50-0036.json
+build/.cmake/api/v1/reply/error-2026-04-21T07-14-50-0596.json
+build/.cmake/api/v1/reply/error-2026-04-22T03-51-31-0601.json
+build/.cmake/api/v1/reply/error-2026-04-22T03-51-32-0102.json
+build/.cmake/api/v1/reply/error-2026-04-22T15-21-49-0792.json
+build/.cmake/api/v1/reply/error-2026-04-22T15-21-50-0366.json
+build/.cmake/api/v1/reply/error-2026-04-23T04-20-20-0108.json
+build/.cmake/api/v1/reply/error-2026-04-23T04-20-20-0447.json
+build/CMakeFiles/cmake.check_cache
+build/CMakeFiles/CMakeConfigureLog.yaml
+build/CMakeFiles/4.2.2/CMakeCCompiler.cmake
+build/CMakeFiles/4.2.2/CMakeCXXCompiler.cmake
+build/CMakeFiles/4.2.2/CMakeRCCompiler.cmake
+build/CMakeFiles/4.2.2/CMakeSystem.cmake
+build/CMakeFiles/4.2.2/CompilerIdC/a.exe
+build/CMakeFiles/4.2.2/CompilerIdC/CMakeCCompilerId.c
+build/CMakeFiles/4.2.2/CompilerIdCXX/a.exe
+build/CMakeFiles/4.2.2/CompilerIdCXX/CMakeCXXCompilerId.cpp
+STC51/Project/ws2812_driver/ws2812_driver.uvgui.XiaoHai
+STC51/Project/ws2812_driver/ws2812_driver.uvgui.XiaoHai
+STC51/Project/ws2812_driver/ws2812_driver.uvgui.XiaoHai
+STC51/Project/ws2812_driver/ws2812_driver.uvopt

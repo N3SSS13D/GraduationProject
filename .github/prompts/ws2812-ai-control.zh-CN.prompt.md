@@ -38,7 +38,7 @@ model: "GPT-5 (copilot)"
 10. 面向 LLM 的 MCP 桥接脚本、工具名和参数名必须尽量自解释，优先使用一眼可懂的命名，例如 `gp_display_mcp_bridge.py`、`draw_python`、`show_text`、`python_source`、`eval_source`、`frame_interval_ms`、`text`。
 11. 若任务涉及 `16x16` 图案预览，优先维持当前固定布局：左侧中心为圆点，右侧中心为预览区域；不要再让预览区域依赖首次绘制后才出现。
 12. 当 `AI端` 需要把 `16x16` 图案通过蓝牙转发到 `LED端` 时，优先使用紧凑 `bitmap_rows + RGB888` 传输，而不是先展开成 `256` 字节 RGB332 整帧；`FrameChunk` 的分片基准必须在两端保持一致，统一使用共享协议里的 `64` 字节常量。
-13. 若任务涉及 `16x16` 动画，优先提供输出 `matrix_frame_sequence_v1` 的独立 MCP 工具，并让每帧都携带适合 `LED端` 的紧凑 `bitmap_rows_hex`；做 `10 fps` 时，优先使用 `10` 帧、`100 ms` 间隔。
+13. 若任务涉及 `16x16` 动画，优先提供输出 `matrix_frame_sequence_v1` 的独立 MCP 工具，并让每帧都携带适合 `LED端` 的紧凑 `bitmap_rows_hex`。LLM 侧优先用 `frames[]` 作为输入壳（每帧在 `bitmap_rows_hex`、`bitmap_rows`、`python_source/eval_source` 中三选一），或使用每项为完整帧的 `bitmap_rows_hex_list`。其中 `bitmap_rows_hex` 只表示 `32 byte` 位图本体，规范写法是恰好 `64` 个十六进制字符、`16` 行、每行 `16 bit`、按 `top->bottom` 排列、高位对应最左侧 LED、`1=亮`、`0=暗`，桥接层也可兼容常见的 `16` 行逐行 `hex token` 写法并统一归一化。再加上前景/背景 `RGB888` 各 `3 byte`，整帧紧凑格式固定为 `38 byte`。保持 `LED端` `24` 帧缓冲上限，将 `frame_interval_ms` 视为 `1..65535 ms` 的毫秒级字段，默认取 `42 ms`；若主机侧收到超过 `24` 帧的输入，优先重采样到 `24` 帧并同步调整间隔以尽量保持总时长。缓冲动画继续通过 `matrix_animation_start -> 带序号的 matrix_pattern_result -> matrix_animation_end` 让 `AI端` 先做本地缓冲预览，再整体转发到 `LED端`。禁止在绘图语句里用 `yield_frame`、`time.sleep`、`import` 等方式自行实现时序。
 14. 对于能落入单个 `64` 字节 `FrameChunk` 的紧凑位图帧，优先只在 `FrameCommit` 等待 ACK；除非任务明确要求最大化传输诊断，否则不要再对 `FrameStart` 与 `FrameChunk` 逐阶段等待 ACK。
 15. 蓝牙联调时，以 `LED端` 的协议级 `[GP_TX]`、`[GP_RX]`、`[GP_DROP]`、`[GP_SYNC]` 日志为准；`[BT_MON]` 只是一个有上限的原始 UART 抓包窗口，可能裁剪长包，不能单独据此判断整帧是否完整到达。
 16. 需要确认 `LED端` ACK 是否真实返回到 `AI端` 时，优先查看 `AI端` monitor 中新增的 `[BT_RX]` 日志；它会打印通过 HC-05 收到的完整协议回包摘要和原始十六进制内容。
