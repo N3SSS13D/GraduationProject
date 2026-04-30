@@ -15,7 +15,7 @@ model: "GPT-5 (copilot)"
 4. 缓冲区越界与内存安全问题
 5. 验证缺口
 
-若审查对象涉及 `External/xiaozhi-esp32/GP_Port/`，额外检查：
+若审查对象涉及 `Project/xiaozhi-esp32/main/gp_port/`，额外检查：
 
 - `AI端` 动作对象与 `LED端` 协议字段是否一致
 - 传输、ACK 和状态日志是否一致

@@ -9,18 +9,18 @@
 
 引入方式：
 
-- 子目录快照位置：`External/xiaozhi-esp32/`
+- 子目录快照位置：`Project/xiaozhi-esp32/`
 - 来源仓库提交：`3c7c4c7` (`Add MCP debug dot tooling and endpoint validation`)
 - 引入方式为快照复制，不保留原仓库 `.git` 元数据。
 
 ## 2. 本轮已完成能力
 
-围绕 `GP_Port` 目录，本轮已经完成并验证的重点如下：
+围绕 `main/gp_port` 与 `Project/Script/mcp/gp_matrix` 目录，本轮已经完成并验证的重点如下：
 
 ### 2.1 16x16 LED 矩阵本地闭环
 
-- 形成 ESP32 与 AI8051U 间的共享协议头：`GP_Port/gp_led_matrix_protocol.h`
-- 形成 ESP32 侧矩阵驱动：`GP_Port/gp_led_matrix_esp32.h/.cc`
+- 形成 ESP32 与 AI8051U 间的共享协议头：`Project/xiaozhi-esp32/main/gp_port/gp_led_matrix_protocol.h`
+- 形成 ESP32 侧矩阵驱动：`Project/xiaozhi-esp32/main/gp_port/gp_led_matrix_esp32.h/.cc`
 - 形成 AI8051U 接口层与执行层：`gp_led_matrix_ai8051u.h/.c`、`gp_led_action.h/.c`
 - 已支持 `SetAction`、RGB332 帧、滚动字模、`Status/Error` 回包
 - 已补充协议/架构/阶段提示词与设计文档
@@ -69,7 +69,7 @@
 
 已新增测试脚本：
 
-- `GP_Port/gp_mcp_endpoint_client.py`
+- `Project/Script/mcp/gp_matrix/gp_mcp_endpoint_client.py`
 
 实测结论：
 

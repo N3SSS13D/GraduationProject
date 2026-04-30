@@ -9,11 +9,11 @@ model: "GPT-5 (copilot)"
 
 关注路径：
 
-- `External/xiaozhi-esp32/GP_Port/gp_led_matrix_esp32.h/.cc`
-- `External/xiaozhi-esp32/GP_Port/transport/`
-- `External/xiaozhi-esp32/GP_Port/ui/`
-- `External/xiaozhi-esp32/main/boards/lichuang-dev/`
-- `External/xiaozhi-esp32/GP_Port/gp_led_matrix_protocol.h`
+- `Project/xiaozhi-esp32/main/gp_port/gp_led_matrix_esp32.h/.cc`
+- `Project/xiaozhi-esp32/main/gp_port/transport/`
+- `Project/xiaozhi-esp32/main/gp_port/ui/`
+- `Project/xiaozhi-esp32/main/boards/lichuang-dev/`
+- `Project/xiaozhi-esp32/main/gp_port/gp_led_matrix_protocol.h`
 
 目标：
 
@@ -33,7 +33,7 @@ model: "GPT-5 (copilot)"
 5. 若涉及截图或 MCP，说明脚本路径和调用路径。
 6. 修改后执行可用的构建或联调验证。若 `AI端` 构建成功且具备硬件连接条件，默认继续执行 flash；只有在用户明确要求只编译或当前环境无法访问硬件时才跳过。
 7. 保持现有触摸控制主链：`GpDebugLcdDisplay -> QueueMatrixDebugState -> ShowDebugState -> SetAction`；若需要进入大模型，优先复用现有路径，不要为同一类触摸输入新增并行协议。
-8. 保持 `GP_Port/transport/` 中基于后台任务的 UART 收包模型，不要把 `ReadPacket()` 改回调用时轮询读串口。
+8. 保持 `main/gp_port/transport/` 中基于后台任务的 UART 收包模型，不要把 `ReadPacket()` 改回调用时轮询读串口。
 9. 若任务涉及 Wi-Fi 图片预览链路，先从 `AI端` monitor 日志 `WiFi STA IP: ...` 获取设备地址，再优先使用主机脚本 `/control/device_preview` 将本地 PNG/JPEG 发送到 `http://<device_ip>:8781/debug/preview_image`；设备侧应复用现有预览路径，并同步显示到调试二级菜单预览卡片中。
 10. 面向 LLM 的 MCP 桥接脚本、工具名和参数名必须尽量自解释，优先使用一眼可懂的命名，例如 `gp_display_mcp_bridge.py`、`draw_python`、`show_text`、`python_source`、`eval_source`、`frame_interval_ms`、`text`。
 11. 若任务涉及 `16x16` 图案预览，优先维持当前固定布局：左侧中心为圆点，右侧中心为预览区域；不要再让预览区域依赖首次绘制后才出现。
@@ -49,12 +49,12 @@ model: "GPT-5 (copilot)"
 
 验证入口：
 
-- `tools/ws2812_dev_cycle.py`
-- `External/xiaozhi-esp32/GP_Port/gp_display_mcp_bridge.py`
+- `Project/Script/tools/ws2812_dev_cycle.py`
+- `Project/Script/mcp/gp_matrix/gp_display_mcp_bridge.py`
 
 联调补充：
 
-- `tools/ws2812_dev_cycle.py` 会把每轮联调日志落到 `debug_snapshots/dev_cycle_logs/`。
+- `Project/Script/tools/ws2812_dev_cycle.py` 会把每轮联调日志落到 `Project/Debug/debug_snapshots/dev_cycle_logs/`。
 - 默认用定时串口抓取保存 `LED端` 日志，而不是无限前台串口监听。
 
 输出格式：

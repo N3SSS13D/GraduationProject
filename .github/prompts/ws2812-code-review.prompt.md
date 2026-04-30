@@ -15,7 +15,7 @@ Priorities:
 4. Buffer bounds and memory safety issues
 5. Missing validation gaps
 
-If the review touches `External/xiaozhi-esp32/GP_Port/`, also verify:
+If the review touches `Project/xiaozhi-esp32/main/gp_port/`, also verify:
 
 - field consistency between AI-side action objects and LED-side protocol fields
 - transport, ACK, and status-reporting coherence

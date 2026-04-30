@@ -48,9 +48,9 @@
 - After each code change, add appropriate explanatory comments for structure and behavior in modified code (follow existing comment style, keep comments concise, and avoid redundant comments)
 - After each completed coding task, provide a Markdown-formatted summary report that includes: change overview, affected files, key logic updates, and verification status
 - When adding custom functions, only use existing/valid APIs and ensure each custom function is declared in the corresponding header file before use
-- After each optimization or behavior change, synchronously update the related prompt files under `.github/prompts/` and `External/xiaozhi-esp32/GP_Port/` when their assumptions, workflow, or task boundaries are affected
-- After each source-code modification for this repository, automatically run a Keil rebuild for `STC51/Project/ws2812_driver/ws2812_driver.uvproj` in the current VS Code workspace, analyze build errors, and continue fixing until the build succeeds; do not perform download/flash steps unless the user explicitly asks
+- After each optimization or behavior change, synchronously update the related prompt files under `.github/prompts/` and `Project/Script/mcp/gp_matrix/` when their assumptions, workflow, or task boundaries are affected
+- After each source-code modification for this repository, automatically run a Keil rebuild for `Project/STC51/Project/ws2812_driver/ws2812_driver.uvproj` in the current VS Code workspace, analyze build errors, and continue fixing until the build succeeds; do not perform download/flash steps unless the user explicitly asks
 
 ## WS2812 Driver Documentation Sync
-- When changing WS2812 scan/output timing behavior, update both docs in `Doc/项目文档/` and problem review docs in `STC51/Project/ws2812_driver/` in the same task.
+- When changing WS2812 scan/output timing behavior, update both docs in `Doc/项目文档/` and problem review docs in `Project/STC51/Project/ws2812_driver/` in the same task.
 - If scan mode logic changes, explicitly document: channel mapping rule, off-row waveform type, reset tail behavior, and interval safety constraints.

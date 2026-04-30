@@ -33,9 +33,9 @@ A practical AI8051U I2C DMA driver usually needs:
 
 ## Graduation Project Mapping
 In this repository, the reference implementation lives in:
-- `STC51/Project/ws2812_driver/Sources/drv/gp_led_matrix_ai8051u.c`
-- `STC51/Project/ws2812_driver/Sources/inc/gp_led_matrix_ai8051u.h`
-- `STC51/Project/ws2812_driver/Sources/app/test.c`
+- `Project/STC51/Project/ws2812_driver/Sources/drv/gp_led_matrix_ai8051u.c`
+- `Project/STC51/Project/ws2812_driver/Sources/inc/gp_led_matrix_ai8051u.h`
+- `Project/STC51/Project/ws2812_driver/Sources/app/test.c`
 
 The active default is:
 - RX DMA enabled
