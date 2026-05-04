@@ -2,12 +2,16 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "WS2812: Dev Cycle",
+      "label": "WS2812: Auto Debug",
       "type": "shell",
       "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
       "args": [
         "-u",
-        "${workspaceFolder}\\tools\\ws2812_dev_cycle.py"
+        "${workspaceFolder}\\Project\\Script\\tools\\ws2812_auto_debug.py",
+        "--stc-port",
+        "COM15",
+        "--esp-port",
+        "COM17"
       ],
       "options": {
         "cwd": "${workspaceFolder}"
@@ -15,13 +19,70 @@
       "problemMatcher": []
     },
     {
-      "label": "WS2812: Dev Cycle Watch",
+      "label": "WS2812: Auto Debug (Check Tools)",
       "type": "shell",
       "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
       "args": [
         "-u",
-        "${workspaceFolder}\\tools\\ws2812_dev_cycle.py",
-        "--watch"
+        "${workspaceFolder}\\Project\\Script\\tools\\ws2812_auto_debug.py",
+        "--check-tools"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "ESP-IDF CLI: Build",
+      "type": "shell",
+      "command": "cmd",
+      "args": [
+        "/d",
+        "/c",
+        "set IDF_PYTHON_ENV_PATH=C:\\Espressif\\tools\\python\\v5.4.3\\venv&&set IDF_TOOLS_PATH=C:\\Espressif\\tools&&call S:\\Embedded\\ESP\\v5.4.3\\esp-idf\\export.bat && cd /d ${workspaceFolder}\\Project\\xiaozhi-esp32 && idf.py build"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "ESP-IDF CLI: Flash",
+      "type": "shell",
+      "command": "cmd",
+      "args": [
+        "/d",
+        "/c",
+        "set IDF_PYTHON_ENV_PATH=C:\\Espressif\\tools\\python\\v5.4.3\\venv&&set IDF_TOOLS_PATH=C:\\Espressif\\tools&&call S:\\Embedded\\ESP\\v5.4.3\\esp-idf\\export.bat && cd /d ${workspaceFolder}\\Project\\xiaozhi-esp32 && idf.py -p COM17 flash"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "ESP-IDF CLI: Monitor",
+      "type": "shell",
+      "command": "cmd",
+      "args": [
+        "/d",
+        "/c",
+        "set IDF_PYTHON_ENV_PATH=C:\\Espressif\\tools\\python\\v5.4.3\\venv&&set IDF_TOOLS_PATH=C:\\Espressif\\tools&&call S:\\Embedded\\ESP\\v5.4.3\\esp-idf\\export.bat && cd /d ${workspaceFolder}\\Project\\xiaozhi-esp32 && idf.py -p COM17 monitor"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "ESP-IDF CLI: Build Flash Monitor",
+      "type": "shell",
+      "command": "cmd",
+      "args": [
+        "/d",
+        "/c",
+        "set IDF_PYTHON_ENV_PATH=C:\\Espressif\\tools\\python\\v5.4.3\\venv&&set IDF_TOOLS_PATH=C:\\Espressif\\tools&&call S:\\Embedded\\ESP\\v5.4.3\\esp-idf\\export.bat && cd /d ${workspaceFolder}\\Project\\xiaozhi-esp32 && idf.py -p COM17 build flash monitor"
       ],
       "options": {
         "cwd": "${workspaceFolder}"
