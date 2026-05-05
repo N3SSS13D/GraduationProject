@@ -67,6 +67,7 @@
   - `Sources/app/app.c`：初始化与主循环
   - `Sources/mid/gp_led_action.c`：远程动作/帧/动画执行
   - `Sources/mid/draw_drv.c`：本地渲染与离线动画
+  - `Sources/mid/offline_pattern.c`：本地离线图案资源与像素查询
   - `Sources/drv/gp_led_matrix_ai8051u.c`：协议收包、分发、ACK
   - `Sources/drv/ws2812_drv.c`：底层扫描输出
 - 常见首读组合：

@@ -65,3 +65,13 @@ For multi-step tasks, state a brief plan:
 ```
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+## 5. Applied Workflow
+
+For non-trivial implementation, optimization, or bug-fix tasks:
+
+1. Summarize the current implementation slice and the exact control/data path first.
+2. List the current problems, risks, and candidate solutions before editing.
+3. Choose the smallest feasible change and define validation criteria up front.
+4. Implement one focused slice at a time and validate it before widening scope.
+5. Do a second-pass review after validation, then sync docs or workflow guidance if expectations changed.

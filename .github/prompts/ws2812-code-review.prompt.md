@@ -54,6 +54,14 @@ Category-specific checks:
 - `Scripts`: verify host drawing still targets AI-side preview/upload interfaces instead of bypassing into raw LED-side
   packet assumptions.
 
+Review workflow:
+
+1. Summarize the current implementation slice and changed path before drawing conclusions.
+2. Identify concrete risks, regressions, and missing validation before proposing fixes.
+3. Prefer the smallest evidence-backed explanation for each finding.
+4. Re-check the affected execution path after each major finding to avoid broad speculative review.
+5. Call out documentation or workflow drift when the code change updates expectations but docs/prompt/skill content did not move with it.
+
 If the review touches `Project/xiaozhi-esp32/main/gp_port/`, also verify:
 
 - field consistency between AI-side action objects and LED-side protocol fields

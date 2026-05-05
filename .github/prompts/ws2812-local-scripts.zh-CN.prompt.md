@@ -22,6 +22,17 @@ model: "GPT-5 (copilot)"
    - `Project/xiaozhi-esp32/main/gp_port/gp_led_matrix_esp32.cc`
    - `Project/xiaozhi-esp32/main/boards/lichuang-dev/lichuang_dev_board.cc`
 
+## 解决问题工作流
+
+对于脚本、MCP 或联调工具任务：
+
+1. 改动前先总结当前脚本流程、边界和入口。
+2. 先列出当前问题、运行风险和候选修复方案，再开始编辑。
+3. 先选定最小可行改动，并明确验证路径。
+4. 一次只实现一个聚焦切片。
+5. 验证后先回看受影响工作流，再决定是否扩大范围。
+6. 若流程、假设或操作预期变化，同步更新文档、Prompt 和 Skill。
+
 ## 执行要求
 
 1. MCP 工具名与参数名必须自解释。

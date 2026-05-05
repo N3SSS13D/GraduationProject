@@ -57,6 +57,16 @@ Use this skill for script-side and MCP tasks under `Project/Script/`:
   - `Project/Script/tools/ws2812_auto_debug.py`
   - `Project/Script/tools/ws2812_auto_debug.md`
 
+## Problem-solving workflow
+
+For script, MCP, and tooling tasks:
+
+1. Summarize the current script flow, boundaries, and entry points first.
+2. State the operational risks, failure cases, and candidate fixes before editing.
+3. Prefer the smallest feasible change that keeps the host flow bounded.
+4. Validate one focused workflow slice before widening scope.
+5. Sync docs and prompt/skill guidance when operational expectations or workflow rules change.
+
 ## Requirements
 
 1. Keep LLM-facing tool names and argument names self-descriptive.

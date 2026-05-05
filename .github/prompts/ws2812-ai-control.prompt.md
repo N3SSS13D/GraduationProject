@@ -43,6 +43,17 @@ Use the four active categories to read only the narrow files needed for the task
 - `Project/Protocols/gp_led_matrix_protocol.h`
   - Shared single source of truth for packet fields, limits, and payload structs used by AI-side code.
 
+## Problem-solving workflow
+
+For implementation, integration, or bug-fix tasks:
+
+1. Summarize the current implementation slice and the exact control/data path first.
+2. List the current issues, risks, and candidate solutions before editing.
+3. Choose the smallest feasible change and define validation criteria up front.
+4. Implement one focused slice at a time instead of widening scope immediately.
+5. Re-check the touched path after validation before moving to the next slice.
+6. Sync docs, prompts, and skills when workflow, assumptions, or behavior expectations change.
+
 ## Requirements
 
 1. Reuse existing action objects such as `voice_color_result` when possible.

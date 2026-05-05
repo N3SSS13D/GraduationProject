@@ -1,10 +1,42 @@
 # 项目通用编码规范（中文版）
 
+## 项目结构
+
+本仓库当前按 4 类活跃内容组织，目的是让任务只读取必要目录，不默认扫描无关文件：
+
+1. `LED端显示驱动`
+   - 路径：`Project/STC51/`，尤其是 `Project/STC51/ws2812_driver/`
+2. `AI端接口调度`
+   - 路径：`Project/xiaozhi-esp32/main/gp_port/` 及必要的板级文件
+3. `蓝牙通信协议`
+   - 路径：`Project/Protocols/`
+4. `本地绘图脚本`
+   - 路径：`Project/Script/`
+
+当前有效说明文档入口：
+
+- `Doc/Instructions/README.md`
+- `Doc/Instructions/project_structure.md`
+- `Doc/Instructions/problem_tracking.md`
+- `Doc/Instructions/bt_version_hc05_uart2_architecture.md`
+- `Project/STC51/README.md`
+- `Project/xiaozhi-esp32/main/gp_port/README.md`
+- `Project/Protocols/README.md`
+- `Project/Script/README.md`
+
+处理任务时，只根据结构说明定位相关分类文件；不要默认读取无关分类目录。
+当任务明确落在某一类时，先读取该分类 README，获取模块职责、主链路和最小阅读集，再进入更深层实现文件。
+
 ## 项目技能
 
-- 在本仓库中进行代码编写、评审或重构时，应用 `.github/skills/karpathy-guidelines/SKILL.md`。
-- 具体要求：编码前先明确假设，优先选择能满足需求的最简单改动，严格控制改动范围，并在实现前定义可验证的完成标准。
-- 如果任务可以通过文档更新或小范围修正解决，不要额外引入新的抽象或推测性的配置项。
+- 在本仓库中进行代码编写、评审或重构时，应用 `.github/skills/karpathy-guidelines/SKILL.md`
+- 按任务类别优先使用对应 prompt 或 skill：
+   `AI端接口调度` -> `.github/prompts/ws2812-ai-control*.prompt.md` + `.github/skills/karpathy-guidelines/SKILL.md`
+   `LED端显示驱动` -> `.github/prompts/ws2812-led-driver*.prompt.md` + `.github/skills/ws2812-led-driver/SKILL.md`
+   `蓝牙通信协议` -> `.github/prompts/ws2812-bluetooth-protocol*.prompt.md` + `.github/skills/bluetooth-protocol/SKILL.md`
+   `本地绘图脚本` -> `.github/prompts/ws2812-local-scripts*.prompt.md` + `.github/skills/local-drawing-scripts/SKILL.md`
+- 具体要求：编码前先明确假设，优先选择能满足需求的最简单改动，严格控制改动范围，并在实现前定义可验证的完成标准
+- 如果任务可以通过文档更新或小范围修正解决，不要额外引入新的抽象或推测性的配置项
 
 ## 代码风格
 
@@ -52,4 +84,10 @@
 - 每次修改代码后，需在改动处适当补充注释，说明代码结构与功能（遵循现有注释风格，保持简洁，避免冗余注释）
 - 每次完成编码任务后，需输出 Markdown 格式的总结报告，至少包含：改动概述、影响文件、关键逻辑更新、验证状态
 - 自定义函数时，必须确保不调用不存在的函数；并且所有自定义函数在使用前必须在对应头文件中声明
-- 每次优化或行为变更后，若 `.github/prompts/` 或 `Project/Script/mcp/gp_matrix/` 下相关 prompt 的前提、流程或任务边界受到影响，必须同步更新这些 prompt
+- 每次优化或行为变更后，若 `.github/prompts/`、`.github/skills/`、`Doc/Instructions/`、`Project/Protocols/` 或 `Project/Script/` 下相关内容的前提、流程或任务边界受到影响，必须同步更新
+- 每次修改本仓库源码后，自动对 `Project/STC51/ws2812_driver/ws2812_driver.uvproj` 执行 Keil rebuild，分析构建错误并持续修复直到通过；除非用户明确要求，否则不要执行下载/烧录
+
+## WS2812 驱动文档同步
+
+- 当修改 WS2812 扫描/输出时序行为时，需要同步更新 `Doc/Instructions/` 中的当前文档，以及 `Project/STC51/` 下对应 LED 侧说明
+- 若扫描模式逻辑发生变化，必须明确记录：通道映射规则、关断行波形类型、复位尾波行为、间隔安全约束

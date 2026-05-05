@@ -1,14 +1,22 @@
-# Ignore legacy PWMA-DMA reference project under STC51 Project
-STC51/Project/PWMA-DMA/
-STC51/Project/test/
+# Repository keeps Demo/, Doc/, Project/, .github/ and shared .vscode settings tracked.
+# Ignore only local environments, debug snapshots and generated outputs.
 
-# Ignore archive packages under STC51 Project
-STC51/Project/*.rar
-STC51/Project/**/*.rar
-STC51/Project/*.RAR
-STC51/Project/**/*.RAR
+# Local Python environment
+.venv/
 
-# Build output folders (Keil / embedded projects)
+# Root-level generated workspaces
+/build/
+Project/Debug/
+
+# Legacy reference package outside the current active structure
+Project/STC51/Examples/PWMA-DMA/
+Project/STC51/Tools
+Project/STC51/*.rar
+Project/STC51/**/*.rar
+Project/STC51/*.RAR
+Project/STC51/**/*.RAR
+
+# Build output folders (Keil / embedded / CMake)
 **/Objects/
 **/Object/
 **/Listings/
@@ -18,7 +26,7 @@ STC51/Project/**/*.RAR
 **/obj/
 **/bin/
 
-# Build and debug artifacts
+# Build artifacts
 *.o
 *.obj
 *.d
@@ -34,13 +42,8 @@ STC51/Project/**/*.RAR
 *.lnp
 *.m51
 *.build_log.htm
-*.png
-*.log
-*.bak
-*.png
 
-
-# Flash/programmer and temporary runtime files
+# Temporary runtime files
 *.log
 *.bak
 *.tmp
@@ -62,7 +65,7 @@ STC51/Project/**/*.RAR
 *.uvgui.*
 
 # Visual Studio Code / IDE local files
-# Keep project-level VS Code configuration tracked.
+# Keep shared project-level .vscode settings tracked.
 .vscode/*.log
 .vscode/*.tmp
 .vscode/*.temp
@@ -84,37 +87,11 @@ STC51/Project/**/*.RAR
 Thumbs.db
 Desktop.ini
 $RECYCLE.BIN/
-STC51/Project/ws2812_driver/ws2812_driver.uvgui.XiaoHai
-STC51/Project/ws2812_driver/ws2812_driver.uvopt
-STC51/Project/ws2812_driver/ws2812_driver.uvproj
 
-# Python cache and local generated assets
+# Python cache
 **/__pycache__/
 *.pyc
-Pic/jd-xhh.jpg
-Pic/jd-xhh-16-16.jpg
-build/CMakeCache.txt
-build/.cmake/api/v1/query/client-vscode/query.json
-build/.cmake/api/v1/reply/error-2026-04-21T05-29-13-0223.json
-build/.cmake/api/v1/reply/error-2026-04-21T07-14-50-0036.json
-build/.cmake/api/v1/reply/error-2026-04-21T07-14-50-0596.json
-build/.cmake/api/v1/reply/error-2026-04-22T03-51-31-0601.json
-build/.cmake/api/v1/reply/error-2026-04-22T03-51-32-0102.json
-build/.cmake/api/v1/reply/error-2026-04-22T15-21-49-0792.json
-build/.cmake/api/v1/reply/error-2026-04-22T15-21-50-0366.json
-build/.cmake/api/v1/reply/error-2026-04-23T04-20-20-0108.json
-build/.cmake/api/v1/reply/error-2026-04-23T04-20-20-0447.json
-build/CMakeFiles/cmake.check_cache
-build/CMakeFiles/CMakeConfigureLog.yaml
-build/CMakeFiles/4.2.2/CMakeCCompiler.cmake
-build/CMakeFiles/4.2.2/CMakeCXXCompiler.cmake
-build/CMakeFiles/4.2.2/CMakeRCCompiler.cmake
-build/CMakeFiles/4.2.2/CMakeSystem.cmake
-build/CMakeFiles/4.2.2/CompilerIdC/a.exe
-build/CMakeFiles/4.2.2/CompilerIdC/CMakeCCompilerId.c
-build/CMakeFiles/4.2.2/CompilerIdCXX/a.exe
-build/CMakeFiles/4.2.2/CompilerIdCXX/CMakeCXXCompilerId.cpp
-STC51/Project/ws2812_driver/ws2812_driver.uvgui.XiaoHai
-STC51/Project/ws2812_driver/ws2812_driver.uvgui.XiaoHai
-STC51/Project/ws2812_driver/ws2812_driver.uvgui.XiaoHai
-STC51/Project/ws2812_driver/ws2812_driver.uvopt
+
+# Local demo assets
+Demo/Pic/jd-xhh.jpg
+Demo/Pic/jd-xhh-16-16.jpg

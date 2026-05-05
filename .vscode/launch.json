@@ -8,8 +8,8 @@
       "args": [],
       "stopAtEntry": false,
       "externalConsole": true,
-      "cwd": "d:/GraduationProject/External/xiaozhi-esp32",
-      "program": "d:/GraduationProject/External/xiaozhi-esp32/build/Debug/outDebug",
+      "cwd": "d:/GraduationProject/Project/xiaozhi-esp32",
+      "program": "d:/GraduationProject/Project/Debug/xiaozhi-esp32-build/Debug/outDebug",
       "MIMode": "gdb",
       "miDebuggerPath": "gdb",
       "setupCommands": [

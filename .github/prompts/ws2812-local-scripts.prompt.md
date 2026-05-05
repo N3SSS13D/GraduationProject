@@ -22,6 +22,17 @@ Read only relevant script assets first:
    - `Project/xiaozhi-esp32/main/gp_port/gp_led_matrix_esp32.cc`
    - `Project/xiaozhi-esp32/main/boards/lichuang-dev/lichuang_dev_board.cc`
 
+## Problem-solving workflow
+
+For script, MCP, or tooling tasks:
+
+1. Summarize the current script flow, boundaries, and entry points first.
+2. List the current issues, operational risks, and candidate fixes before editing.
+3. Choose the smallest feasible change and define a concrete validation path.
+4. Implement one focused slice at a time.
+5. Re-check the touched workflow after validation before expanding scope.
+6. Sync docs, prompts, and skills when workflow, assumptions, or operational expectations change.
+
 ## Requirements
 
 1. Keep MCP tool names and argument names self-descriptive.

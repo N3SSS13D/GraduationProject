@@ -1,0 +1,108 @@
+#include "config.h"
+#include "mid_task.h"
+
+typedef struct
+{
+    uint8_t pendingCount;
+    uint16_t tickCount;
+    uint16_t period;
+    MidTaskHook_t hook;
+} MidTaskComponent_t;
+
+#define MIDTASK_NULL_HOOK               ((MidTaskHook_t)0)
+
+static MidTaskComponent_t g_midTasks[MIDTASK_MAX_COUNT];
+static uint8_t g_midTaskCount = 0;
+
+void MidTask_Init(void)
+{
+    uint8_t idx;
+
+    for (idx = 0; idx < MIDTASK_MAX_COUNT; idx++)
+    {
+        g_midTasks[idx].pendingCount = 0;
+        g_midTasks[idx].tickCount = 0;
+        g_midTasks[idx].period = 0;
+        g_midTasks[idx].hook = MIDTASK_NULL_HOOK;
+    }
+
+    g_midTaskCount = 0;
+}
+
+uint8_t MidTask_Register(uint16_t periodMs, MidTaskHook_t hook)
+{
+    if (MidTask_RegisterWithId(periodMs, hook) == MIDTASK_INVALID_ID)
+    {
+        return 0;
+    }
+
+    return 1;
+}
+
+uint8_t MidTask_RegisterWithId(uint16_t periodMs, MidTaskHook_t hook)
+{
+    uint8_t taskId;
+
+    if ((hook == MIDTASK_NULL_HOOK) || (periodMs == 0) || (g_midTaskCount >= MIDTASK_MAX_COUNT))
+    {
+        return MIDTASK_INVALID_ID;
+    }
+
+    taskId = g_midTaskCount;
+    g_midTasks[g_midTaskCount].pendingCount = 0;
+    g_midTasks[g_midTaskCount].tickCount = periodMs;
+    g_midTasks[g_midTaskCount].period = periodMs;
+    g_midTasks[g_midTaskCount].hook = hook;
+    g_midTaskCount++;
+
+    return taskId;
+}
+
+uint8_t MidTask_SetPeriod(uint8_t taskId, uint16_t periodMs)
+{
+    if ((taskId >= g_midTaskCount) || (periodMs == 0U))
+    {
+        return 0;
+    }
+
+    g_midTasks[taskId].period = periodMs;
+    g_midTasks[taskId].tickCount = periodMs;
+    g_midTasks[taskId].pendingCount = 0;
+
+    return 1;
+}
+
+void MidTask_Tick1ms(void)
+{
+    uint8_t idx;
+
+    for (idx = 0; idx < g_midTaskCount; idx++)
+    {
+        if (g_midTasks[idx].tickCount > 0)
+        {
+            g_midTasks[idx].tickCount--;
+            if (g_midTasks[idx].tickCount == 0)
+            {
+                g_midTasks[idx].tickCount = g_midTasks[idx].period;
+                if (g_midTasks[idx].pendingCount < 0xFFU)
+                {
+                    g_midTasks[idx].pendingCount++;
+                }
+            }
+        }
+    }
+}
+
+void MidTask_Process(void)
+{
+    uint8_t idx;
+
+    for (idx = 0; idx < g_midTaskCount; idx++)
+    {
+        if (g_midTasks[idx].pendingCount != 0)
+        {
+            g_midTasks[idx].pendingCount--;
+            g_midTasks[idx].hook();
+        }
+    }
+}

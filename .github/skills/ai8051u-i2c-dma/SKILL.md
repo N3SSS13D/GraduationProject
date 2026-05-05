@@ -8,6 +8,10 @@ disable-model-invocation: false
 
 # AI8051U I2C DMA
 
+## Category
+
+`LED-side display driver`
+
 ## When to Use
 - Add I2C DMA support to an AI8051U project.
 - Convert an interrupt-only AI8051U I2C slave to a DMA-backed payload path.
@@ -17,6 +21,16 @@ disable-model-invocation: false
 
 ## Scope
 This skill is for AI8051U firmware projects that already have a working I2C path and want to add DMA without rewriting the whole protocol stack.
+
+Current repository structure:
+
+1. `LED-side display driver` -> `Project/STC51/`
+2. `AI-side interface orchestration` -> `Project/xiaozhi-esp32/main/gp_port/`
+3. `Bluetooth communication protocol` -> `Project/Protocols/`
+4. `Local drawing scripts` -> `Project/Script/`
+
+The active branch defaults to the Bluetooth path. Use this skill only when the task explicitly targets the AI8051U
+I2C DMA backend or archived I2C behavior.
 
 ## Recommended Strategy
 1. Keep the existing I2C slave state machine if it is already stable.
@@ -75,6 +89,16 @@ This skill is for AI8051U firmware projects that already have a working I2C path
    - `TXOVW`,
    - ACK error,
    - final reply length.
+
+## Problem-solving workflow
+
+For DMA bring-up or DMA fault-fix tasks:
+
+1. Summarize the current framing path, byte path, and DMA ownership first.
+2. State the current fault model, risks, and candidate rollout plan before editing.
+3. Prefer the smallest feasible enablement slice, such as RX-only or TX-only, with explicit validation criteria.
+4. Validate each focused DMA slice before enabling the next path.
+5. Sync docs and prompt/skill guidance when workflow expectations or validated integration rules change.
 
 ## Validation Checklist
 - TX DMA reply length matches the protocol packet length.
