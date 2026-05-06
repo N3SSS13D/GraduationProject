@@ -93,5 +93,5 @@
 2. Timer interval margin is too small versus actual transfer time, causing jitter when refresh attempts hit DMA busy windows.
 
 ### Fix applied
-1. Added minimum-safe interval clamp for legacy mode in `Sources/app/test.c`.
+1. Added minimum-safe interval clamp for legacy mode in `Sources/app/app.c`.
 2. Clamp floor is computed dynamically from active columns and reset-tail length, plus a safety margin.

@@ -139,7 +139,7 @@
 
 任务分类 → Skill 映射：
 - `LED端显示驱动` → `/ws2812-led-driver`
-- `AI端接口调度` → 参考 `CLAUDE.md` AI端章节
+- `AI端接口调度` → 入口文件: `Project/xiaozhi-esp32/main/gp_port/gp_led_matrix_esp32.cc`, `transport/gp_led_matrix_transport.cc`, `ui/gp_debug_display.cc`, `boards/lichuang-dev/lichuang_dev_board.cc`
 - `蓝牙通信协议` → `/bluetooth-protocol`
 - `本地绘图脚本` → `/local-drawing-scripts`
 

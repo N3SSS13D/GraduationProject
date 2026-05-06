@@ -1,22 +1,23 @@
-# Repository keeps Demo/, Doc/, Project/, .github/ and shared .vscode settings tracked.
-# Ignore only local environments, debug snapshots and generated outputs.
+# =============================================================================
+# GraduationProject .gitignore
+# =============================================================================
+# Repository keeps: Demo/, Doc/, Project/, .github/, .claude/, CLAUDE.md,
+# and shared .vscode/ settings tracked.
+# =============================================================================
 
-# Local Python environment
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
 .venv/
+**/__pycache__/
+*.pyc
+*.pyo
 
-# Root-level generated workspaces
+# ---------------------------------------------------------------------------
+# Build outputs (Keil / embedded / CMake)
+# ---------------------------------------------------------------------------
 /build/
 Project/Debug/
-
-# Legacy reference package outside the current active structure
-Project/STC51/Examples/PWMA-DMA/
-Project/STC51/Tools
-Project/STC51/*.rar
-Project/STC51/**/*.rar
-Project/STC51/*.RAR
-Project/STC51/**/*.RAR
-
-# Build output folders (Keil / embedded / CMake)
 **/Objects/
 **/Object/
 **/Listings/
@@ -43,7 +44,9 @@ Project/STC51/**/*.RAR
 *.m51
 *.build_log.htm
 
-# Temporary runtime files
+# ---------------------------------------------------------------------------
+# Temporary & editor files
+# ---------------------------------------------------------------------------
 *.log
 *.bak
 *.tmp
@@ -53,19 +56,21 @@ Project/STC51/**/*.RAR
 *.seed
 *.stackdump
 *~
-
-# Editor temporary files
 *.swp
 *.swo
 *.orig
 
-# Keil user-specific files (keep shared project files tracked)
+# ---------------------------------------------------------------------------
+# Keil user-specific (keep shared .uvproj tracked)
+# ---------------------------------------------------------------------------
 *.uvopt
 *.uvoptx
 *.uvgui.*
 
-# Visual Studio Code / IDE local files
-# Keep shared project-level .vscode settings tracked.
+# ---------------------------------------------------------------------------
+# IDE / Editor local files
+# ---------------------------------------------------------------------------
+# VS Code (keep shared .vscode/ settings tracked)
 .vscode/*.log
 .vscode/*.tmp
 .vscode/*.temp
@@ -82,19 +87,31 @@ Project/STC51/**/*.RAR
 .idea/
 *.code-workspace
 
+# ---------------------------------------------------------------------------
+# Claude Code local settings
+# ---------------------------------------------------------------------------
+.claude/settings.local.json
+
+# ---------------------------------------------------------------------------
 # OS generated files
+# ---------------------------------------------------------------------------
 .DS_Store
 Thumbs.db
 Desktop.ini
 $RECYCLE.BIN/
 
-# Python cache
-**/__pycache__/
-*.pyc
+# ---------------------------------------------------------------------------
+# Legacy / archived references
+# ---------------------------------------------------------------------------
+Project/STC51/Examples/PWMA-DMA/
+Project/STC51/Tools
+Project/STC51/*.rar
+Project/STC51/**/*.rar
+Project/STC51/*.RAR
+Project/STC51/**/*.RAR
 
-# Claude Code local settings
-.claude/settings.local.json
-
-# Local demo assets
+# ---------------------------------------------------------------------------
+# Local demo assets (not for distribution)
+# ---------------------------------------------------------------------------
 Demo/Pic/jd-xhh.jpg
 Demo/Pic/jd-xhh-16-16.jpg

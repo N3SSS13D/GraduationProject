@@ -25,10 +25,10 @@
 
 ### 快速路径
 
-- AI端板级接入：`../../../xiaozhi-esp32/main/boards/lichuang-dev/`
-- AI端矩阵驱动：`../../../xiaozhi-esp32/main/gp_port/`
-- 联调脚本：`../../Project/Script/tools/ws2812_auto_debug.py`
-- 问题说明：`../../../../Doc/项目文档/problem_tracking.md`
+- AI端板级接入：`Project/xiaozhi-esp32/main/boards/lichuang-dev/`
+- AI端矩阵驱动：`Project/xiaozhi-esp32/main/gp_port/`
+- 联调脚本：`Project/Script/tools/ws2812_auto_debug.py`
+- 问题说明：`Doc/Instructions/problem_tracking.md`
 
 ## English
 

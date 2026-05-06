@@ -1,0 +1,15 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"path": "../Project/xiaozhi-esp32"
+		}
+	],
+	"settings": {
+		"idf.currentSetup": "S:\\Embedded\\ESP\\v5.4.3\\esp-idf",
+		"idf.flashType": "UART",
+		"idf.portWin": "COM17"
+	}
+}
