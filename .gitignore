@@ -92,6 +92,9 @@ $RECYCLE.BIN/
 **/__pycache__/
 *.pyc
 
+# Claude Code local settings
+.claude/settings.local.json
+
 # Local demo assets
 Demo/Pic/jd-xhh.jpg
 Demo/Pic/jd-xhh-16-16.jpg
