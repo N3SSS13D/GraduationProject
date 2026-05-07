@@ -20,6 +20,10 @@ from urllib.parse import quote, unquote, urlparse
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
+from gp_bridge_mcp_service import build_bitmap_ascii_schema, build_draw_python_ops_schema
+from gp_bridge_transport_service import build_bridge_arg_parser
+from gp_matrix_llm_inputs import apply_draw_ops, normalize_bitmap_ascii_value, normalize_draw_ops
+
 
 try:
     import websockets
@@ -802,6 +806,32 @@ def normalize_bitmap_rows_hex_value(bitmap_rows_hex: Any, field_name: str) -> st
 
         return "".join(normalize_bitmap_row_token(row_token) for row_token in row_sequence)
 
+    def normalize_compact_hex_pattern(hex_pattern: str) -> Optional[str]:
+        if (not hex_pattern) or (re.fullmatch(r"[0-9a-fA-F]+", hex_pattern) is None):
+            return None
+
+        if len(hex_pattern) >= MATRIX_BITMAP_HEX_CHARS:
+            return None
+        if (len(hex_pattern) % 4) != 0:
+            return None
+
+        row_tokens = [hex_pattern[index:index + 4] for index in range(0, len(hex_pattern), 4)]
+        if (not row_tokens) or (len(row_tokens) > MATRIX_HEIGHT):
+            return None
+
+        if len(row_tokens) == MATRIX_HEIGHT:
+            return "".join(token.lower() for token in row_tokens)
+
+        if len(row_tokens) == 1:
+            expanded_row_tokens = row_tokens * MATRIX_HEIGHT
+            return "".join(token.lower() for token in expanded_row_tokens)
+
+        expanded_row_tokens: list[str] = []
+        while len(expanded_row_tokens) < MATRIX_HEIGHT:
+            expanded_row_tokens.extend(row_tokens)
+        expanded_row_tokens = expanded_row_tokens[:MATRIX_HEIGHT]
+        return "".join(token.lower() for token in expanded_row_tokens)
+
     if isinstance(bitmap_rows_hex, (list, tuple)):
         return normalize_bitmap_row_sequence(bitmap_rows_hex)
 
@@ -815,7 +845,20 @@ def normalize_bitmap_rows_hex_value(bitmap_rows_hex: Any, field_name: str) -> st
         int(normalized_bitmap_rows_hex, 16)
         return normalized_bitmap_rows_hex.lower()
 
+    compact_hex_pattern = normalize_compact_hex_pattern(normalized_bitmap_rows_hex)
+    if compact_hex_pattern:
+        return compact_hex_pattern
+
     parsed_row_sequence: Optional[Sequence[Any]] = None
+
+    # LLM-friendly ASCII mode: 16 lines x 16 chars using on/off symbols.
+    try:
+        normalized_ascii = normalize_bitmap_ascii_value(bitmap_rows_hex, field_name)
+    except ValueError:
+        normalized_ascii = ""
+
+    if normalized_ascii:
+        return normalized_ascii
 
     try:
         literal_value = ast.literal_eval(bitmap_rows_hex_text)
@@ -834,7 +877,8 @@ def normalize_bitmap_rows_hex_value(bitmap_rows_hex: Any, field_name: str) -> st
 
     raise ValueError(
         f"{field_name} must contain either exactly {MATRIX_BITMAP_HEX_CHARS} hex characters "
-        f"or {MATRIX_HEIGHT} row tokens of 1-4 hex digits (16 rows x 16 bits = {MATRIX_BITMAP_BYTES} bytes)"
+        f"or {MATRIX_HEIGHT} row tokens of 1-4 hex digits (16 rows x 16 bits = {MATRIX_BITMAP_BYTES} bytes). "
+        "Shorthand compact hex patterns are also accepted when length is a multiple of 4 and will be repeated to 16 rows"
     )
 
 
@@ -877,16 +921,182 @@ def normalize_animation_bitmap_rows_hex_list(
     return sampled_frames, int(scaled_interval_ms), source_frame_count
 
 
+def bitmap_rows_hex_to_rows(bitmap_rows_hex: str) -> list[int]:
+    normalized_bitmap_rows_hex = normalize_bitmap_rows_hex_value(bitmap_rows_hex, "bitmap_rows_hex")
+    return [int(normalized_bitmap_rows_hex[index:index + 4], 16) for index in range(0, 64, 4)]
+
+
+def bitmap_rows_to_hex(bitmap_rows: Sequence[int]) -> str:
+    if len(bitmap_rows) != MATRIX_HEIGHT:
+        raise ValueError("bitmap_rows must contain exactly 16 rows")
+    return "".join(f"{int(row_bits) & 0xFFFF:04x}" for row_bits in bitmap_rows)
+
+
+def shift_bitmap_rows(bitmap_rows: Sequence[int], offset: int) -> list[int]:
+    normalized_offset = int(offset) % MATRIX_WIDTH
+    shifted_rows: list[int] = []
+
+    for row_bits in bitmap_rows:
+        normalized_row_bits = int(row_bits) & 0xFFFF
+        if normalized_offset == 0:
+            shifted_rows.append(normalized_row_bits)
+            continue
+
+        wrapped_row = ((normalized_row_bits << normalized_offset) | (normalized_row_bits >> (MATRIX_WIDTH - normalized_offset))) & 0xFFFF
+        shifted_rows.append(wrapped_row)
+
+    return shifted_rows
+
+
+def apply_density_to_bitmap_rows(bitmap_rows: Sequence[int], density: float) -> list[int]:
+    clamped_density = max(0.0, min(1.0, float(density)))
+    threshold = int(clamped_density * 1000)
+    sampled_rows: list[int] = []
+
+    for row_index, row_bits in enumerate(bitmap_rows):
+        sampled_row_bits = 0
+        normalized_row_bits = int(row_bits) & 0xFFFF
+
+        for column_index in range(MATRIX_WIDTH):
+            enabled = ((normalized_row_bits >> (MATRIX_WIDTH - 1 - column_index)) & 0x0001) != 0
+            if not enabled:
+                continue
+
+            # Deterministic hash sampling keeps frames stable without random flicker.
+            pixel_hash = ((row_index * 131) + (column_index * 197) + (row_index * column_index * 17)) % 1000
+            if pixel_hash < threshold:
+                sampled_row_bits |= 1 << (MATRIX_WIDTH - 1 - column_index)
+
+        sampled_rows.append(sampled_row_bits)
+
+    return sampled_rows
+
+
+def expand_effect_animation_bitmap_rows_hex_list(base_bitmap_rows_hex: str, effect: Dict[str, Any]) -> list[str]:
+    effect_name = str(effect.get("name", "")).strip().lower()
+    if not effect_name:
+        raise ValueError("effect.name is required")
+
+    base_rows = bitmap_rows_hex_to_rows(base_bitmap_rows_hex)
+    frame_count = int(effect.get("frame_count", 0))
+    if frame_count <= 0:
+        frame_count = 16
+    if frame_count < 2:
+        raise ValueError("effect.frame_count must be >= 2")
+
+    if effect_name == "blink":
+        duty_cycle = float(effect.get("duty_cycle", 0.5))
+        clamped_duty = max(0.0, min(1.0, duty_cycle))
+        on_frames = max(1, min(frame_count - 1, int(round(frame_count * clamped_duty))))
+        off_rows = [0] * MATRIX_HEIGHT
+        return [bitmap_rows_to_hex(base_rows if index < on_frames else off_rows) for index in range(frame_count)]
+
+    if effect_name in {"marquee", "marquee_left", "marquee_right"}:
+        direction = str(effect.get("direction", "left")).strip().lower()
+        if effect_name == "marquee_right":
+            direction = "right"
+        elif effect_name == "marquee_left":
+            direction = "left"
+
+        step = int(effect.get("step", 1))
+        if step <= 0:
+            raise ValueError("effect.step must be >= 1")
+
+        frames: list[str] = []
+        for frame_index in range(frame_count):
+            offset = (frame_index * step) % MATRIX_WIDTH
+            shifted_rows = shift_bitmap_rows(base_rows, -offset if direction == "right" else offset)
+            frames.append(bitmap_rows_to_hex(shifted_rows))
+        return frames
+
+    if effect_name == "breathe":
+        min_density = float(effect.get("min_density", 0.20))
+        max_density = float(effect.get("max_density", 1.00))
+        clamped_min_density = max(0.0, min(1.0, min_density))
+        clamped_max_density = max(0.0, min(1.0, max_density))
+        if clamped_min_density > clamped_max_density:
+            clamped_min_density, clamped_max_density = clamped_max_density, clamped_min_density
+
+        frames = []
+        for frame_index in range(frame_count):
+            phase = frame_index / max(1, frame_count - 1)
+            triangle_wave = 1.0 - abs((phase * 2.0) - 1.0)
+            density = clamped_min_density + (clamped_max_density - clamped_min_density) * triangle_wave
+            density_rows = apply_density_to_bitmap_rows(base_rows, density)
+            frames.append(bitmap_rows_to_hex(density_rows))
+        return frames
+
+    raise ValueError(f"Unsupported effect.name: {effect_name}")
+
+
 def resolve_animation_bitmap_rows_hex_sources(
     *,
     bitmap_rows_hex_list: Any,
     frames: Any,
+    image: Any,
+    effect: Any,
     primary_rgb888: str,
     background_rgb888: str,
     source: str,
 ) -> list[Any]:
+    def resolve_single_frame_source(frame: Any, frame_field_name: str) -> str:
+        if not isinstance(frame, dict):
+            return normalize_bitmap_rows_hex_value(frame, frame_field_name)
+
+        frame_bitmap_rows_hex = frame.get("bitmap_rows_hex", "")
+        frame_bitmap_rows = frame.get("bitmap_rows")
+        frame_python_source = str(frame.get("python_source", ""))
+        frame_eval_source = str(frame.get("eval_source", ""))
+        frame_bitmap_ascii = frame.get("bitmap_ascii")
+        frame_ops = frame.get("ops")
+        has_bitmap_rows_hex = bool(str(frame_bitmap_rows_hex).strip())
+        has_bitmap_rows = frame_bitmap_rows is not None
+        has_bitmap_ascii = frame_bitmap_ascii not in (None, "", [])
+        has_draw_code = bool(frame_python_source.strip() or frame_eval_source.strip() or frame_ops not in (None, "", []))
+        selected_source_count = int(has_bitmap_rows_hex) + int(has_bitmap_rows) + int(has_bitmap_ascii) + int(has_draw_code)
+
+        if selected_source_count != 1:
+            raise ValueError(
+                f"{frame_field_name} must provide exactly one of bitmap_rows_hex, bitmap_rows, bitmap_ascii, or python_source/eval_source/ops"
+            )
+
+        if has_bitmap_rows_hex:
+            return normalize_bitmap_rows_hex_value(frame_bitmap_rows_hex, f"{frame_field_name}.bitmap_rows_hex")
+
+        if has_bitmap_rows:
+            return normalize_bitmap_rows_hex_value(frame_bitmap_rows, f"{frame_field_name}.bitmap_rows")
+
+        if has_bitmap_ascii:
+            return normalize_bitmap_ascii_value(frame_bitmap_ascii, f"{frame_field_name}.bitmap_ascii")
+
+        rendered_frame_payload = render_python_source_to_matrix_frame(
+            python_source=frame_python_source,
+            eval_source=frame_eval_source,
+            draw_ops=frame_ops,
+            primary_rgb888=str(frame.get("primary_rgb888", primary_rgb888)),
+            background_rgb888=str(frame.get("background_rgb888", background_rgb888)),
+            source=source,
+            transcript=str(frame.get("transcript", frame_field_name)),
+        )
+        return normalize_bitmap_rows_hex_value(
+            rendered_frame_payload.get("bitmap_rows_hex", ""),
+            f"{frame_field_name}.python_bitmap_rows_hex",
+        )
+
     has_bitmap_rows_hex_list = isinstance(bitmap_rows_hex_list, (list, tuple)) and len(bitmap_rows_hex_list) > 0
     has_frames = isinstance(frames, (list, tuple)) and len(frames) > 0
+    has_image_effect = (image not in (None, "", [])) or (effect not in (None, "", []))
+
+    if sum((1 if has_bitmap_rows_hex_list else 0, 1 if has_frames else 0, 1 if has_image_effect else 0)) > 1:
+        raise ValueError("Provide exactly one animation input mode: bitmap_rows_hex_list, frames, or image+effect")
+
+    if has_image_effect:
+        if image in (None, "", []):
+            raise ValueError("image is required when effect is provided")
+        if not isinstance(effect, dict):
+            raise ValueError("effect must be an object")
+        base_bitmap_rows_hex = resolve_single_frame_source(image, "image")
+        return expand_effect_animation_bitmap_rows_hex_list(base_bitmap_rows_hex, effect)
 
     if has_bitmap_rows_hex_list and has_frames:
         raise ValueError("Provide either bitmap_rows_hex_list or frames, not both")
@@ -899,51 +1109,7 @@ def resolve_animation_bitmap_rows_hex_sources(
 
         for frame_index, frame in enumerate(frames):
             frame_field_name = f"frames[{frame_index}]"
-
-            if not isinstance(frame, dict):
-                normalized_sources.append(normalize_bitmap_rows_hex_value(frame, frame_field_name))
-                continue
-
-            frame_bitmap_rows_hex = frame.get("bitmap_rows_hex", "")
-            frame_bitmap_rows = frame.get("bitmap_rows")
-            frame_python_source = str(frame.get("python_source", ""))
-            frame_eval_source = str(frame.get("eval_source", ""))
-            has_bitmap_rows_hex = bool(str(frame_bitmap_rows_hex).strip())
-            has_bitmap_rows = frame_bitmap_rows is not None
-            has_draw_code = bool(frame_python_source.strip() or frame_eval_source.strip())
-            selected_source_count = int(has_bitmap_rows_hex) + int(has_bitmap_rows) + int(has_draw_code)
-
-            if selected_source_count != 1:
-                raise ValueError(
-                    f"{frame_field_name} must provide exactly one of bitmap_rows_hex, bitmap_rows, or python_source/eval_source"
-                )
-
-            if has_bitmap_rows_hex:
-                normalized_sources.append(
-                    normalize_bitmap_rows_hex_value(frame_bitmap_rows_hex, f"{frame_field_name}.bitmap_rows_hex")
-                )
-                continue
-
-            if has_bitmap_rows:
-                normalized_sources.append(
-                    normalize_bitmap_rows_hex_value(frame_bitmap_rows, f"{frame_field_name}.bitmap_rows")
-                )
-                continue
-
-            rendered_frame_payload = render_python_source_to_matrix_frame(
-                python_source=frame_python_source,
-                eval_source=frame_eval_source,
-                primary_rgb888=str(frame.get("primary_rgb888", primary_rgb888)),
-                background_rgb888=str(frame.get("background_rgb888", background_rgb888)),
-                source=source,
-                transcript=str(frame.get("transcript", f"animation frame {frame_index}")),
-            )
-            normalized_sources.append(
-                normalize_bitmap_rows_hex_value(
-                    rendered_frame_payload.get("bitmap_rows_hex", ""),
-                    f"{frame_field_name}.python_bitmap_rows_hex",
-                )
-            )
+            normalized_sources.append(resolve_single_frame_source(frame, frame_field_name))
 
         return normalized_sources
 
@@ -1129,6 +1295,7 @@ def execute_matrix_eval_source(eval_source: str, execution_scope: Dict[str, Any]
 def render_python_source_to_matrix_frame(
     python_source: str = "",
     eval_source: str = "",
+    draw_ops: Any = None,
     primary_rgb888: str = "",
     background_rgb888: str = "",
     source: str = "mcp_python",
@@ -1136,9 +1303,10 @@ def render_python_source_to_matrix_frame(
 ) -> Dict[str, Any]:
     normalized_python_source = python_source.strip()
     normalized_eval_source = eval_source.strip()
+    normalized_draw_ops = normalize_draw_ops(draw_ops, "ops")
 
-    if not normalized_python_source and not normalized_eval_source:
-        raise ValueError("python_source or eval_source is required")
+    if not normalized_python_source and not normalized_eval_source and not normalized_draw_ops:
+        raise ValueError("python_source, eval_source, or ops is required")
     if len(normalized_python_source) > MAX_DRAWING_SOURCE_CHARS:
         raise ValueError(f"python_source is too long; keep it under {MAX_DRAWING_SOURCE_CHARS} characters")
 
@@ -1255,6 +1423,8 @@ def render_python_source_to_matrix_frame(
             exec(compile(syntax_tree, "<matrix_draw_python>", "exec"), {"__builtins__": {}}, execution_scope)
         if normalized_eval_source:
             execute_matrix_eval_source(normalized_eval_source, execution_scope)
+        if normalized_draw_ops:
+            apply_draw_ops(draw_context, normalized_draw_ops)
     except Exception as exc:
         if isinstance(exc, ValueError):
             raise
@@ -1266,12 +1436,14 @@ def render_python_source_to_matrix_frame(
         primary_rgb888=primary_rgb888 or "#F5F5F5",
         background_rgb888=background_rgb888 or "#000000",
         source=source,
-        transcript=transcript or normalized_python_source or normalized_eval_source,
+        transcript=transcript or normalized_python_source or normalized_eval_source or "ops_draw",
         content_type="python_draw",
         python_source=normalized_python_source,
         eval_source=normalized_eval_source,
         label="python_draw",
     )
+    if normalized_draw_ops:
+        frame_payload["ops"] = normalized_draw_ops
     frame_payload["tool_name"] = "self.screen.matrix_16x16.draw_python"
     return frame_payload
 
@@ -1686,6 +1858,7 @@ def build_tool_list() -> list[Dict[str, Any]]:
                         "type": "string",
                         "description": "Optional compact bitmap field only. Exactly 64 hex characters = 16 rows x 2 bytes = 32 bitmap bytes. Bit 1 means LED on, bit 0 means off; rows are top to bottom, and the high bit in each 16-bit row is the leftmost LED. Together with primary_rgb888 and background_rgb888 it forms one 38-byte LED-ready frame.",
                     },
+                    "bitmap_ascii": build_bitmap_ascii_schema(),
                     "primary_rgb888": {
                         "type": "string",
                         "description": "Required with bitmap_rows_hex. Foreground color in #RRGGBB. Stored as RGB888 (3 bytes) after the 32-byte bitmap.",
@@ -1713,6 +1886,7 @@ def build_tool_list() -> list[Dict[str, Any]]:
                         "type": "string",
                         "description": "Restricted Python expression evaluated with eval(). Prefer this for comprehensions, conditional expressions, or other dynamic draw patterns. If both python_source and eval_source are provided, python_source runs first.",
                     },
+                    "ops": build_draw_python_ops_schema(),
                     "primary_rgb888": {
                         "type": "string",
                         "description": "Foreground color in #RRGGBB. All painted pixels use this color.",
@@ -1726,7 +1900,8 @@ def build_tool_list() -> list[Dict[str, Any]]:
                 },
                 "anyOf": [
                     {"required": ["python_source"]},
-                    {"required": ["eval_source"]}
+                    {"required": ["eval_source"]},
+                    {"required": ["ops"]}
                 ],
             },
         },
@@ -1771,7 +1946,7 @@ def build_tool_list() -> list[Dict[str, Any]]:
                     },
                     "frames": {
                         "type": "array",
-                        "description": "Alternative animation input. Each frame object must provide exactly one source: bitmap_rows_hex (64 hex), bitmap_rows (16 row values), or python_source/eval_source. This mode is recommended when LLM output is easier to express as row arrays or restricted Python drawing snippets.",
+                        "description": "Alternative animation input. Each frame object must provide exactly one source: bitmap_rows_hex (64 hex), bitmap_rows (16 row values), bitmap_ascii (16x16 ASCII), or python_source/eval_source/ops. This mode is recommended when LLM output is easier to express as row arrays, ASCII patterns, structured ops, or restricted Python drawing snippets.",
                         "minItems": 1,
                         "maxItems": 96,
                         "items": {
@@ -1784,13 +1959,47 @@ def build_tool_list() -> list[Dict[str, Any]]:
                                         "type": "string"
                                     }
                                 },
+                                "bitmap_ascii": build_bitmap_ascii_schema(),
                                 "python_source": {"type": "string"},
                                 "eval_source": {"type": "string"},
+                                "ops": build_draw_python_ops_schema(),
                                 "primary_rgb888": {"type": "string"},
                                 "background_rgb888": {"type": "string"},
                                 "transcript": {"type": "string"}
                             }
                         }
+                    },
+                    "image": {
+                        "type": "object",
+                        "description": "Base image source for effect-driven animation mode. Provide exactly one source: bitmap_rows_hex, bitmap_rows, bitmap_ascii, or python_source/eval_source/ops.",
+                        "properties": {
+                            "bitmap_rows_hex": {"type": "string"},
+                            "bitmap_rows": {
+                                "type": "array",
+                                "items": {"type": "string"}
+                            },
+                            "bitmap_ascii": build_bitmap_ascii_schema(),
+                            "python_source": {"type": "string"},
+                            "eval_source": {"type": "string"},
+                            "ops": build_draw_python_ops_schema(),
+                            "primary_rgb888": {"type": "string"},
+                            "background_rgb888": {"type": "string"},
+                            "transcript": {"type": "string"}
+                        }
+                    },
+                    "effect": {
+                        "type": "object",
+                        "description": "Effect parameters to synthesize animation from one base image. Supported names: blink, breathe, marquee, marquee_left, marquee_right.",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "frame_count": {"type": "integer", "minimum": 2, "maximum": 96},
+                            "duty_cycle": {"type": "number"},
+                            "step": {"type": "integer", "minimum": 1, "maximum": 16},
+                            "direction": {"type": "string"},
+                            "min_density": {"type": "number"},
+                            "max_density": {"type": "number"}
+                        },
+                        "required": ["name"]
                     },
                     "frame_interval_ms": {
                         "type": "integer",
@@ -1811,7 +2020,8 @@ def build_tool_list() -> list[Dict[str, Any]]:
                 },
                 "anyOf": [
                     {"required": ["bitmap_rows_hex_list"]},
-                    {"required": ["frames"]}
+                    {"required": ["frames"]},
+                    {"required": ["image", "effect"]}
                 ],
             },
         },
@@ -2231,6 +2441,7 @@ def handle_local_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Dict[st
         preset_name = str(arguments.get("preset", ""))
         matrix_frame_rgb332_hex = str(arguments.get("frame_rgb332_hex", ""))
         bitmap_rows_hex = str(arguments.get("bitmap_rows_hex", ""))
+        bitmap_ascii = arguments.get("bitmap_ascii")
         primary_rgb888 = str(arguments.get("primary_rgb888", ""))
         background_rgb888 = str(arguments.get("background_rgb888", "#000000"))
         normalized_frame_rgb332_hex = "".join(ch for ch in matrix_frame_rgb332_hex if ch.strip())
@@ -2240,9 +2451,11 @@ def handle_local_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Dict[st
 
         if str(bitmap_rows_hex).strip():
             normalized_bitmap_rows_hex = normalize_bitmap_rows_hex_value(bitmap_rows_hex, "bitmap_rows_hex")
+        elif bitmap_ascii not in (None, "", []):
+            normalized_bitmap_rows_hex = normalize_bitmap_ascii_value(bitmap_ascii, "bitmap_ascii")
 
         if not preset_name and not normalized_frame_rgb332_hex and not normalized_bitmap_rows_hex:
-            raise ValueError("Either preset, frame_rgb332_hex, or bitmap_rows_hex is required")
+            raise ValueError("Either preset, frame_rgb332_hex, bitmap_rows_hex, or bitmap_ascii is required")
         if preset_name and preset_name != "python_demo":
             raise ValueError(f"Unsupported preset: {preset_name}")
         if normalized_frame_rgb332_hex:
@@ -2304,6 +2517,7 @@ def handle_local_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Dict[st
         return render_python_source_to_matrix_frame(
             python_source=str(arguments.get("python_source", "")),
             eval_source=str(arguments.get("eval_source", "")),
+            draw_ops=arguments.get("ops"),
             primary_rgb888=str(arguments.get("primary_rgb888", "#F5F5F5")),
             background_rgb888=str(arguments.get("background_rgb888", "#000000")),
             source=str(arguments.get("source", "mcp_python")),
@@ -2327,12 +2541,14 @@ def handle_local_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Dict[st
         animation_sources = resolve_animation_bitmap_rows_hex_sources(
             bitmap_rows_hex_list=arguments.get("bitmap_rows_hex_list", []),
             frames=arguments.get("frames", []),
+            image=arguments.get("image"),
+            effect=arguments.get("effect"),
             primary_rgb888=resolved_primary_rgb888,
             background_rgb888=resolved_background_rgb888,
             source=resolved_source,
         )
 
-        return render_bitmap_animation_frame_sequence(
+        animation_result = render_bitmap_animation_frame_sequence(
             bitmap_rows_hex_list=animation_sources,
             primary_rgb888=resolved_primary_rgb888,
             background_rgb888=resolved_background_rgb888,
@@ -2340,6 +2556,13 @@ def handle_local_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Dict[st
             source=resolved_source,
             transcript=str(arguments.get("transcript", "")),
         )
+
+        if isinstance(arguments.get("effect"), dict):
+            animation_result["effect"] = arguments.get("effect")
+        if arguments.get("image") not in (None, "", []):
+            animation_result["effect_mode"] = "image_plus_effect"
+
+        return animation_result
 
     if tool_name in PROMPT_RENDER_TOOL_NAMES:
         return render_prompt_to_matrix_frame(
@@ -3469,60 +3692,15 @@ class HttpSnapshotServer:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description=(
-            "Run the local display MCP bridge: screenshot receiver, 16x16 drawing tools, debug websocket "
-            "transport, and AI-side preview helpers."
-        )
-    )
-    parser.add_argument(
-        "--url",
-        default=os.getenv("GP_MCP_URL", DEFAULT_MCP_URL),
-        help="MCP WebSocket endpoint, or use GP_MCP_URL",
-    )
-    parser.add_argument(
-        "--timeout",
-        type=float,
-        default=0.0,
-        help="Timeout in seconds for waiting on inbound messages. Use 0 to wait indefinitely.",
-    )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Print connection progress and raw responses",
-    )
-    parser.add_argument(
-        "--output-dir",
-        default=DEFAULT_SNAPSHOT_DIR,
-        help="Directory used to save captured screenshots.",
-    )
-    parser.add_argument(
-        "--http-host",
-        default=DEFAULT_HTTP_HOST,
-        help="HTTP host used for direct device snapshot uploads and local control.",
-    )
-    parser.add_argument(
-        "--http-port",
-        type=int,
-        default=DEFAULT_HTTP_PORT,
-        help="HTTP port used for direct device snapshot uploads and local control.",
-    )
-    parser.add_argument(
-        "--disable-http",
-        action="store_true",
-        help="Disable the local HTTP snapshot receiver and HTTP control endpoint.",
-    )
-    parser.add_argument(
-        "--ws-host",
-        default=DEFAULT_DEBUG_WS_HOST,
-        help="WebSocket host used for AI-side debug data transport.",
-    )
-    parser.add_argument(
-        "--ws-port",
-        type=int,
-        default=DEFAULT_DEBUG_WS_PORT,
-        help="WebSocket port used for AI-side debug data transport.",
-    )
+    parser = build_bridge_arg_parser({
+        "url": os.getenv("GP_MCP_URL", DEFAULT_MCP_URL),
+        "timeout": 0.0,
+        "output_dir": DEFAULT_SNAPSHOT_DIR,
+        "http_host": DEFAULT_HTTP_HOST,
+        "http_port": DEFAULT_HTTP_PORT,
+        "ws_host": DEFAULT_DEBUG_WS_HOST,
+        "ws_port": DEFAULT_DEBUG_WS_PORT,
+    })
     return parser.parse_args()
 
 

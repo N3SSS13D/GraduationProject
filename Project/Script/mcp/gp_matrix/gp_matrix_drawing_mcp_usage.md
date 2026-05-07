@@ -9,7 +9,7 @@
 Run the local MCP bridge with:
 
 ```bash
-python Project/Script/mcp/gp_matrix/gp_display_mcp_bridge.py --verbose
+python Project/Script/mcp/gp_matrix/gp_display_mcp_bridge.py
 ```
 
 Canonical LLM-facing entry: `Project/Script/mcp/gp_matrix/gp_display_mcp_bridge.py`
@@ -20,6 +20,25 @@ Related protocol docs:
 
 - `Project/Protocols/gp_led_matrix_protocol_spec.md`
 - `Project/Protocols/gp_matrix_pattern_protocol.md`
+
+### 0.1 Runtime Layout (Modularized)
+
+The bridge is now organized into independent modules while preserving the same LLM-facing tool names.
+
+1. `gp_display_mcp_bridge.py`
+Role: total entry script, direct run without extra arguments.
+
+2. `gp_mcp_endpoint_client.py`
+Role: MCP orchestration and tool dispatch.
+
+3. `gp_matrix_llm_inputs.py`
+Role: drawing-input normalization for LLM-friendly formats (`bitmap_ascii`, `ops`).
+
+4. `gp_bridge_mcp_service.py`
+Role: MCP schema helper blocks shared by tools.
+
+5. `gp_bridge_transport_service.py`
+Role: transport/runtime argument parser builder.
 
 ## 1. Slice Index (For Auto-Segmented LLM Reading)
 
@@ -73,6 +92,11 @@ Use this template when a topic must never be answered directly and always requir
   - `32-byte bitmap` + `3-byte primary RGB888` + `3-byte background RGB888`.
 - `bitmap_rows_hex` is only the bitmap portion.
   - Canonical form: exactly `64` hex characters (`16 rows x 16 bits = 32 bytes`).
+- `bitmap_ascii` is an LLM-friendly alias for one frame:
+  - exactly `16` rows x `16` chars.
+  - on-pixels: `1/#/X/*/@`; off-pixels: `0/./_/-/space`.
+- `ops` is an LLM-friendly structured draw list:
+  - each item includes `op` and operation-specific numeric fields.
 - Bitmap semantics are fixed:
   - `1 = LED on`, `0 = LED off`.
   - Rows are `top -> bottom`.
@@ -102,7 +126,7 @@ Use this template when a topic must never be answered directly and always requir
 
 Use when generating one frame from restricted drawing logic.
 
-#### Input
+#### Input (show_text)
 
 ```json
 {
@@ -115,7 +139,37 @@ Use when generating one frame from restricted drawing logic.
 }
 ```
 
-At least one of `python_source` or `eval_source` is required.
+At least one of `python_source`, `eval_source`, or `ops` is required.
+
+#### LLM-safe structured mode (`ops`)
+
+```json
+{
+  "ops": [
+    {"op": "clear", "fill": 0},
+    {"op": "line", "x0": 0, "y0": 0, "x1": 15, "y1": 15, "width": 1},
+    {"op": "line", "x0": 15, "y0": 0, "x1": 0, "y1": 15, "width": 1},
+    {"op": "fill_circle", "cx": 8, "cy": 8, "radius": 2}
+  ],
+  "primary_rgb888": "#00FF66",
+  "background_rgb888": "#000000",
+  "source": "mcp_python",
+  "transcript": "draw X plus center circle"
+}
+```
+
+Supported `op` values:
+
+- `clear`
+- `point`
+- `line`
+- `rectangle`
+- `fill_rectangle`
+- `ellipse`
+- `fill_ellipse`
+- `circle`
+- `fill_circle`
+- `polygon`
 
 #### Execution model
 
@@ -144,7 +198,7 @@ At least one of `python_source` or `eval_source` is required.
 
 Use when each character should become one frame.
 
-#### Input
+#### Input (draw_frame)
 
 ```json
 {
@@ -190,21 +244,36 @@ Each frame must provide exactly one source:
 
 - `bitmap_rows_hex`
 - `bitmap_rows` (16 row tokens)
-- `python_source` / `eval_source`
+- `bitmap_ascii` (16 lines x 16 chars)
+- `python_source` / `eval_source` / `ops`
 
 ```json
 {
   "frames": [
     {
-      "bitmap_rows": [
-        "0000", "0000", "0000", "0000",
-        "0000", "0000", "0000", "0000",
-        "0000", "0000", "0000", "0000",
-        "0000", "0000", "0000", "0000"
+      "bitmap_ascii": [
+        "................",
+        "................",
+        "....######......",
+        "...########.....",
+        "..###....###....",
+        "..##......##....",
+        "..##......##....",
+        "..###....###....",
+        "...########.....",
+        "....######......",
+        "................",
+        "................",
+        "................",
+        "................",
+        "................",
+        "................"
       ]
     },
     {
-      "python_source": "fill_rectangle(0, 0, 15, 15)",
+      "ops": [
+        {"op": "fill_rectangle", "x0": 0, "y0": 0, "x1": 15, "y1": 15}
+      ],
       "primary_rgb888": "#00FF00",
       "background_rgb888": "#000000"
     }
@@ -217,9 +286,68 @@ Each frame must provide exactly one source:
 }
 ```
 
+#### Input mode C: `image + effect` (AI-side effect synthesis)
+
+Use this when LLM has one base image and wants animation by effect parameters.
+
+```json
+{
+  "image": {
+    "bitmap_ascii": [
+      "................",
+      "................",
+      "....######......",
+      "...########.....",
+      "..###....###....",
+      "..##......##....",
+      "..##......##....",
+      "..###....###....",
+      "...########.....",
+      "....######......",
+      "................",
+      "................",
+      "................",
+      "................",
+      "................",
+      "................"
+    ]
+  },
+  "effect": {
+    "name": "marquee_left",
+    "frame_count": 16,
+    "step": 1
+  },
+  "frame_interval_ms": 70,
+  "primary_rgb888": "#00FF88",
+  "background_rgb888": "#000000",
+  "source": "mcp_animation",
+  "transcript": "image plus marquee effect"
+}
+```
+
+Supported `effect.name`:
+
+- `blink`
+- `breathe`
+- `marquee`
+- `marquee_left`
+- `marquee_right`
+
+Effect parameter notes:
+
+- `frame_count`: generated animation frame count.
+- `duty_cycle`: blink on-ratio (0..1).
+- `step`: marquee shift step per frame.
+- `direction`: optional for `marquee` (`left` or `right`).
+- `min_density`/`max_density`: breathe density range (0..1).
+
 #### Compatibility fallback
 
 If `bitmap_rows_hex_list` itself is exactly `16` row tokens, bridge treats it as one frame.
+
+If a frame uses `bitmap_ascii`, bridge normalizes it to canonical `bitmap_rows_hex` before transport.
+
+If `image + effect` is used, bridge synthesizes frames on AI-side path before LED-side buffered playback.
 
 #### Hard constraints
 
@@ -253,6 +381,7 @@ Use when you already have final frame data.
 #### Contract
 
 - `bitmap_rows_hex`: exactly `64` hex chars.
+- `bitmap_ascii`: accepted as alias, normalized to `bitmap_rows_hex`.
 - `frame_rgb332_hex`: exactly `512` hex chars (if used instead).
 
 ### 4.5 `self.screen.matrix_16x16.render_prompt`
@@ -346,6 +475,79 @@ All templates below are safe defaults for direct LLM use.
       { "python_source": "clear(0); fill_rectangle(14, 0, 14, 15)" },
       { "python_source": "clear(0); fill_rectangle(15, 0, 15, 15)" }
     ]
+  }
+}
+```
+
+### 5.4 Template: Image + Blink Effect (Direct LLM Call)
+
+```json
+{
+  "tool": "self.screen.matrix_16x16.draw_animation",
+  "arguments": {
+    "image": {
+      "python_source": "clear(0); fill_circle(8, 8, 5)"
+    },
+    "effect": {
+      "name": "blink",
+      "frame_count": 12,
+      "duty_cycle": 0.5
+    },
+    "frame_interval_ms": 160,
+    "primary_rgb888": "#3DDC97",
+    "background_rgb888": "#000000",
+    "source": "mcp_animation",
+    "transcript": "image blink effect"
+  }
+}
+```
+
+### 5.5 Template: Image + Breathe Effect (Direct LLM Call)
+
+```json
+{
+  "tool": "self.screen.matrix_16x16.draw_animation",
+  "arguments": {
+    "image": {
+      "ops": [
+        {"op": "clear", "fill": 0},
+        {"op": "fill_circle", "cx": 8, "cy": 8, "radius": 5}
+      ]
+    },
+    "effect": {
+      "name": "breathe",
+      "frame_count": 16,
+      "min_density": 0.2,
+      "max_density": 1.0
+    },
+    "frame_interval_ms": 100,
+    "primary_rgb888": "#00FF88",
+    "background_rgb888": "#000000",
+    "source": "mcp_animation",
+    "transcript": "image breathe effect"
+  }
+}
+```
+
+### 5.6 Template: Image + Marquee Effect (Direct LLM Call)
+
+```json
+{
+  "tool": "self.screen.matrix_16x16.draw_animation",
+  "arguments": {
+    "image": {
+      "bitmap_rows_hex": "018003c007e00ff01ff83ffc7ffe3ffc1ff80ff007e003c00180"
+    },
+    "effect": {
+      "name": "marquee_right",
+      "frame_count": 16,
+      "step": 1
+    },
+    "frame_interval_ms": 70,
+    "primary_rgb888": "#00FF00",
+    "background_rgb888": "#000000",
+    "source": "mcp_animation",
+    "transcript": "image marquee effect"
   }
 }
 ```
