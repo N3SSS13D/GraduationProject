@@ -309,7 +309,134 @@ idf.py -p COM17 -b 115200 build flash monitor
 
 由此可以看出，主机脚本真正解决的问题不是“替代蓝牙驱动”，而是“把多种人类友好输入统一转换为下游可执行的数据对象”。
 
-## 9. 本章小结
+## 9. 核心实现流程图
+
+以下流程图以 Mermaid 格式描述本地绘图脚本各关键环节的实现逻辑。
+
+### 9.1 桥接服务总体架构
+
+```mermaid
+flowchart TD
+    ENTRY["gp_display_mcp_bridge.py<br/>启动入口"] --> MAIN["gp_mcp_endpoint_client.py<br/>主服务进程"]
+
+    MAIN --> MCP["McpWebSocketClient<br/>MCP客户端<br/>wss://api.xiaozhi.me/mcp/"]
+    MAIN --> BRIDGE["McpBridgeServer<br/>桥接控制器<br/>(核心调度器)"]
+    MAIN --> WS["LocalDebugWebSocketServer<br/>本地WS服务 :8766/debug"]
+    MAIN --> HTTP["HttpSnapshotServer<br/>HTTP控制服务 :8765"]
+
+    BRIDGE --> TOOLS["注册本地工具:<br/>draw_frame / draw_python<br/>show_text / draw_animation<br/>render_prompt"]
+    BRIDGE --> DISPATCH["_handle_message()<br/>JSON-RPC消息分发"]
+    DISPATCH --> CALLS{"消息类型"}
+    CALLS -->|"initialize/ping"| PONG["响应握手"]
+    CALLS -->|"tools/list"| LIST["返回工具schema<br/>(build_draw_python_ops_schema<br/>+build_bitmap_ascii_schema)"]
+    CALLS -->|"tools/call"| EXEC["handle_local_tool_call()<br/>执行本地绘图逻辑"]
+
+    HTTP --> STATUS["/status 状态查询"]
+    HTTP --> MATRIX["/control/matrix_16x16<br/>/control/matrix_prompt_16x16<br/>直接提交矩阵控制请求"]
+    HTTP --> SNAPSHOT["/snapshot 接收截图上传<br/>/control/snapshot 请求截图"]
+    HTTP --> GENERATED["/generated/... 提供生成预览图"]
+```
+
+### 9.2 输入归一化管道
+
+```mermaid
+flowchart TD
+    INPUT["多种输入来源"] --> ROUTE{"输入类型判别"}
+
+    ROUTE -->|"prompt自然语言"| PR["render_prompt_to_matrix_frame()"]
+    ROUTE -->|"Python绘图语句"| PY["render_python_source_to_matrix_frame()"]
+    ROUTE -->|"draw_ops结构化操作"| OPS["apply_draw_ops()"]
+    ROUTE -->|"bitmap_ascii文本"| ASC["normalize_bitmap_ascii_value()"]
+    ROUTE -->|"bitmap_rows_hex"| HEX["normalize_bitmap_rows_hex_value()"]
+    ROUTE -->|"文本字符串"| TXT["render_text_to_matrix_frame_sequence()"]
+    ROUTE -->|"多帧动画"| ANIM["render_bitmap_animation_frame_sequence()"]
+
+    PR --> PR_DET["颜色关键词识别<br/>+图案模板匹配<br/>(爱心/笑脸/菱形/十字等)"]
+    PY --> PY_DET["AST白名单过滤<br/>→PIL 1-bit画布<br/>→受限绘图执行"]
+    OPS --> OPS_DET["point/line/rectangle<br/>circle/ellipse/polygon<br/>→PIL ImageDraw"]
+    ASC --> ASC_DET["16行×16字符→<br/>packed hex string"]
+    HEX --> HEX_DET["标准64 hex<br/>或16行16-bit token<br/>→统一归一化"]
+    TXT --> TXT_DET["选字体→逐字16x16位图<br/>→帧序列"]
+    ANIM --> ANIM_DET["归一化帧列表<br/>≥24帧→重采样<br/>调整frame_interval_ms"]
+
+    PR_DET --> BUILD["build_matrix_frame_payload_from_bitmap_rows()"]
+    PY_DET --> BUILD
+    OPS_DET --> BUILD
+    ASC_DET --> BUILD
+    HEX_DET --> BUILD
+    TXT_DET --> BUILD2["构建matrix_frame_sequence_v1"]
+    ANIM_DET --> BUILD2
+
+    BUILD --> SINGLE["matrix_frame_v1<br/>bitmap_rows_hex(64hex)<br/>+frame_rgb332_hex(512hex)<br/>+primary_rgb888+bg_rgb888"]
+    BUILD2 --> SEQ["matrix_frame_sequence_v1<br/>frames[]+frame_count<br/>+frame_interval_ms"]
+```
+
+### 9.3 结果投递双路径
+
+```mermaid
+flowchart TD
+    RESULT["生成结果对象<br/>(matrix_frame_v1<br/>或 matrix_frame_sequence_v1)"] --> CHECK{"Debug WebSocket<br/>可用?"}
+
+    CHECK -->|"YES 主路径"| WS_DELIVER["deliver_matrix_payload_via_debug_ws()"]
+    CHECK -->|"NO 回退路径"| HTTP_FB["HTTP预览回退路径"]
+
+    WS_DELIVER --> WS_TYPE{"单帧/序列?"}
+    WS_TYPE -->|"单帧"| WS_SINGLE["发送 matrix_pattern_result<br/>{bitmap_rows_hex, primary_rgb888,<br/>background_rgb888}"]
+    WS_TYPE -->|"序列"| WS_SEQ["发送 matrix_animation_start<br/>→逐帧 matrix_pattern_result<br/>→matrix_animation_end"]
+
+    HTTP_FB --> GEN["根据frame_rgb332_hex<br/>生成本地PNG预览图"]
+    GEN --> SAVE["保存到 output/generated/"]
+    SAVE --> FETCH["构造HTTP URL<br/>→fetch_http请求AI端拉取<br/>POST /debug/preview_image"]
+
+    WS_SINGLE --> AI["AI端接收→LCD预览<br/>→蓝牙转发→LED显示"]
+    WS_SEQ --> AI
+    FETCH --> AI
+```
+
+### 9.4 受限 Python 绘图安全模型
+
+```mermaid
+flowchart TD
+    SRC["用户/LLM提交Python源码"] --> PARSE["ast.parse()"]
+    PARSE --> COUNT{"AST节点数<br/>≤限制?"}
+    COUNT -->|"NO"| REJ1["拒绝: 代码过长"]
+    COUNT -->|"YES"| WALK["遍历AST节点"]
+
+    WALK --> WHITE{"节点类型<br/>在白名单?"}
+    WHITE -->|"NO (如Import/Call/Attribute)"| REJ2["拒绝: 不允许的操作"]
+    WHITE -->|"YES"| ALLOWED["允许: Assign/For/If/Expr<br/>+受限Call(point/line/...)"]
+
+    ALLOWED --> EXEC["exec()在受限命名空间<br/>16x16 PIL Image上下文"]
+    EXEC --> MASK["PIL Image→1-bit掩码<br/>→16行uint16_t位图"]
+    MASK --> BUILD["→build_matrix_frame_payload_from_bitmap_rows()"]
+```
+
+### 9.5 联调自动化流程
+
+```mermaid
+flowchart TD
+    START["ws2812_auto_debug.py"] --> VERIFY["verify_toolchain()"]
+    VERIFY --> VK["检查 UV4.exe (Keil)"]
+    VERIFY --> VE["检查 export.bat (ESP-IDF)"]
+    VERIFY --> VI["检查 idf.py"]
+
+    VK --> ALLOK{"工具链完整?"}
+    VE --> ALLOK
+    VI --> ALLOK
+    ALLOK -->|"NO"| ABORT["报错退出"]
+    ALLOK -->|"YES"| KEIL["run_keil_rebuild()<br/>UV4.exe -b ws2812_driver.uvproj<br/>-t ws2812_driver -j0"]
+
+    KEIL --> KRESULT{"编译成功?"}
+    KRESULT -->|"FAIL"| ABORT2["报告编译错误"]
+    KRESULT -->|"OK"| THREAD["后台线程: 延时20s<br/>→打开COM15 STC串口监视"]
+
+    THREAD --> ESP["ESP-IDF build flash monitor"]
+    ESP --> ESPCMD["cmd.exe: export.bat &&<br/>idf.py -p COM17 -b 115200<br/>build flash monitor"]
+
+    ESPCMD --> DUAL["双端联调就绪<br/>LED端串口输出+AI端监视<br/>同时可见"]
+```
+
+## 10. 本章小结
 
 从软件结构上看，本地绘图脚本部分具有以下特点：
 

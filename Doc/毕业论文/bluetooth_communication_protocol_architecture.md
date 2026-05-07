@@ -309,7 +309,174 @@ Reply
 
 这些约束共同保证了协议不仅“能跑通”，而且“能在多端演进中保持一致”。
 
-## 8. 本章小结
+## 8. 协议核心流程图
+
+以下流程图以 Mermaid 格式描述蓝牙通信协议各关键环节的实现逻辑。
+
+### 8.1 数据包结构
+
+```mermaid
+flowchart LR
+    subgraph Packet["完整协议包"]
+        direction TB
+        HDR["Header (12 bytes)"]
+        PAY["Payload (N bytes, 可变)"]
+        TRL["Trailer (2 bytes)"]
+    end
+
+    subgraph Header["Header字段详解"]
+        direction LR
+        M0["magic0<br/>0x47"] --- M1["magic1<br/>0x50"] ---
+        VER["version<br/>0x02"] --- HSZ["header_size<br/>12"] ---
+        PT["packet_type<br/>0x01=Req<br/>0x02=Reply"] ---
+        FLG["flags<br/>bit0=ACK_REQUIRED<br/>bit1=LOCAL_LINK"] ---
+        SEQ["sequence<br/>请求序号(0-255)"] ---
+        RSQ["reply_to_sequence<br/>Reply对应原序号"] ---
+        PLEN["payload_length<br/>2B, LE"] ---
+        CMD["command<br/>命令字"] ---
+        HCRC["header_crc8<br/>前11B校验"]
+    end
+```
+
+### 8.2 Request/Reply 事务模型
+
+```mermaid
+flowchart TD
+    subgraph SendSide["AI端发送侧"]
+        S1["SendCommand(cmd, payload, needAck)"] --> S2["生成sequence_++"]
+        S2 --> S3["组装Header:<br/>packet_type=Request<br/>flags|=ACK_REQUIRED(可选)"]
+        S3 --> S4["BuildPacketHeader()<br/>写入magic/version/size/seq/cmd/len"]
+        S4 --> S5["计算header_crc8(前11B)"]
+        S5 --> S6["计算packet_crc16(header+payload)"]
+        S6 --> S7["WritePacket()→HC-05"]
+    end
+
+    subgraph RecvSide["LED端接收侧"]
+        R1["逐字节收包→找魔数"] --> R2["校验header_crc8"]
+        R2 --> R3["校验packet_crc16"]
+        R3 --> R4["ProcessPacket()执行命令"]
+        R4 --> R5{"flags含ACK_REQUIRED?"}
+    end
+
+    subgraph ReplyFlow["Reply构造与匹配"]
+        RP1["BuildReply()<br/>packet_type=Reply<br/>reply_to_sequence=原seq<br/>command=原cmd回显"]
+        RP2["3B负载:<br/>status+detail+current_mode"]
+        RP3["AI端ReadReply()<br/>逐项匹配:seq+cmd+crc"]
+    end
+
+    S7 --> R1
+    R5 -->|"YES"| RP1
+    RP1 --> RP2 --> RP3
+    RP3 -->|"匹配成功"| S8["事务完成"]
+```
+
+### 8.3 RGB332 整帧分片传输事务
+
+```mermaid
+flowchart TD
+    F1["FrameStart (5B负载)"] --> F1a["format=0x01 RGB332<br/>width=16 height=16<br/>total_bytes=256 (LE)"]
+    F1a --> FC1["FrameChunk #1<br/>offset=0, size=64, data[0..63]"]
+    FC1 --> FC2["FrameChunk #2<br/>offset=64, size=64, data[64..127]"]
+    FC2 --> FC3["FrameChunk #3<br/>offset=128, size=64, data[128..191]"]
+    FC3 --> FC4["FrameChunk #4<br/>offset=192, size=64, data[192..255]"]
+    FC4 --> FCOM["FrameCommit (2B负载)<br/>mode=display_mode"]
+    FCOM --> ACK["LED端组装完整256B帧<br/>→写ImageBuf→EncodeAllRows()<br/>→Reply(OK)"]
+
+    subgraph Chunk["FrameChunk负载结构"]
+        direction LR
+        OFFL["byte_offset_lo(1)"] --- OFFH["byte_offset_hi(1)"] ---
+        SZ["size(1)"] --- DAT["data(≤64B)"]
+    end
+
+    FC1 -.- Chunk
+```
+
+### 8.4 紧凑位图单帧传输
+
+```mermaid
+flowchart TD
+    BITMAP["ShowBitmapFrame()"] --> PACK["PackBitmapFramePayload()"]
+    PACK --> STRUCT["16行×2B位图=32B<br/>+ fg_rgb888(3B)<br/>+ bg_rgb888(3B)<br/>= 38字节总计"]
+    STRUCT --> COMPARE["vs RGB332 256字节<br/>压缩率: 38/256 = 14.8%"]
+
+    STRUCT --> TX["FrameStart→FrameChunk(38B)→FrameCommit"]
+    TX --> ACKSTRAT["仅FrameCommit等ACK<br/>Start和Chunk不等ACK"]
+
+    subgraph LEDSide["LED端处理"]
+        L1["解包: 逐行位图→16x16掩码"]
+        L2["掩码=1→fg_rgb888<br/>掩码=0→bg_rgb888"]
+        L3["→写ImageBuf→EncodeAllRows()<br/>→Reply"]
+    end
+
+    TX --> L1 --> L2 --> L3
+```
+
+### 8.5 动画批次事务
+
+```mermaid
+flowchart TD
+    ANIM["ShowBitmapAnimation()"] --> CHECK{"帧数≤24?"}
+    CHECK -->|"YES"| AS["AnimationStart(5B负载)<br/>format=0x03 BITMAP_RGB888<br/>frame_count, frame_interval_ms<br/>flags(循环标志)"]
+    CHECK -->|"超额"| HOST ["主机侧重采样"]
+
+    AS --> LOOP["逐帧发送 AnimationFrame"]
+    LOOP --> FRAME["每帧:<br/>frame_index(1B)<br/>+38B紧凑位图负载"]
+    FRAME --> MORE{"还有帧?"}
+    MORE -->|"YES"| LOOP
+    MORE -->|"NO"| AE["AnimationEnd (1B frame_count)"]
+
+    AE --> LEDPROC["LED端处理"]
+    LEDPROC --> CACHE["缓存全部帧到动画缓冲"]
+    CACHE --> PLAY["GpLedAction_Tick1ms()<br/>按frame_interval_ms切换帧"]
+    PLAY --> LOOPCHK{"循环?"}
+    LOOPCHK -->|"YES"| PLAY
+    LOOPCHK -->|"NO"| DONE["动画播放完毕→Reply"]
+```
+
+### 8.6 命令集合与分类
+
+```mermaid
+flowchart LR
+    subgraph CMD["协议命令集"]
+        direction TB
+
+        subgraph Link["链路控制"]
+            L1["Ping (0x01)"]
+            L2["Heartbeat (0x30)"]
+        end
+
+        subgraph Config["参数配置"]
+            C1["SetBrightness (0x02)"]
+            C2["SetMode (0x03)"]
+            C3["SetAction (0x05)<br/>18B动作对象"]
+            C4["StateHint (0x04)"]
+        end
+
+        subgraph Frame["图像传输"]
+            I1["FrameStart (0x10)"]
+            I2["FrameChunk (0x11)"]
+            I3["FrameCommit (0x12)"]
+        end
+
+        subgraph Anim["动画/字模"]
+            A1["AnimationStart (0x13)"]
+            A2["AnimationFrame (0x14)"]
+            A3["AnimationEnd (0x15)"]
+            A4["ScrollGlyphStart (0x20)"]
+            A5["ScrollGlyphChunk (0x21)"]
+            A6["ScrollGlyphCommit (0x22)"]
+        end
+
+        subgraph Debug["调试"]
+            D1["SetDebugLed (0x06)"]
+            D2["SetDebugLedFlow (0x07)"]
+        end
+    end
+
+    CMD --> REPLY["统一Reply:<br/>status(OK/Busy/Unsupported/<br/>BadChecksum/BadSequence/<br/>BadLength/InternalError)<br/>+detail+current_mode"]
+```
+
+## 9. 本章小结
 
 综合来看，本项目的蓝牙通信协议具有以下特点：
 

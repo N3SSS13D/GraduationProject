@@ -339,7 +339,129 @@ FrameStart -> FrameChunk -> FrameCommit
 
 `LED端` 收到事务后完成缓存写入和显示提交，再回复带 `reply_to_sequence` 的 ACK 包。`AI端` 匹配成功后更新链路状态面板，至此形成完整的“主机生成 -> AI 端预览 -> 蓝牙转发 -> LED 端执行 -> ACK 回报”闭环。
 
-## 10. 本章小结
+## 10. 核心实现流程图
+
+以下流程图以 Mermaid 格式描述 AI 端接口调度各关键环节的实现逻辑。
+
+### 10.1 系统启动与初始化流程
+
+```mermaid
+flowchart TD
+    BOARD["LichuangDevBoard构造"] --> LCD["InitializeSt7789Display()<br/>创建GpDebugLcdDisplay<br/>触摸屏+LCD调试界面"]
+    BOARD --> CMDTASK["InitializeDebugCommandTask()<br/>创建后台命令队列+RunDebugCommandTask()"]
+    BOARD --> MATRIX["InitializeLedMatrix()"]
+
+    MATRIX --> HC05["ConfigureBluetoothModule()<br/>AT指令: 名称/PIN/角色/绑定<br/>切换到数据传输波特率"]
+    HC05 --> TRANS["CreateGpMatrixBtUartTransport()<br/>UART驱动+后台RunRxTask()"]
+    TRANS --> CORE["new GpLedMatrixEsp32(transport)<br/>矩阵控制器核心"]
+    CORE --> CB["注册3组回调到UI"]
+    CB --> CB1["SetMatrixDebugStateCallback<br/>→QueueMatrixDebugState()"]
+    CB --> CB2["SetDebugSnapshotCallback<br/>→QueueDebugSnapshotCapture()"]
+    CB --> CB3["SetTouchCommandCallback<br/>→QueueDebugWebsocketTouchCommand()"]
+    CB1 --> SELF["RunStartupLinkTest()<br/>红→绿→蓝→释放<br/>验证蓝牙链路可达"]
+```
+
+### 10.2 本地触摸调试路径
+
+```mermaid
+flowchart TD
+    TOUCH["用户触摸LCD按钮<br/>(颜色/效果/图案)"] --> STATE["GpDebugLcdDisplay<br/>生成GpColorDebugState"]
+    STATE --> CB["回调→QueueMatrixDebugState()<br/>入队调试命令队列"]
+    CB --> TASK["RunDebugCommandTask()<br/>后台FreeRTOS任务取出"]
+    TASK --> SHOW["GpLedMatrixEsp32::ShowDebugState()"]
+    SHOW --> CONV["转换为GpMatrixActionPayload<br/>(18字节定长动作对象)"]
+    CONV --> SEND["SendCommand(kGpMatrixCommandSetAction, ...)"]
+    SEND --> BUILD["BuildPacketHeader()<br/>魔数+版本+序号+CRC8<br/>+负载+packet_crc16"]
+    BUILD --> WRITE["GpMatrixBtUartTransport::WritePacket()<br/>uart_write_bytes()→HC-05"]
+    WRITE --> ACK{"需要ACK?"}
+    ACK -->|"YES"| READ["ReadReply()<br/>轮询匹配(≤12次×8ms)"]
+    ACK -->|"NO"| DONE["发送完成"]
+    READ --> MATCH{"reply_to_sequence<br/>+command+crc?"}
+    MATCH -->|"OK"| NOTIFY["NotifyLinkStatus()<br/>→UI链路状态更新"]
+    MATCH -->|"FAIL"| RETRY{"超过最大重试?"}
+    RETRY -->|"NO"| READ
+    RETRY -->|"YES"| FAIL["链路失败通知"]
+```
+
+### 10.3 WebSocket 绘图与动画转发路径
+
+```mermaid
+flowchart TD
+    WS["Debug WebSocket消息到达"] --> PARSE["HandleDebugWebsocketMessage()<br/>解析JSON消息"]
+    PARSE --> TYPE{"消息类型?"}
+
+    TYPE -->|"hello/touch_state"| DBG["调试链路控制消息<br/>→日志记录"]
+    TYPE -->|"matrix_pattern_result"| SINGLE["解析单帧:<br/>bitmap_rows_hex(64hex)<br/>+primary_rgb888+bg_rgb888"]
+    TYPE -->|"matrix_animation_start"| ANIMSTART["BeginPendingMatrixAnimation()<br/>分配暂存区<br/>frame_count+frame_interval_ms"]
+    TYPE -->|"matrix_animation_end"| ANIMEND["检查帧收齐→<br/>ShowBitmapAnimation()"]
+
+    SINGLE --> PREVIEW["LCD本地预览<br/>ApplyMatrixBitmapPreview()"]
+    SINGLE --> BT1["ShowBitmapFrame()<br/>38字节紧凑位图"]
+    BT1 --> FS1["FrameStart→FrameChunk<br/>→FrameCommit(ACK)"]
+
+    ANIMSTART --> RCV["逐帧接收matrix_pattern_result<br/>→缓存→LCD动画预览"]
+    RCV --> ANIMEND
+    ANIMEND --> BT2["AnimationStart<br/>→AnimationFrame×N<br/>→AnimationEnd→ACK"]
+
+    PREVIEW --> LED["LED端接收→编码→显示"]
+    BT1 --> LED
+    BT2 --> LED
+```
+
+### 10.4 传输层后台收包与ACK匹配
+
+```mermaid
+flowchart TD
+    subgraph RX["后台RX任务"]
+        TASK1["RunRxTask()<br/>FreeRTOS任务 栈4K prio5"] --> WAIT["等待UART_DATA事件"]
+        WAIT --> PUMP["PumpRxBytes()→rx_buffer_"]
+        PUMP --> EXTRACT["TryExtractPacket()"]
+        EXTRACT --> FIND["扫描魔数0x47 0x50"]
+        FIND --> HCRC{"header_crc8?"}
+        HCRC -->|"FAIL"| FIND
+        HCRC -->|"OK"| WAIT2["等payload+CRC16收齐"]
+        WAIT2 --> PCRC{"packet_crc16?"}
+        PCRC -->|"FAIL"| FIND
+        PCRC -->|"OK"| QUEUE["完整包→packet_queue_(16深度)<br/>Reply优先保留策略"]
+    end
+
+    subgraph ACKMATCH["ACK同步匹配"]
+        SR["SendCommand()需要ACK"] --> DELAY["短暂延时→ReadReply()"]
+        DELAY --> POPQ["从packet_queue_读包"]
+        POPQ --> CHK{"校验magic/version<br/>header_crc8?"}
+        CHK -->|"FAIL"| RETRY["重试(≤12次×8ms)"]
+        CHK -->|"OK"| CHK2{"reply_to_sequence<br/>==sequence?"}
+        CHK2 -->|"NO"| RETRY
+        CHK2 -->|"YES"| CHK3{"command回显?"}
+        CHK3 -->|"NO"| RETRY
+        CHK3 -->|"YES"| CHK4{"packet_crc16?"}
+        CHK4 -->|"OK"| OK["解析status/detail<br/>/current_mode"]
+        CHK4 -->|"FAIL"| RETRY
+        RETRY -->|"超限"| FAIL2["链路失败"]
+        OK --> UI["NotifyLinkStatus()→UI"]
+    end
+```
+
+### 10.5 链路状态与远程接管判定
+
+```mermaid
+flowchart TD
+    EVENT["ACK返回 / 超时 / 发送失败"] --> UPDATE["NotifyLinkStatus()"]
+    UPDATE --> SET["link_verified_ = true/false"]
+    SET --> CB["link_status_callback_()<br/>→GpDebugLcdDisplay UI"]
+
+    CB --> STATUS{"link_verified_?"}
+    STATUS -->|"true"| GREEN["绿灯: 链路在线"]
+    STATUS -->|"false"| RED["红灯: 链路断开"]
+
+    GREEN --> CHECK{"remote_override_active_?"}
+    CHECK -->|"YES"| REMOTE["远程接管显示<br/>本地Draw调度暂停"]
+    CHECK -->|"NO"| LOCAL["链路在线但本地控制<br/>本地离线显示继续"]
+
+    RED --> LOCAL2["仅本地离线显示工作"]
+```
+
+## 11. 本章小结
 
 从软件结构上看，`AI端` 的价值不在于直接生成底层 PWM 数据，而在于充当整个系统的软件中枢：
 

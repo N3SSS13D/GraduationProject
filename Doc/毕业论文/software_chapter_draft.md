@@ -23,6 +23,81 @@
 
 这种分层结构的核心优点在于：每个部分都围绕单一职责展开，同时又通过共享协议和清晰的接口边界保证了整体协同。换言之，系统不是由若干彼此耦合的脚本和驱动拼凑而成，而是由“主机生成层、调度控制层、协议层、驱动执行层”四个层次稳定衔接而成。
 
+### 1.1 系统总体架构流程图
+
+```mermaid
+flowchart TD
+    subgraph HostLayer["主机侧: 本地绘图脚本"]
+        H1["MCP桥接服务<br/>gp_mcp_endpoint_client.py"]
+        H2["输入归一化管道<br/>prompt/Python/文本/位图/动画"]
+        H3["结果投递<br/>Debug WebSocket / HTTP预览"]
+        H4["联调自动化<br/>ws2812_auto_debug.py"]
+    end
+
+    subgraph AILayer["AI端: ESP32接口调度"]
+        A1["板级接入层<br/>lichuang_dev_board.cc"]
+        A2["本地调试UI<br/>GpDebugLcdDisplay<br/>触摸/LCD/状态面板"]
+        A3["矩阵编排核心<br/>GpLedMatrixEsp32<br/>动作打包/ACK匹配"]
+        A4["蓝牙传输层<br/>GpMatrixBtUartTransport<br/>UART+后台RX任务"]
+        A5["HTTP预览+WebSocket<br/>矩阵结果接收与缓存"]
+    end
+
+    subgraph ProtoLayer["蓝牙通信协议"]
+        P1["共享协议头<br/>gp_led_matrix_protocol.h"]
+        P2["二进制包格式<br/>Header(12B)+Payload+CRC16"]
+        P3["事务语义<br/>Request/Reply + ACK匹配"]
+        P4["传输格式<br/>RGB332整帧/紧凑位图/动画批次"]
+    end
+
+    subgraph LEDLayer["LED端: AI8051U显示驱动"]
+        L1["通信接入层<br/>UART2收包+CBC校验"]
+        L2["动作控制层<br/>GpLedAction<br/>本地/远程显示切换"]
+        L3["图像渲染层<br/>DrawDrv<br/>图案/文字/特效"]
+        L4["PWM+DMA驱动层<br/>WS2812波形输出<br/>双行扫描刷新"]
+        L5["74HC595行选<br/>16×16 WS2812点阵"]
+    end
+
+    H3 -->|"WebSocket: matrix_pattern_result<br/>HTTP回退: PNG预览拉取"| A5
+    A5 --> A3
+    A2 -->|"触摸输入→GpColorDebugState<br/>→后台命令队列"| A3
+    A3 -->|"动作对象/帧数据<br/>+ACK请求"| A4
+    A4 -->|"HC-05 UART<br/>经典蓝牙SPP"| P2
+    P2 --> L1
+    L1 -->|"解析命令+ACK回复"| L2
+    L2 -->|"配置显示参数"| L3
+    L2 -->|"直写帧/动画缓存"| L4
+    L3 -->|"RebuildFrame()"| L4
+    L4 -->|"双路PWM波形"| L5
+
+    H4 -.->|"Keil编译"| L4
+    H4 -.->|"ESP-IDF build/flash/monitor"| A1
+```
+
+### 1.2 四层软件数据流
+
+```mermaid
+flowchart LR
+    subgraph DataFlow["端到端数据转换链"]
+        direction LR
+        D1["自然语言/Python绘图<br/>位图描述/动画脚本"] --> D2["matrix_frame_v1<br/>(bitmap_rows_hex<br/>+RGB888颜色)"]
+        D2 --> D3["38字节紧凑位图<br/>(32B位图+6B颜色)<br/>或256字节RGB332"]
+        D3 --> D4["协议包<br/>Header+Payload+CRC16<br/>FrameStart/Chunk/Commit"]
+        D4 --> D5["UART字节流<br/>HC-05 SPP传输"]
+        D5 --> D6["GRB像素缓存<br/>g_ws2812ImageBuf"]
+        D6 --> D7["行级PWM序列<br/>(434比较值/行)"]
+        D7 --> D8["双行交织DMA缓冲<br/>(934字节)"]
+        D8 --> D9["PWM波形输出<br/>P1.0/P1.2引脚"]
+    end
+
+    subgraph Layers["对应软件层次"]
+        direction TB
+        LY1["本地绘图脚本<br/>(输入归一化)"] -.-> D1
+        LY2["AI端接口调度<br/>(语义→协议)"] -.-> D2
+        LY3["蓝牙通信协议<br/>(包封帧)"] -.-> D4
+        LY4["LED端显示驱动<br/>(协议→波形)"] -.-> D7
+    end
+```
+
 ## 2. LED端显示驱动
 
 `LED端` 软件运行在 AI8051U/STC51 平台上，主要负责把上层提供的图像内容转化为 WS2812 芯片能够识别的精确定时波形。其内部又可分为 6 个逻辑层次：硬件波形驱动层、帧缓存与编码层、图像渲染层、动作与显示控制层、通信接入层以及调度与运行时组织层。
@@ -88,6 +163,70 @@
 ### 6.3 动画批次播放流程
 
 当主机需要播放一个多帧动画时，桥接服务会先把输入序列归一化为最多 24 帧，并根据重采样结果修正 `frame_interval_ms`。随后它通过 Debug WebSocket 依次向 `AI端` 发送 `matrix_animation_start`、多条带 `frame_index` 的 `matrix_pattern_result` 以及 `matrix_animation_end`。`AI端` 在收到这些消息后，先将各帧缓存到本地动画暂存区并循环预览；当确认整组动画已经接收完整后，再统一调用 `ShowBitmapAnimation()` 把整批动画作为协议事务下发给 `LED端`。`LED端` 将这批帧缓存到本地动画缓冲区后，按照给定帧间隔循环播放。与单帧显示相比，这条流程增加了一个明显的“AI 端缓存批处理”阶段，从而避免了逐帧蓝牙直播导致的节拍抖动问题。
+
+### 6.4 端到端工作流图示
+
+#### 6.4.1 本地触摸调试流程
+
+```mermaid
+flowchart TD
+    TOUCH["用户触摸LCD<br/>选择颜色/效果/图案"] --> STATE["GpDebugLcdDisplay<br/>生成GpColorDebugState"]
+    STATE --> QUEUE["回调→QueueMatrixDebugState()<br/>后台命令队列"]
+    QUEUE --> POP["RunDebugCommandTask()<br/>取出命令"]
+    POP --> CONV["ShowDebugState()<br/>→GpMatrixActionPayload<br/>(18B定长动作对象)"]
+    CONV --> PACK["SendCommand(SetAction)<br/>→BuildPacketHeader+CRC"]
+    PACK --> UART["WritePacket()→HC-05 UART"]
+    UART --> RCV["LED端UART2接收<br/>组包+CRC校验"]
+    RCV --> EXEC["GpLedAction应用配置<br/>→DrawDrv请求重建"]
+    EXEC --> PWM["PWM+DMA编码输出<br/>→WS2812显示"]
+    PWM --> ACK["BuildReply(OK)<br/>→AI端ReadReply匹配"]
+    ACK --> UI["NotifyLinkStatus()<br/>→LCD状态面板更新"]
+```
+
+#### 6.4.2 主机图案绘制流程
+
+```mermaid
+flowchart TD
+    REQ["HTTP POST<br/>/control/matrix_prompt_16x16<br/>{prompt: '青色爱心'}"] --> PARSE["render_prompt_to_matrix_frame()<br/>识别颜色+匹配模板"]
+    PARSE --> BUILD["→matrix_frame_v1<br/>{bitmap_rows_hex, fg_rgb888, bg_rgb888}"]
+    BUILD --> CHECK{"Debug WebSocket可用?"}
+
+    CHECK -->|"YES"| WS_SEND["→AI端: matrix_pattern_result"]
+    CHECK -->|"NO"| GEN["生成PNG预览图<br/>→保存到generated/"]
+    GEN --> FETCH["HTTP请求AI端拉取<br/>POST /debug/preview_image"]
+
+    WS_SEND --> AI_RCV["AI端接收解析<br/>bitmap_rows_hex+RGB888"]
+    FETCH --> AI_RCV
+    AI_RCV --> LCD["LCD本地预览<br/>ApplyMatrixBitmapPreview()"]
+    LCD --> BT["ShowBitmapFrame()<br/>38字节紧凑位图"]
+    BT --> TX["FrameStart→FrameChunk→FrameCommit<br/>→LED端显示+ACK"]
+```
+
+#### 6.4.3 动画批次播放流程
+
+```mermaid
+flowchart TD
+    HOST_IN["主机: 动画帧列表<br/>(多帧bitmap_rows_hex)"] --> NORM["归一化+重采样<br/>帧数→≤24<br/>调整frame_interval_ms"]
+
+    NORM --> WS_AS["→AI端: matrix_animation_start<br/>{frame_count, frame_interval_ms}"]
+    WS_AS --> AICACHE["AI端: BeginPendingMatrixAnimation()<br/>分配暂存区"]
+
+    AICACHE --> LOOP["逐帧接收"]
+    LOOP --> RCVF["matrix_pattern_result<br/>{frame_index, bitmap_rows_hex}"]
+    RCVF --> STORE["缓存到暂存区<br/>+LCD动画预览更新"]
+    STORE --> MORECHK{"还有帧?"}
+    MORECHK -->|"YES"| LOOP
+    MORECHK -->|"NO"| WS_AE["→AI端: matrix_animation_end"]
+
+    WS_AE --> VERIFY{"所有帧已收齐?"}
+    VERIFY -->|"YES"| ANIM_SEND["ShowBitmapAnimation()<br/>AnimationStart→Frame×N→AnimationEnd"]
+    VERIFY -->|"NO"| WAIT["继续等待"]
+
+    ANIM_SEND --> BT_TX["HC-05蓝牙传输"]
+    BT_TX --> LED_CACHE["LED端: 缓存全部帧<br/>到动画缓冲区"]
+    LED_CACHE --> LED_PLAY["GpLedAction_Tick1ms()<br/>按frame_interval_ms循环播放"]
+    LED_PLAY --> REPLY["AnimationEnd→Reply(OK)"]
+```
 
 ## 7. 软件设计特点分析
 

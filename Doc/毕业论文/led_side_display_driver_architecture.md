@@ -1278,7 +1278,143 @@ Timer1触发刷新
 
 因此，不论显示内容来自本地还是远程，最终都共享同一条底层刷新链路，这正是软件架构统一性的体现。
 
-## 13. 设计特点与论文可强调的实现价值
+## 13. 核心实现流程图
+
+以下流程图以 Mermaid 格式描述 LED 端显示驱动各关键环节的实现逻辑。
+
+### 13.1 系统启动与初始化流程
+
+```mermaid
+flowchart TD
+    main["main()"] --> TI["Test_Init()"]
+    TI --> WS["WS2812DRV_Init()<br/>PWM/DMA/LUT/缓冲"]
+    TI --> DD["DrawDrv_Init()<br/>本地渲染引擎"]
+    TI --> GA["GpLedAction_Init()<br/>显示控制状态"]
+    TI --> GP["GpLedMatrixAi8051u_Init()<br/>UART2协议上下文"]
+    TI --> TR["Test_LoadDefaultRenderConfig()<br/>加载默认显示参数"]
+    TI --> MT["MidTask_Init()<br/>注册协作式任务"]
+    TI --> TM["Timer0/Timer1配置"]
+
+    WS --> WS2["PWMA 48-tick周期<br/>位展开LUT 256x8<br/>双行DMA缓冲对齐"]
+    MT --> MT2["10ms按键任务<br/>32ms绘图任务<br/>50ms调试任务"]
+    TM --> TM2["Timer0: 1ms调度节拍<br/>Timer1: 行刷新中断"]
+    TR --> GA2["应用预设模式"]
+    GA2 --> mainloop["进入主循环<br/>Test_TaskLoop()"]
+```
+
+### 13.2 主循环与调度体系
+
+```mermaid
+flowchart TD
+    ML["Test_TaskLoop()"] --> POLL["GpLedMatrixAi8051u_Poll()<br/>UART2收包+命令分发"]
+    ML --> MP["MidTask_Process()<br/>执行到期协作任务"]
+
+    POLL --> SR["UART2_ServiceRx()→逐字节取"]
+    SR --> PB["PushStreamByte()<br/>组包: 魔数→头校验→收齐"]
+    PB --> PP["ProcessPacket()<br/>CRC8/CRC16校验"]
+    PP --> DISP{"命令分发"}
+    DISP -->|"SetAction"| ACT["GpLedAction_ApplyDisplayProfile()"]
+    DISP -->|"FrameStart/Chunk/Commit"| FRC["组装帧数据→ApplyFrame()"]
+    DISP -->|"AnimationStart/Frame/End"| ANM["组装动画→CommitAnimation()"]
+    DISP -->|"Ping/Heartbeat"| PONG["BuildReply(OK)"]
+
+    MP --> KEY["10ms: 按键检测<br/>+通信超时计时"]
+    MP --> DRW["32ms: DrawDrv_Task32ms()<br/>本地离线渲染(条件执行)"]
+    MP --> DBG["50ms: 调试任务"]
+
+    ACT --> DRWCFG["→DrawDrv请求重建"]
+```
+
+### 13.3 PWM + DMA 编码输出管线
+
+```mermaid
+flowchart LR
+    subgraph Stage1["像素层"]
+        PX["g_ws2812ImageBuf<br/>[buf][row][col][GRB]<br/>每个像素3字节,GRB顺序"]
+    end
+
+    subgraph Stage2["行编码层"]
+        ENC["WS2812DRV_EncodeRowToPwmBuffer()"]
+        LUT["g_ws2812BitExpandLut[256][8]<br/>1字节→8个PWM比较值<br/>bit1=36, bit0=12"]
+    end
+
+    subgraph Stage3["DMA交织层"]
+        DUAL["WS2812DRV_FillDualRowPwmBuffer()<br/>[rowA0,rowB0,rowA1,rowB1,...]<br/>16x16模式: 934字节"]
+    end
+
+    subgraph Stage4["硬件输出层"]
+        DMA["WS2812DRV_TriggerDualRowDma()<br/>DMA→PWMA比较寄存器<br/>UDE: PWM Update事件驱动"]
+        PIN["P1.0/P1.2<br/>两路WS2812波形输出"]
+    end
+
+    PX --> ENC
+    ENC --> LUT
+    LUT --> DUAL
+    DUAL --> DMA
+    DMA --> PIN
+```
+
+### 13.4 双行扫描刷新时序
+
+```mermaid
+flowchart TD
+    T1["Timer1中断触发"] --> CK{"g_ws2812DmaBusy?"}
+    CK -->|"YES(上轮未完成)"| SKIP["跳过本轮,直接返回"]
+    CK -->|"NO"| RS["WS2812DRV_RefreshStep()"]
+    RS --> BLK["WS2812DRV_BlankOutputs()<br/>强制关闭PWM输出"]
+    BLK --> ALLOFF["HC595_AllOff()<br/>关闭所有行"]
+    ALLOFF --> DELAY1["延时放电 WS2812DRV_LINE_DISCHARGE_US"]
+    DELAY1 --> SEL["HC595_SelectRows(rowA,rowB)<br/>选通新的行对"]
+    SEL --> DELAY2["延时稳定 WS2812DRV_ROW_SWITCH_SETTLE_US"]
+    DELAY2 --> FILL["FillDualRowPwmBuffer()<br/>构建交织DMA数据"]
+    FILL --> TRIG["TriggerDualRowDma()<br/>配置PWMA窗口+DMA通道<br/>软件置位TRIG启动"]
+    TRIG --> AUTO["PWMA Update事件<br/>持续驱动DMA搬运"]
+    AUTO --> ISR["DMA完成中断<br/>WS2812DRV_OnDmaIsr()<br/>清busy, rowIdx+=2"]
+    ISR --> NEXT["等待下一次Timer1中断"]
+```
+
+### 13.5 显示控制权判定逻辑
+
+```mermaid
+flowchart TD
+    TICK["GpLedAction_Tick1ms()<br/>+ MidTask调度"] --> COMM{"g_gpLedCommOnline?"}
+    COMM -->|"YES(3s内有通信)"| REMOTE{"远程帧/动作激活?"}
+    COMM -->|"NO(超时)"| LOCAL["本地离线显示"]
+    REMOTE -->|"YES"| BYPASS["GpLedAction_ShouldBypassDrawScheduler()→TRUE<br/>绕过本地Draw调度"]
+    REMOTE -->|"NO"| LOCAL
+    BYPASS --> DIRECT{"显示类型?"}
+    DIRECT -->|"直写帧"| WRITE["GpLedAction_RenderRgb332Frame()<br/>或 RenderBitmapFrameRgb888()<br/>逐像素写ImageBuf→EncodeAllRows()"]
+    DIRECT -->|"动画"| ANIM["GpLedAction_Tick1ms()驱动帧切换<br/>→RenderAnimationFrame()"]
+    LOCAL --> DRAW["DrawDrv_Task32ms()<br/>→DrawDrv_RebuildFrame()<br/>→WS2812DRV_EncodeAllRows()"]
+    WRITE --> SWAP["扫描回到row0时<br/>切换活动PWM缓冲"]
+    ANIM --> SWAP
+    DRAW --> SWAP
+    SWAP --> SCAN["Timer1→RefreshStep()→DMA输出"]
+```
+
+### 13.6 协议接收与ACK回复流程
+
+```mermaid
+flowchart TD
+    UART["UART2中断接收字节→FIFO"] --> POP["主循环: UART2_TryPopByte()"]
+    POP --> PUSH["PushStreamByte()"]
+    PUSH --> FIND{"找到魔数0x47 0x50?"}
+    FIND -->|"NO"| POP
+    FIND -->|"YES"| HDR["收齐12B包头"]
+    HDR --> HCRC{"header_crc8?"}
+    HCRC -->|"FAIL"| RSYNC["ResyncFromByte()<br/>重新搜索魔数"]
+    HCRC -->|"OK"| WAIT["根据payload_length<br/>等待收齐payload+CRC16"]
+    WAIT --> PCRC{"packet_crc16?"}
+    PCRC -->|"FAIL"| ERR["BuildReply(BadChecksum)"]
+    PCRC -->|"OK"| DISP2["ProcessPacket()<br/>命令分发执行"]
+    DISP2 --> ACKR{"flags含ACK_REQUIRED?"}
+    ACKR -->|"YES"| REPLY["BuildReply(status,detail,mode)<br/>UART2_SendBuffer()"]
+    ACKR -->|"NO"| DONE["处理完成"]
+    ERR --> REPLY
+    REPLY --> DONE
+```
+
+## 14. 设计特点与论文可强调的实现价值
 
 从毕业论文角度，可以把本工程 LED 端显示驱动的实现价值概括为以下几点。
 
@@ -1309,7 +1445,7 @@ Timer1触发刷新
 无论上层内容来源于离线图案、远程动作、整帧直写还是动画播放，底层都复用同一套编码与刷新机制。
 这简化了系统结构，也提高了功能扩展性。
 
-## 14. 适合直接写入论文的结论性表述
+## 15. 适合直接写入论文的结论性表述
 
 可在论文正文中将本系统概括为如下表述：
 
