@@ -130,6 +130,12 @@ void WS2812DRV_OnDmaIsr(void);
  */
 bit WS2812DRV_IsDmaBusy(void);
 
+/* 查询 PWM 缓冲区交换是否待处理。
+ * 参数: 无
+ * 返回: 1 待处理, 0 已完成
+ */
+bit WS2812DRV_IsPwmSwapPending(void);
+
 /* 设置显示模式（16x8 / 16x16）。
  * 参数: mode 显示模式
  * 返回: 1 成功, 0 失败

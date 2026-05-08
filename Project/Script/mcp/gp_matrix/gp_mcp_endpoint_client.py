@@ -85,7 +85,14 @@ MATRIX_BITMAP_ROW_BYTES = MATRIX_WIDTH // 8
 MATRIX_BITMAP_BYTES = MATRIX_BITMAP_ROW_BYTES * MATRIX_HEIGHT
 MATRIX_BITMAP_HEX_CHARS = MATRIX_BITMAP_BYTES * 2
 RGB888_BYTES = 3
-MATRIX_COMPACT_FRAME_BYTES = MATRIX_BITMAP_BYTES + (RGB888_BYTES * 2)
+# Layered bitmap format: each layer = 1-byte header(seq/total) + 32-byte bitmap + 3-byte RGB = 36 bytes
+BITMAP_LAYER_HEADER_BYTES = 1
+BITMAP_LAYER_BITMAP_BYTES = MATRIX_BITMAP_BYTES  # 32
+BITMAP_LAYER_COLOR_BYTES = RGB888_BYTES           # 3
+BITMAP_LAYER_TOTAL_BYTES = BITMAP_LAYER_HEADER_BYTES + BITMAP_LAYER_BITMAP_BYTES + BITMAP_LAYER_COLOR_BYTES  # 36
+BITMAP_LAYERED_MAX_COLORS = 16
+ANIMATION_MAX_LAYERS = 4
+
 MAX_DRAWING_SOURCE_CHARS = 4000
 MAX_DRAWING_AST_NODES = 512
 MAX_DRAWING_RANGE_STEPS = 256
@@ -690,6 +697,37 @@ def rgb332_to_rgb888(pixel: int) -> tuple[int, int, int]:
     return red, green, blue
 
 
+def build_layered_compact_hex(*, layers: Sequence[Dict[str, Any]]) -> str:
+    """Build the BITMAP_LAYERED binary payload as a hex string.
+
+    Each layer dict must provide:
+      - bitmap_rows_hex: 64 hex chars (16 x 16-bit rows = 32 bytes)
+      - color_rgb888:     RGB888 hex string like #RRGGBB
+
+    Returns a hex string of (len(layers) * 36) bytes.
+    """
+    total = len(layers)
+    if total < 1 or total > BITMAP_LAYERED_MAX_COLORS:
+        raise ValueError(f"layers must contain 1..{BITMAP_LAYERED_MAX_COLORS} items")
+
+    result = bytearray()
+    for seq_index, layer in enumerate(layers):
+        bitmap_rows_hex = normalize_bitmap_rows_hex_value(
+            layer.get("bitmap_rows_hex", ""), f"layers[{seq_index}].bitmap_rows_hex"
+        )
+        color_rgb = parse_rgb888(layer.get("color_rgb888", "#000000"))
+        color_r = (color_rgb >> 16) & 0xFF
+        color_g = (color_rgb >> 8) & 0xFF
+        color_b = color_rgb & 0xFF
+
+        header_byte = (total << 4) | (seq_index & 0x0F)
+        result.append(header_byte)
+        result.extend(bytes.fromhex(bitmap_rows_hex))
+        result.extend([color_r, color_g, color_b])
+
+    return result.hex()
+
+
 def build_matrix_frame_payload_from_bitmap_rows(
     *,
     bitmap_rows: Sequence[int],
@@ -727,10 +765,16 @@ def build_matrix_frame_payload_from_bitmap_rows(
             frame_bytes[pixel_offset] = primary_rgb332 if enabled else background_rgb332
 
     payload: Dict[str, Any] = {
-        "data_format": "matrix_frame_v1",
+        "data_format": "matrix_frame_v2",
         "content_type": content_type,
         "frame_rgb332_hex": frame_bytes.hex(),
         "bitmap_rows_hex": "".join(f"{row:04x}" for row in normalized_rows),
+        "compact_layered_hex": build_layered_compact_hex(layers=[
+            {"bitmap_rows_hex": "ffff" * MATRIX_HEIGHT,
+             "color_rgb888": format_rgb888(resolved_background_rgb)},
+            {"bitmap_rows_hex": "".join(f"{row:04x}" for row in normalized_rows),
+             "color_rgb888": format_rgb888(resolved_primary_rgb)},
+        ]),
         "compact_frame_format": build_compact_bitmap_format_metadata(),
         "width": MATRIX_WIDTH,
         "height": MATRIX_HEIGHT,
@@ -972,61 +1016,126 @@ def apply_density_to_bitmap_rows(bitmap_rows: Sequence[int], density: float) -> 
     return sampled_rows
 
 
+# --- Effect handlers (each takes base_rows, frame_count, effect_dict) ---
+
+def _effect_blink(base_rows, frame_count, effect):
+    duty = max(0.0, min(1.0, float(effect.get("duty_cycle", 0.5))))
+    on_n = max(1, min(frame_count - 1, int(round(frame_count * duty))))
+    off_rows = [0] * MATRIX_HEIGHT
+    return [bitmap_rows_to_hex(base_rows if i < on_n else off_rows) for i in range(frame_count)]
+
+def _effect_flash(base_rows, frame_count, effect):
+    on_count = max(1, min(frame_count - 1, int(effect.get("on_count", 2))))
+    off_hex = bitmap_rows_to_hex([0] * MATRIX_HEIGHT)
+    on_hex = bitmap_rows_to_hex(base_rows)
+    return [on_hex if (i % max(1, frame_count // on_count)) == 0 else off_hex for i in range(frame_count)]
+
+def _effect_wipe(base_rows, frame_count, effect):
+    direction = effect["name"].split("_")[1]
+    frames = []
+    for fi in range(frame_count):
+        progress = (fi + 1) / frame_count
+        mask = [0] * MATRIX_HEIGHT
+        if direction == "left":
+            for c in range(max(1, int(MATRIX_WIDTH * progress))):
+                for r in range(MATRIX_HEIGHT):
+                    if (base_rows[r] >> (MATRIX_WIDTH - 1 - c)) & 1:
+                        mask[r] |= 1 << (MATRIX_WIDTH - 1 - c)
+        elif direction == "right":
+            for c in range(MATRIX_WIDTH - max(1, int(MATRIX_WIDTH * progress)), MATRIX_WIDTH):
+                for r in range(MATRIX_HEIGHT):
+                    if (base_rows[r] >> (MATRIX_WIDTH - 1 - c)) & 1:
+                        mask[r] |= 1 << (MATRIX_WIDTH - 1 - c)
+        elif direction == "up":
+            for r in range(max(1, int(MATRIX_HEIGHT * progress))):
+                mask[r] = base_rows[r]
+        elif direction == "down":
+            for r in range(MATRIX_HEIGHT - max(1, int(MATRIX_HEIGHT * progress)), MATRIX_HEIGHT):
+                mask[r] = base_rows[r]
+        frames.append(bitmap_rows_to_hex(mask))
+    return frames
+
+def _effect_marquee(base_rows, frame_count, effect):
+    direction = "right" if effect["name"] == "marquee_right" else "left"
+    step = max(1, int(effect.get("step", 1)))
+    return [bitmap_rows_to_hex(shift_bitmap_rows(base_rows,
+            -(i * step) % MATRIX_WIDTH if direction == "right" else (i * step) % MATRIX_WIDTH))
+            for i in range(frame_count)]
+
+def _effect_scroll_vertical(base_rows, frame_count, effect):
+    step = max(1, int(effect.get("step", 1)))
+    up = effect["name"] == "scroll_up"
+    frames = []
+    for fi in range(frame_count):
+        offset = (fi * step) % MATRIX_HEIGHT
+        frames.append(bitmap_rows_to_hex(
+            [base_rows[(r + offset) % MATRIX_HEIGHT if up else (r - offset) % MATRIX_HEIGHT]
+             for r in range(MATRIX_HEIGHT)]))
+    return frames
+
+def _effect_breathe(base_rows, frame_count, effect):
+    lo = max(0.0, min(1.0, float(effect.get("min_density", 0.20))))
+    hi = max(0.0, min(1.0, float(effect.get("max_density", 1.00))))
+    if lo > hi:
+        lo, hi = hi, lo
+    frames = []
+    for fi in range(frame_count):
+        phase = fi / max(1, frame_count - 1)
+        d = lo + (hi - lo) * (1.0 - abs(phase * 2.0 - 1.0))
+        frames.append(bitmap_rows_to_hex(apply_density_to_bitmap_rows(base_rows, d)))
+    return frames
+
+def _effect_fade(base_rows, frame_count, effect):
+    fade_in = effect["name"] == "fade_in"
+    return [bitmap_rows_to_hex(apply_density_to_bitmap_rows(base_rows,
+            max(0.0, (fi + 1) / frame_count if fade_in else 1.0 - (fi + 1) / frame_count)))
+            for fi in range(frame_count)]
+
+def _effect_pulse(base_rows, frame_count, effect):
+    lo = max(0.1, min(1.0, float(effect.get("min_scale", 0.5))))
+    hi = max(0.1, min(1.0, float(effect.get("max_scale", 1.0))))
+    frames = []
+    for fi in range(frame_count):
+        phase = fi / max(1, frame_count - 1)
+        scale = lo + (hi - lo) * (1.0 - abs(phase * 2.0 - 1.0))
+        ox = int(MATRIX_WIDTH * (1.0 - scale) / 2)
+        scaled = [0] * MATRIX_HEIGHT
+        for r in range(MATRIX_HEIGHT):
+            sr = int(r / scale) if scale > 0 else r
+            if 0 <= sr < MATRIX_HEIGHT:
+                for c in range(MATRIX_WIDTH):
+                    sc = int((c - ox) / scale) if scale > 0 else c
+                    if 0 <= sc < MATRIX_WIDTH and ((base_rows[sr] >> (MATRIX_WIDTH - 1 - sc)) & 1):
+                        scaled[r] |= 1 << (MATRIX_WIDTH - 1 - c)
+        frames.append(bitmap_rows_to_hex(scaled))
+    return frames
+
+_EFFECT_HANDLERS = {
+    "blink": _effect_blink, "flash": _effect_flash,
+    "wipe_left": _effect_wipe, "wipe_right": _effect_wipe,
+    "wipe_up": _effect_wipe, "wipe_down": _effect_wipe,
+    "marquee": _effect_marquee, "marquee_left": _effect_marquee, "marquee_right": _effect_marquee,
+    "scroll_up": _effect_scroll_vertical, "scroll_down": _effect_scroll_vertical,
+    "breathe": _effect_breathe,
+    "fade_in": _effect_fade, "fade_out": _effect_fade,
+    "pulse": _effect_pulse,
+}
+
 def expand_effect_animation_bitmap_rows_hex_list(base_bitmap_rows_hex: str, effect: Dict[str, Any]) -> list[str]:
     effect_name = str(effect.get("name", "")).strip().lower()
     if not effect_name:
         raise ValueError("effect.name is required")
-
+    handler = _EFFECT_HANDLERS.get(effect_name)
+    if handler is None:
+        raise ValueError(f"Unsupported effect.name: {effect_name}")
     base_rows = bitmap_rows_hex_to_rows(base_bitmap_rows_hex)
     frame_count = int(effect.get("frame_count", 0))
     if frame_count <= 0:
         frame_count = 16
     if frame_count < 2:
         raise ValueError("effect.frame_count must be >= 2")
-
-    if effect_name == "blink":
-        duty_cycle = float(effect.get("duty_cycle", 0.5))
-        clamped_duty = max(0.0, min(1.0, duty_cycle))
-        on_frames = max(1, min(frame_count - 1, int(round(frame_count * clamped_duty))))
-        off_rows = [0] * MATRIX_HEIGHT
-        return [bitmap_rows_to_hex(base_rows if index < on_frames else off_rows) for index in range(frame_count)]
-
-    if effect_name in {"marquee", "marquee_left", "marquee_right"}:
-        direction = str(effect.get("direction", "left")).strip().lower()
-        if effect_name == "marquee_right":
-            direction = "right"
-        elif effect_name == "marquee_left":
-            direction = "left"
-
-        step = int(effect.get("step", 1))
-        if step <= 0:
-            raise ValueError("effect.step must be >= 1")
-
-        frames: list[str] = []
-        for frame_index in range(frame_count):
-            offset = (frame_index * step) % MATRIX_WIDTH
-            shifted_rows = shift_bitmap_rows(base_rows, -offset if direction == "right" else offset)
-            frames.append(bitmap_rows_to_hex(shifted_rows))
-        return frames
-
-    if effect_name == "breathe":
-        min_density = float(effect.get("min_density", 0.20))
-        max_density = float(effect.get("max_density", 1.00))
-        clamped_min_density = max(0.0, min(1.0, min_density))
-        clamped_max_density = max(0.0, min(1.0, max_density))
-        if clamped_min_density > clamped_max_density:
-            clamped_min_density, clamped_max_density = clamped_max_density, clamped_min_density
-
-        frames = []
-        for frame_index in range(frame_count):
-            phase = frame_index / max(1, frame_count - 1)
-            triangle_wave = 1.0 - abs((phase * 2.0) - 1.0)
-            density = clamped_min_density + (clamped_max_density - clamped_min_density) * triangle_wave
-            density_rows = apply_density_to_bitmap_rows(base_rows, density)
-            frames.append(bitmap_rows_to_hex(density_rows))
-        return frames
-
-    raise ValueError(f"Unsupported effect.name: {effect_name}")
+    effect["name"] = effect_name  # normalize for handlers that read name
+    return handler(base_rows, frame_count, effect)
 
 
 def resolve_animation_bitmap_rows_hex_sources(
@@ -1035,6 +1144,7 @@ def resolve_animation_bitmap_rows_hex_sources(
     frames: Any,
     image: Any,
     effect: Any,
+    ops_sequence: Any,
     primary_rgb888: str,
     background_rgb888: str,
     source: str,
@@ -1086,9 +1196,34 @@ def resolve_animation_bitmap_rows_hex_sources(
     has_bitmap_rows_hex_list = isinstance(bitmap_rows_hex_list, (list, tuple)) and len(bitmap_rows_hex_list) > 0
     has_frames = isinstance(frames, (list, tuple)) and len(frames) > 0
     has_image_effect = (image not in (None, "", [])) or (effect not in (None, "", []))
+    has_ops_sequence = isinstance(ops_sequence, (list, tuple)) and len(ops_sequence) > 0
 
-    if sum((1 if has_bitmap_rows_hex_list else 0, 1 if has_frames else 0, 1 if has_image_effect else 0)) > 1:
-        raise ValueError("Provide exactly one animation input mode: bitmap_rows_hex_list, frames, or image+effect")
+    mode_count = sum((1 if has_bitmap_rows_hex_list else 0,
+                      1 if has_frames else 0,
+                      1 if has_image_effect else 0,
+                      1 if has_ops_sequence else 0))
+    if mode_count > 1:
+        raise ValueError("Provide exactly one animation input mode: bitmap_rows_hex_list, frames, image+effect, or ops_sequence")
+
+    if has_ops_sequence:
+        if len(ops_sequence) < 2:
+            raise ValueError("ops_sequence must contain at least 2 ops arrays")
+        resolved_frames = []
+        for seq_index, frame_ops in enumerate(ops_sequence):
+            rendered_payload = render_python_source_to_matrix_frame(
+                python_source="",
+                eval_source="",
+                draw_ops=frame_ops if isinstance(frame_ops, list) else [frame_ops],
+                primary_rgb888=primary_rgb888,
+                background_rgb888=background_rgb888,
+                source=source,
+                transcript=f"ops_sequence[{seq_index}]",
+            )
+            resolved_frames.append(normalize_bitmap_rows_hex_value(
+                rendered_payload.get("bitmap_rows_hex", ""),
+                f"ops_sequence[{seq_index}]",
+            ))
+        return resolved_frames
 
     if has_image_effect:
         if image in (None, "", []):
@@ -1122,68 +1257,21 @@ def resolve_animation_bitmap_rows_hex_sources(
     raise ValueError("bitmap_rows_hex_list or frames is required")
 
 
-def normalize_rgb888_color(color_value: Any, field_name: str) -> str:
-    try:
-        return format_rgb888(parse_rgb888(str(color_value)))
-    except ValueError as exc:
-        raise ValueError(f"{field_name} must be a #RRGGBB RGB888 color") from exc
-
-
 def build_compact_bitmap_format_metadata() -> Dict[str, Any]:
     return {
-        "encoding": "bitmap_1bit_rgb888_compact_v1",
+        "encoding": "bitmap_layered_v2",
         "bit_on": 1,
         "bit_off": 0,
         "row_order": "top_to_bottom",
         "bit_order": "msb_left_to_right",
         "row_count": MATRIX_HEIGHT,
         "row_bits": MATRIX_WIDTH,
-        "row_bytes": MATRIX_BITMAP_ROW_BYTES,
-        "bitmap_bytes": MATRIX_BITMAP_BYTES,
-        "primary_rgb888_bytes": RGB888_BYTES,
-        "background_rgb888_bytes": RGB888_BYTES,
-        "compact_frame_bytes": MATRIX_COMPACT_FRAME_BYTES,
+        "layer_header_bytes": BITMAP_LAYER_HEADER_BYTES,
+        "layer_bitmap_bytes": BITMAP_LAYER_BITMAP_BYTES,
+        "layer_color_bytes": BITMAP_LAYER_COLOR_BYTES,
+        "layer_total_bytes": BITMAP_LAYER_TOTAL_BYTES,
+        "max_colors": BITMAP_LAYERED_MAX_COLORS,
     }
-
-
-def try_extract_binary_bitmap_fields_from_frame_hex(frame_hex: str) -> Optional[tuple[str, str, str]]:
-    normalized_frame_rgb332_hex = "".join(ch for ch in frame_hex if ch.strip())
-
-    if len(normalized_frame_rgb332_hex) != MATRIX_FRAME_BYTES * 2:
-        return None
-
-    frame_bytes = bytes.fromhex(normalized_frame_rgb332_hex)
-    pixel_counts: dict[int, int] = {}
-
-    for pixel in frame_bytes:
-        pixel_counts[pixel] = pixel_counts.get(pixel, 0) + 1
-
-    if len(pixel_counts) > 2:
-        return None
-
-    background_pixel = max(pixel_counts, key=pixel_counts.get)
-    foreground_pixels = [pixel for pixel in pixel_counts if pixel != background_pixel]
-    if not foreground_pixels:
-        return None
-
-    foreground_pixel = foreground_pixels[0]
-    bitmap_rows: list[int] = []
-    for row_index in range(MATRIX_HEIGHT):
-        row_bits = 0
-        for column_index in range(MATRIX_WIDTH):
-            pixel_offset = row_index * MATRIX_WIDTH + column_index
-            if frame_bytes[pixel_offset] != background_pixel:
-                row_bits |= 1 << (MATRIX_WIDTH - 1 - column_index)
-        bitmap_rows.append(row_bits)
-
-    foreground_red, foreground_green, foreground_blue = rgb332_to_rgb888(foreground_pixel)
-    background_red, background_green, background_blue = rgb332_to_rgb888(background_pixel)
-
-    return (
-        "".join(f"{row:04x}" for row in bitmap_rows),
-        format_rgb888((foreground_red << 16) | (foreground_green << 8) | foreground_blue),
-        format_rgb888((background_red << 16) | (background_green << 8) | background_blue),
-    )
 
 
 def safe_matrix_range(*args: int) -> range:
@@ -1492,7 +1580,7 @@ def render_bitmap_animation_frame_sequence(
         frames.append(frame_payload)
 
     result = {
-        "data_format": "matrix_frame_sequence_v1",
+        "data_format": "matrix_frame_sequence_v2",
         "content_type": "animation",
         "compact_frame_format": build_compact_bitmap_format_metadata(),
         "width": MATRIX_WIDTH,
@@ -1775,15 +1863,269 @@ def render_prompt_to_matrix_frame(
 
 
 def build_random_matrix_frame_payload(transcript: str, source: str = "debug_ws") -> Dict[str, Any]:
-    pattern_name = random.choice(tuple(PROMPT_PATTERN_TEMPLATES.keys()))
+    """Generate a random matrix frame or animation, including static patterns, effects,
+    ops-sequence animations, and mandatory '吉林大学' scrolling text."""
     primary_rgb888 = format_rgb888(random.choice(tuple(PROMPT_COLOR_KEYWORDS.values())))
+    secondary_rgb888 = format_rgb888(random.choice(tuple(PROMPT_COLOR_KEYWORDS.values())))
 
-    return render_prompt_to_matrix_frame(
-        prompt=pattern_name,
+    # Ensure two distinct colors
+    while secondary_rgb888 == primary_rgb888:
+        secondary_rgb888 = format_rgb888(random.choice(tuple(PROMPT_COLOR_KEYWORDS.values())))
+
+    roll = random.random()
+
+    # --- 30%: Static pattern ---
+    if roll < 0.30:
+        pattern_name = random.choice(tuple(PROMPT_PATTERN_TEMPLATES.keys()))
+        return render_prompt_to_matrix_frame(
+            prompt=pattern_name,
+            primary_rgb888=primary_rgb888,
+            background_rgb888="#000000",
+            source=source,
+            transcript=transcript or f"random {pattern_name}",
+        )
+
+    # --- 30%: Effect-based animation from random pattern ---
+    if roll < 0.60:
+        pattern_name, (_, ascii_rows) = random.choice(tuple(PROMPT_PATTERN_TEMPLATES.items()))
+        effect_name = random.choice((
+            "blink", "flash", "wipe_left", "wipe_right",
+            "marquee_left", "marquee_right", "breathe", "fade_in", "fade_out",
+        ))
+        frame_count = random.randint(6, 24)
+        interval_ms = random.choice((42, 70, 100, 120, 160, 200, 300, 420))
+        effect_params: Dict[str, Any] = {"name": effect_name, "frame_count": frame_count}
+        if effect_name == "blink":
+            effect_params["duty_cycle"] = random.choice((0.3, 0.5, 0.7))
+        elif effect_name in {"marquee_left", "marquee_right"}:
+            effect_params["step"] = random.choice((1, 2))
+        elif effect_name == "breathe":
+            effect_params["min_density"] = random.choice((0.15, 0.25, 0.35))
+            effect_params["max_density"] = random.choice((0.85, 1.0))
+
+        base_hex = normalize_bitmap_ascii_value(ascii_rows, "pattern")
+        expanded = expand_effect_animation_bitmap_rows_hex_list(base_hex, effect_params)
+        return render_bitmap_animation_frame_sequence(
+            bitmap_rows_hex_list=expanded,
+            primary_rgb888=primary_rgb888,
+            background_rgb888="#000000",
+            frame_interval_ms=interval_ms,
+            source=source,
+            transcript=transcript or f"{effect_name} {pattern_name}",
+        )
+
+    # --- 20%: 吉林大学 滚动字幕 (MANDATORY) ---
+    if roll < 0.80:
+        return build_jlu_scroll_animation(
+            primary_rgb888=primary_rgb888,
+            background_rgb888="#000000",
+            source=source,
+            transcript=transcript or "吉林大学 滚动字幕",
+        )
+
+    # --- 20%: ops_sequence animation (loading circle, moving square, etc.) ---
+    anim_type = random.choice(("circle_loading", "square_move", "cross_fade", "snake"))
+    interval_ms = random.choice((70, 100, 120, 160))
+    frame_count = random.randint(8, 24)
+
+    if anim_type == "circle_loading":
+        ops_seq = _build_loading_circle_ops(frame_count)
+    elif anim_type == "square_move":
+        ops_seq = _build_moving_square_ops(frame_count)
+    elif anim_type == "cross_fade":
+        ops_seq = _build_cross_fade_ops(frame_count)
+    else:  # snake
+        ops_seq = _build_snake_ops(frame_count)
+
+    animation_sources = resolve_animation_bitmap_rows_hex_sources(
+        bitmap_rows_hex_list=[],
+        frames=[],
+        image=None,
+        effect=None,
+        ops_sequence=ops_seq,
         primary_rgb888=primary_rgb888,
         background_rgb888="#000000",
         source=source,
-        transcript=transcript or f"random pattern {pattern_name}",
+    )
+    return render_bitmap_animation_frame_sequence(
+        bitmap_rows_hex_list=animation_sources,
+        primary_rgb888=primary_rgb888,
+        background_rgb888="#000000",
+        frame_interval_ms=interval_ms,
+        source=source,
+        transcript=transcript or f"{anim_type} animation",
+    )
+
+
+# --- Ops-sequence animation builders ---
+
+import math as _math
+
+
+def _build_loading_circle_ops(frame_count: int) -> list[list[Dict[str, Any]]]:
+    """Build a rotating arc / loading circle animation."""
+    frames: list[list[Dict[str, Any]]] = []
+    center = 7.5
+    radius = 5
+    for idx in range(frame_count):
+        angle = (idx / frame_count) * 360
+        frame_ops: list[Dict[str, Any]] = [{"op": "clear", "fill": 0}]
+        for segment in range(4):
+            a = (angle + segment * 90) % 360
+            ex = int(center + radius * _math.cos(_math.radians(a)))
+            ey = int(center + radius * _math.sin(_math.radians(a)))
+            frame_ops.append({"op": "point", "x": ex, "y": ey})
+            for dot in range(3):
+                da = a - dot * 15
+                dx = int(center + (radius - dot * 0.8) * _math.cos(_math.radians(da)))
+                dy = int(center + (radius - dot * 0.8) * _math.sin(_math.radians(da)))
+                if 0 <= dx < MATRIX_WIDTH and 0 <= dy < MATRIX_HEIGHT:
+                    frame_ops.append({"op": "point", "x": dx, "y": dy})
+        frames.append(frame_ops)
+    return frames
+
+
+def _build_moving_square_ops(frame_count: int) -> list[list[Dict[str, Any]]]:
+    """Build a bouncing square animation."""
+    frames: list[list[Dict[str, Any]]] = []
+    size = 4
+    for idx in range(frame_count):
+        phase = idx / max(1, frame_count - 1)
+        x0 = int((MATRIX_WIDTH - size) * (0.5 + 0.4 * _math.sin(phase * _math.pi * 2)))
+        y0 = int((MATRIX_HEIGHT - size) * (0.5 + 0.3 * _math.cos(phase * _math.pi * 3)))
+        frames.append([
+            {"op": "clear", "fill": 0},
+            {"op": "rectangle", "x0": x0, "y0": y0, "x1": x0 + size, "y1": y0 + size},
+        ])
+    return frames
+
+
+def _build_cross_fade_ops(frame_count: int) -> list[list[Dict[str, Any]]]:
+    """Build alternating cross/diamond fade pattern."""
+    frames: list[list[Dict[str, Any]]] = []
+    for idx in range(frame_count):
+        if idx < frame_count // 2:
+            frames.append([
+                {"op": "clear", "fill": 0},
+                {"op": "line", "x0": 0, "y0": 0, "x1": 15, "y1": 15, "width": 1},
+                {"op": "line", "x0": 15, "y0": 0, "x1": 0, "y1": 15, "width": 1},
+            ])
+        else:
+            cx, cy, r = 7, 7, 5
+            frames.append([
+                {"op": "clear", "fill": 0},
+                {"op": "fill_ellipse", "x0": cx - r, "y0": cy - r, "x1": cx + r, "y1": cy + r},
+            ])
+    return frames
+
+
+def _build_snake_ops(frame_count: int) -> list[list[Dict[str, Any]]]:
+    """Build a snake-like moving line animation."""
+    frames: list[list[Dict[str, Any]]] = []
+    length = 6
+    for idx in range(frame_count):
+        head = idx % (MATRIX_WIDTH * 2 - 2)
+        if head < MATRIX_WIDTH:
+            hx, hy = head, 0
+        else:
+            hx, hy = MATRIX_WIDTH - 1, head - MATRIX_WIDTH + 1
+        segments = []
+        for s in range(length):
+            pos = head - s
+            if pos < 0:
+                pos = 0
+            if pos < MATRIX_WIDTH:
+                sx, sy = pos, 0
+            else:
+                sx, sy = MATRIX_WIDTH - 1, pos - MATRIX_WIDTH + 1
+            if 0 <= sx < MATRIX_WIDTH and 0 <= sy < MATRIX_HEIGHT:
+                segments.append({"op": "point", "x": sx, "y": sy})
+        frames.append([{"op": "clear", "fill": 0}] + segments)
+    return frames
+
+
+# --- 吉林大学 scroll text helper ---
+
+# Hardcoded 16x16 bitmaps for "吉林大学" (each character: 16 x uint16_t)
+_JLU_GLYPHS: tuple[tuple[int, ...], ...] = (
+    # 吉
+    (0x0000, 0x0080, 0x0080, 0x3FFE, 0x35D6, 0x0080, 0x1FFC, 0x1F7C,
+     0x0000, 0x0FF8, 0x0808, 0x0808, 0x0FF8, 0x0FF8, 0x0800, 0x0000),
+    # 林
+    (0x0000, 0x0860, 0x0860, 0x1860, 0x3FFC, 0x1860, 0x1C70, 0x1EF0,
+     0x39F8, 0x292C, 0x0B64, 0x0860, 0x0860, 0x0000, 0x0000, 0x0000),
+    # 大
+    (0x0000, 0x0080, 0x0080, 0x0080, 0x0180, 0x3FFE, 0x1FFC, 0x0180,
+     0x01C0, 0x0360, 0x0230, 0x0E38, 0x1C1C, 0x3006, 0x0000, 0x0000),
+    # 学
+    (0x0000, 0x0000, 0x1110, 0x19B0, 0x0D30, 0x3FFC, 0x300C, 0x0FE0,
+     0x04F0, 0x00C0, 0x3FFC, 0x3FF8, 0x0080, 0x0380, 0x0300, 0x0000),
+)
+
+_JLU_GLYPH_WIDTH = 16
+_JLU_GLYPH_SPACING = 1
+
+
+def _strip_frame_payload_for_transport(frame_payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Strip a full frame payload down to minimal transport fields for debug WS delivery."""
+    return {
+        k: v for k, v in frame_payload.items()
+        if k in ("bitmap_rows_hex", "primary_rgb888", "background_rgb888",
+                 "frame_index", "frame_count", "frame_interval_ms",
+                 "source", "transcript", "content_type", "label")
+    }
+
+
+def build_jlu_scroll_animation(
+    primary_rgb888: str = "#F5F5F5",
+    background_rgb888: str = "#000000",
+    frame_interval_ms: int = 120,
+    source: str = "debug_ws",
+    transcript: str = "吉林大学",
+) -> Dict[str, Any]:
+    """Build a smooth 24-frame horizontal scroll animation of '吉林大学' text."""
+    glyph_count = len(_JLU_GLYPHS)
+    glyph_advance = _JLU_GLYPH_WIDTH + _JLU_GLYPH_SPACING
+    text_width = glyph_count * glyph_advance
+    total_width = text_width + MATRIX_WIDTH  # scroll-in + scroll-out
+    frame_count = 24
+
+    # Pre-unpack glyph rows for fast column lookup
+    glyph_cols: list[list[int]] = []
+    for glyph_idx in range(glyph_count):
+        cols = []
+        for x in range(_JLU_GLYPH_WIDTH):
+            col_mask = 0
+            for row in range(MATRIX_HEIGHT):
+                if (_JLU_GLYPHS[glyph_idx][row] >> (_JLU_GLYPH_WIDTH - 1 - x)) & 1:
+                    col_mask |= 1 << row
+            cols.append(col_mask)
+        glyph_cols.append(cols)
+
+    frames: list[str] = []
+    for frame_idx in range(frame_count):
+        offset = (frame_idx * total_width) // frame_count
+        frame_rows = [0] * MATRIX_HEIGHT
+        for screen_col in range(MATRIX_WIDTH):
+            virtual_col = screen_col + offset
+            if virtual_col < 0 or virtual_col >= text_width:
+                continue
+            glyph_idx = virtual_col // glyph_advance
+            glyph_col = virtual_col % glyph_advance
+            if glyph_idx < glyph_count and glyph_col < _JLU_GLYPH_WIDTH:
+                col_mask = glyph_cols[glyph_idx][glyph_col]
+                for row in range(MATRIX_HEIGHT):
+                    if (col_mask >> row) & 1:
+                        frame_rows[row] |= 1 << (MATRIX_WIDTH - 1 - screen_col)
+        frames.append("".join(f"{row:04x}" for row in frame_rows))
+
+    return render_bitmap_animation_frame_sequence(
+        bitmap_rows_hex_list=frames,
+        primary_rgb888=primary_rgb888,
+        background_rgb888=background_rgb888,
+        frame_interval_ms=frame_interval_ms,
+        source=source,
+        transcript=transcript,
     )
 
 
@@ -1841,35 +2183,27 @@ def build_tool_list() -> list[Dict[str, Any]]:
         },
         {
             "name": "self.screen.matrix_16x16.draw_frame",
-            "description": "Low-level tool. Return or deliver one 16x16 matrix frame when you already have frame_rgb332_hex or the compact 38-byte LED bitmap format.",
+            "description": "Draw one 16x16 matrix frame via layered bitmap format. Provide bitmap_rows_hex (64 hex chars = 16x16 bitmap) plus primary_rgb888 and optional background_rgb888. Internally converts to the layered bitmap protocol (BITMAP_LAYERED).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "preset": {
-                        "type": "string",
-                        "enum": ["", "python_demo"],
-                        "description": "Optional built-in preset. Prefer empty when you provide explicit frame data.",
-                    },
-                    "frame_rgb332_hex": {
-                        "type": "string",
-                        "description": "Exactly 512 hex characters. One RGB332 byte per pixel for the full 16x16 frame.",
-                    },
                     "bitmap_rows_hex": {
                         "type": "string",
-                        "description": "Optional compact bitmap field only. Exactly 64 hex characters = 16 rows x 2 bytes = 32 bitmap bytes. Bit 1 means LED on, bit 0 means off; rows are top to bottom, and the high bit in each 16-bit row is the leftmost LED. Together with primary_rgb888 and background_rgb888 it forms one 38-byte LED-ready frame.",
+                        "description": "Exactly 64 hex characters = 16 rows x 2 bytes = 32 bitmap bytes. Bit 1 means LED on, bit 0 means off; rows are top to bottom, and the high bit in each 16-bit row is the leftmost LED. Together with primary_rgb888 forms one layered frame.",
                     },
                     "bitmap_ascii": build_bitmap_ascii_schema(),
                     "primary_rgb888": {
                         "type": "string",
-                        "description": "Required with bitmap_rows_hex. Foreground color in #RRGGBB. Stored as RGB888 (3 bytes) after the 32-byte bitmap.",
+                        "description": "Required foreground color in #RRGGBB. RGB888 (3 bytes).",
                     },
                     "background_rgb888": {
                         "type": "string",
-                        "description": "Optional background color for bitmap_rows_hex. Defaults to #000000. Stored as RGB888 (3 bytes) after the foreground color, so bitmap_rows_hex + primary_rgb888 + background_rgb888 = 38 bytes.",
+                        "description": "Optional background color in #RRGGBB. Defaults to #000000. RGB888 (3 bytes).",
                     },
                     "source": {"type": "string"},
                     "transcript": {"type": "string"},
                 },
+                "required": ["bitmap_rows_hex", "primary_rgb888"],
             },
         },
         {
@@ -1937,7 +2271,7 @@ def build_tool_list() -> list[Dict[str, Any]]:
                 "properties": {
                     "bitmap_rows_hex_list": {
                         "type": "array",
-                        "description": "An array of animation frame masks. Preferred: each item is 64 hex characters = 32 bitmap bytes. Compatibility: if this field itself is exactly 16 row tokens (1-4 hex digits), it will be treated as one frame rather than 16 frames. Bit 1 means LED on, bit 0 means off; rows are top to bottom, and the high bit in each 16-bit row is the leftmost LED. Together with primary_rgb888 and background_rgb888, each frame becomes one 38-byte LED-ready compact frame.",
+                        "description": "An array of animation frame masks. Preferred: each item is 64 hex characters = 32 bitmap bytes. Compatibility: if this field itself is exactly 16 row tokens (1-4 hex digits), it will be treated as one frame rather than 16 frames. Bit 1 means LED on, bit 0 means off; rows are top to bottom, and the high bit in each 16-bit row is the leftmost LED. Each frame is sent as a BITMAP_LAYERED payload (2 layers: background + foreground).",
                         "minItems": 1,
                         "maxItems": 96,
                         "items": {
@@ -1989,7 +2323,7 @@ def build_tool_list() -> list[Dict[str, Any]]:
                     },
                     "effect": {
                         "type": "object",
-                        "description": "Effect parameters to synthesize animation from one base image. Supported names: blink, breathe, marquee, marquee_left, marquee_right.",
+                        "description": "Effect parameters to synthesize animation from one base image. Supported names: blink, flash, wipe_left, wipe_right, wipe_up, wipe_down, marquee_left, marquee_right, scroll_up, scroll_down, breathe, fade_in, fade_out, pulse.",
                         "properties": {
                             "name": {"type": "string"},
                             "frame_count": {"type": "integer", "minimum": 2, "maximum": 96},
@@ -1997,9 +2331,19 @@ def build_tool_list() -> list[Dict[str, Any]]:
                             "step": {"type": "integer", "minimum": 1, "maximum": 16},
                             "direction": {"type": "string"},
                             "min_density": {"type": "number"},
-                            "max_density": {"type": "number"}
+                            "max_density": {"type": "number"},
+                            "min_scale": {"type": "number"},
+                            "max_scale": {"type": "number"},
+                            "on_count": {"type": "integer"}
                         },
                         "required": ["name"]
+                    },
+                    "ops_sequence": {
+                        "type": "array",
+                        "description": "Alternative: array of ops arrays, each inner array produces one animation frame. Each element is the same ops format as draw_python.",
+                        "minItems": 2,
+                        "maxItems": 96,
+                        "items": build_draw_python_ops_schema()
                     },
                     "frame_interval_ms": {
                         "type": "integer",
@@ -2009,7 +2353,7 @@ def build_tool_list() -> list[Dict[str, Any]]:
                     },
                     "primary_rgb888": {
                         "type": "string",
-                        "description": "Foreground color in #RRGGBB. All set bits use this color, stored as 3 RGB888 bytes after the 32-byte bitmap.",
+                        "description": "Foreground color in #RRGGBB. All set bits use this color, stored as 3 RGB888 bytes in each layer of the BITMAP_LAYERED frame.",
                     },
                     "background_rgb888": {
                         "type": "string",
@@ -2021,7 +2365,8 @@ def build_tool_list() -> list[Dict[str, Any]]:
                 "anyOf": [
                     {"required": ["bitmap_rows_hex_list"]},
                     {"required": ["frames"]},
-                    {"required": ["image", "effect"]}
+                    {"required": ["image", "effect"]},
+                    {"required": ["ops_sequence"]}
                 ],
             },
         },
@@ -2438,13 +2783,10 @@ def handle_local_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Dict[st
         }
 
     if tool_name in DRAW_FRAME_TOOL_NAMES:
-        preset_name = str(arguments.get("preset", ""))
-        matrix_frame_rgb332_hex = str(arguments.get("frame_rgb332_hex", ""))
         bitmap_rows_hex = str(arguments.get("bitmap_rows_hex", ""))
         bitmap_ascii = arguments.get("bitmap_ascii")
         primary_rgb888 = str(arguments.get("primary_rgb888", ""))
         background_rgb888 = str(arguments.get("background_rgb888", "#000000"))
-        normalized_frame_rgb332_hex = "".join(ch for ch in matrix_frame_rgb332_hex if ch.strip())
         normalized_bitmap_rows_hex = ""
         tool_source = str(arguments.get("source", "mcp"))
         transcript_text = str(arguments.get("transcript", ""))
@@ -2454,64 +2796,24 @@ def handle_local_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Dict[st
         elif bitmap_ascii not in (None, "", []):
             normalized_bitmap_rows_hex = normalize_bitmap_ascii_value(bitmap_ascii, "bitmap_ascii")
 
-        if not preset_name and not normalized_frame_rgb332_hex and not normalized_bitmap_rows_hex:
-            raise ValueError("Either preset, frame_rgb332_hex, bitmap_rows_hex, or bitmap_ascii is required")
-        if preset_name and preset_name != "python_demo":
-            raise ValueError(f"Unsupported preset: {preset_name}")
-        if normalized_frame_rgb332_hex:
-            if len(normalized_frame_rgb332_hex) != 512:
-                raise ValueError("frame_rgb332_hex must contain 512 hex characters")
-            int(normalized_frame_rgb332_hex, 16)
-        if normalized_bitmap_rows_hex:
-            parse_rgb888(primary_rgb888)
-
+        if not normalized_bitmap_rows_hex:
+            raise ValueError("bitmap_rows_hex or bitmap_ascii is required")
+        parse_rgb888(primary_rgb888)
         if background_rgb888:
             parse_rgb888(background_rgb888)
 
-        if normalized_bitmap_rows_hex:
-            bitmap_rows = [int(normalized_bitmap_rows_hex[index:index + 4], 16) for index in range(0, 64, 4)]
-            frame_payload = build_matrix_frame_payload_from_bitmap_rows(
-                bitmap_rows=bitmap_rows,
-                primary_rgb888=primary_rgb888,
-                background_rgb888=background_rgb888 or "#000000",
-                source=tool_source,
-                transcript=transcript_text,
-                content_type="frame",
-                label="draw_frame",
-            )
-            frame_payload["tool_name"] = "self.screen.matrix_16x16.draw_frame"
-            if preset_name:
-                frame_payload["preset"] = preset_name
-            return frame_payload
-
-        result_payload: Dict[str, Any] = {
-            "data_format": "matrix_frame_v1",
-            "content_type": "frame",
-            "preset": preset_name,
-            "frame_rgb332_hex": normalized_frame_rgb332_hex,
-            "bitmap_rows_hex": normalized_bitmap_rows_hex,
-            "primary_rgb888": primary_rgb888,
-            "background_rgb888": background_rgb888,
-            "width": 16,
-            "height": 16,
-            "source": tool_source,
-            "transcript": transcript_text,
-            "applied": True,
-            "tool_name": "self.screen.matrix_16x16.draw_frame",
-        }
-
-        if normalized_frame_rgb332_hex and not normalized_bitmap_rows_hex:
-            compact_fields = try_extract_binary_bitmap_fields_from_frame_hex(normalized_frame_rgb332_hex)
-            if compact_fields is not None:
-                compact_bitmap_rows_hex, compact_primary_rgb888, compact_background_rgb888 = compact_fields
-                result_payload["bitmap_rows_hex"] = compact_bitmap_rows_hex
-                result_payload["compact_frame_format"] = build_compact_bitmap_format_metadata()
-                if not result_payload["primary_rgb888"]:
-                    result_payload["primary_rgb888"] = compact_primary_rgb888
-                if not result_payload["background_rgb888"]:
-                    result_payload["background_rgb888"] = compact_background_rgb888
-
-        return result_payload
+        bitmap_rows = [int(normalized_bitmap_rows_hex[index:index + 4], 16) for index in range(0, 64, 4)]
+        frame_payload = build_matrix_frame_payload_from_bitmap_rows(
+            bitmap_rows=bitmap_rows,
+            primary_rgb888=primary_rgb888,
+            background_rgb888=background_rgb888 or "#000000",
+            source=tool_source,
+            transcript=transcript_text,
+            content_type="frame",
+            label="draw_frame",
+        )
+        frame_payload["tool_name"] = "self.screen.matrix_16x16.draw_frame"
+        return frame_payload
 
     if tool_name in PYTHON_DRAW_TOOL_NAMES:
         return render_python_source_to_matrix_frame(
@@ -2543,6 +2845,7 @@ def handle_local_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Dict[st
             frames=arguments.get("frames", []),
             image=arguments.get("image"),
             effect=arguments.get("effect"),
+            ops_sequence=arguments.get("ops_sequence", []),
             primary_rgb888=resolved_primary_rgb888,
             background_rgb888=resolved_background_rgb888,
             source=resolved_source,
@@ -2574,6 +2877,34 @@ def handle_local_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Dict[st
         )
 
     raise KeyError(f"Unknown tool: {tool_name}")
+
+
+async def send_payload_via_ws(send_fn, payload, default_interval_ms, status):
+    """Unified WS sender: auto-detects animation vs single frame. Module-level so both
+    McpBridgeServer and LocalDebugWebSocketServer can share it."""
+    frames = payload.get("frames")
+    if isinstance(frames, list) and frames:
+        interval_ms = max(1, int(payload.get("frame_interval_ms", default_interval_ms)))
+        await send_fn({"type": "matrix_animation_start", "content_type": "animation",
+                       "frame_count": len(frames), "frame_interval_ms": interval_ms,
+                       "source": payload.get("source", ""), "transcript": payload.get("transcript", "")})
+        for fp in frames:
+            if not isinstance(fp, dict):
+                continue
+            stripped = _strip_frame_payload_for_transport(fp)
+            stripped["frame_interval_ms"] = interval_ms
+            await send_fn({"type": "matrix_pattern_result", **stripped})
+            update_matrix_status(status, stripped, "debug_ws_sent")
+        await send_fn({"type": "matrix_animation_end", "content_type": "animation",
+                       "frame_count": len(frames), "frame_interval_ms": interval_ms,
+                       "source": payload.get("source", ""), "transcript": payload.get("transcript", "")})
+        return {"requested": True, "transport": "debug_ws", "sent": True,
+                "frame_count": len(frames), "frame_interval_ms": interval_ms}
+
+    stripped = _strip_frame_payload_for_transport(payload)
+    await send_fn({"type": "matrix_pattern_result", **stripped})
+    update_matrix_status(status, stripped, "debug_ws_sent")
+    return {"requested": True, "transport": "debug_ws", "sent": True, "frame_count": 1}
 
 
 class McpBridgeServer:
@@ -2665,90 +2996,8 @@ class McpBridgeServer:
     async def deliver_matrix_payload_via_debug_ws(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         if self.debug_ws_server is None:
             raise RuntimeError("AI debug websocket server is not configured")
-
-        frames = payload.get("frames")
-        if isinstance(frames, list) and frames:
-            frame_interval_ms = int(payload.get("frame_interval_ms", DEFAULT_TEXT_FRAME_INTERVAL_MS))
-            frame_interval_ms = max(1, frame_interval_ms)
-
-            await self.debug_ws_server.send_json({
-                "type": "matrix_animation_start",
-                "content_type": payload.get("content_type", "animation"),
-                "frame_count": len(frames),
-                "frame_interval_ms": frame_interval_ms,
-                "source": payload.get("source", ""),
-                "transcript": payload.get("transcript", ""),
-            })
-
-            for frame_payload in frames:
-                if not isinstance(frame_payload, dict):
-                    raise ValueError("frames must contain JSON objects")
-
-                normalized_frame_payload = dict(frame_payload)
-                normalized_frame_payload["bitmap_rows_hex"] = normalize_bitmap_rows_hex_value(
-                    frame_payload.get("bitmap_rows_hex", ""),
-                    "frames[].bitmap_rows_hex",
-                )
-                normalized_frame_payload["primary_rgb888"] = normalize_rgb888_color(
-                    frame_payload.get("primary_rgb888", ""),
-                    "frames[].primary_rgb888",
-                )
-                normalized_frame_payload["background_rgb888"] = normalize_rgb888_color(
-                    frame_payload.get("background_rgb888", ""),
-                    "frames[].background_rgb888",
-                )
-                normalized_frame_payload["compact_frame_format"] = build_compact_bitmap_format_metadata()
-
-                await self.debug_ws_server.send_json({
-                    "type": "matrix_pattern_result",
-                    "frame_interval_ms": frame_interval_ms,
-                    **normalized_frame_payload,
-                })
-                update_matrix_status(self.status, normalized_frame_payload, "debug_ws_sent")
-
-            await self.debug_ws_server.send_json({
-                "type": "matrix_animation_end",
-                "content_type": payload.get("content_type", "animation"),
-                "frame_count": len(frames),
-                "frame_interval_ms": frame_interval_ms,
-                "source": payload.get("source", ""),
-                "transcript": payload.get("transcript", ""),
-            })
-
-            return {
-                "requested": True,
-                "transport": "debug_ws",
-                "sent": True,
-                "frame_count": len(frames),
-                "frame_interval_ms": frame_interval_ms,
-            }
-
-        normalized_payload = dict(payload)
-        normalized_payload["bitmap_rows_hex"] = normalize_bitmap_rows_hex_value(
-            payload.get("bitmap_rows_hex", ""),
-            "bitmap_rows_hex",
-        )
-        normalized_payload["primary_rgb888"] = normalize_rgb888_color(
-            payload.get("primary_rgb888", ""),
-            "primary_rgb888",
-        )
-        normalized_payload["background_rgb888"] = normalize_rgb888_color(
-            payload.get("background_rgb888", ""),
-            "background_rgb888",
-        )
-        normalized_payload["compact_frame_format"] = build_compact_bitmap_format_metadata()
-
-        await self.debug_ws_server.send_json({
-            "type": "matrix_pattern_result",
-            **normalized_payload,
-        })
-        update_matrix_status(self.status, normalized_payload, "debug_ws_sent")
-        return {
-            "requested": True,
-            "transport": "debug_ws",
-            "sent": True,
-            "frame_count": 1,
-        }
+        return await send_payload_via_ws(
+            self.debug_ws_server.send_json, payload, DEFAULT_TEXT_FRAME_INTERVAL_MS, self.status)
 
 
 
@@ -3090,13 +3339,8 @@ class LocalDebugWebSocketServer:
                 transcript=str(payload.get("transcript", "")),
                 source="debug_ws_random",
             )
-            response_payload = {
-                "type": "matrix_pattern_result",
-                **result_payload,
-            }
-            await websocket.send(json.dumps(response_payload, ensure_ascii=False))
-            update_matrix_status(self.status, result_payload, "debug_ws_sent")
-            print(f"[debug_ws] tx {json.dumps(response_payload, ensure_ascii=False)}")
+            ws_send = lambda obj: websocket.send(json.dumps(obj, ensure_ascii=False))
+            await send_payload_via_ws(ws_send, result_payload, DEFAULT_ANIMATION_FRAME_INTERVAL_MS, self.status)
             return
 
         await websocket.send(json.dumps({

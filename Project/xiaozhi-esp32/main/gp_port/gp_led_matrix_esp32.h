@@ -27,6 +27,11 @@ public:
         uint32_t background_rgb888 = 0x000000U;
     };
 
+    struct LayeredFrameLayer {
+        std::array<uint16_t, GP_MATRIX_HEIGHT> bitmap_rows = {};
+        uint32_t color_rgb888 = 0x000000U;
+    };
+
     /* Create the ESP32-side matrix driver around the active transport backend. */
     GpLedMatrixEsp32(std::unique_ptr<GpMatrixTransport> transport, uint8_t brightness = 0x40);
 
@@ -61,6 +66,14 @@ public:
     /* Upload one indexed compact bitmap animation batch for LED-side loop playback. */
     bool ShowBitmapAnimation(const std::vector<BitmapAnimationFrame>& frames,
                              uint16_t frame_interval_ms = GP_MATRIX_ANIMATION_DEFAULT_INTERVAL_MS);
+
+    /* Send one multi-layer bitmap frame. Each layer carries its own bitmap and RGB888 color.
+       Layers are painted in order: layer 0 (backmost) through layer N-1 (frontmost). */
+    bool ShowLayeredFrame(const std::vector<LayeredFrameLayer>& layers, GpMatrixMode mode = kGpMatrixModeSolidFrame);
+
+    /* Upload a multi-layer bitmap animation batch. Each animation frame is a full set of layers. */
+    bool ShowLayeredAnimation(const std::vector<std::vector<LayeredFrameLayer>>& frameLayers,
+                              uint16_t frame_interval_ms = GP_MATRIX_ANIMATION_DEFAULT_INTERVAL_MS);
 
     /* Send one built-in 16x16 RGB332 frame preset through the current matrix transport. */
     bool ShowRgb332FramePreset(GpColorDebugPreset preset);
@@ -115,6 +128,11 @@ private:
                          GpMatrixMode mode,
                          bool ack_each_stage);
     bool SendDebugLedCommandLocked(uint8_t led_index, bool ack_required, bool track_activity);
+
+    /* Locked variants — assume mutex_ is already held by the caller. */
+    bool ShowLayeredFrameLocked(const std::vector<LayeredFrameLayer>& layers, GpMatrixMode mode);
+    bool ShowLayeredAnimationLocked(const std::vector<std::vector<LayeredFrameLayer>>& frameLayers,
+                                    uint16_t frame_interval_ms);
     std::string BuildHeartbeatStatusText(uint8_t led_index) const;
     std::string BuildStatusText(bool online,
                                 uint8_t command,

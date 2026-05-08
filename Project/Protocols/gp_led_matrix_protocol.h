@@ -20,6 +20,12 @@
 #define GP_MATRIX_PROTOCOL_MAGIC1 0x50U
 #define GP_MATRIX_PROTOCOL_VERSION 0x02U
 
+/* V3 compact header: 6 bytes, detected when byte1 != 0x50 after magic 0x47. */
+#define GP_MATRIX_PROTOCOL_MAGIC 0x47U
+#define GP_MATRIX_PACKET_HEADER_SIZE_V3 6U
+#define GP_MATRIX_PACKET_HEADER_CRC_BYTES_V3 (GP_MATRIX_PACKET_HEADER_SIZE_V3 - 1U)
+#define GP_MATRIX_PROTOCOL_FLAG_V3_IS_REPLY 0x04U
+
 /* Reserved endpoint identifier kept for local link diagnostics on the active transport. */
 #define GP_MATRIX_TRANSPORT_ENDPOINT_ID 0x31U
 
@@ -33,6 +39,7 @@
 #define GP_MATRIX_PAYLOAD_FORMAT_RGB332 0x01U
 #define GP_MATRIX_PAYLOAD_FORMAT_GLYPH_ROWS 0x02U
 #define GP_MATRIX_PAYLOAD_FORMAT_BITMAP_RGB888 0x03U
+#define GP_MATRIX_PAYLOAD_FORMAT_BITMAP_LAYERED 0x04U
 
 /* Animation batches keep compact bitmap frames indexed inside one explicit start/end window. */
 #define GP_MATRIX_ANIMATION_MAX_FRAMES 24U
@@ -50,7 +57,22 @@
 #define GP_MATRIX_BITMAP_COLOR_BYTES 6U
 #define GP_MATRIX_BITMAP_RGB888_FRAME_SIZE (GP_MATRIX_BITMAP_ROWS_BYTES + GP_MATRIX_BITMAP_COLOR_BYTES)
 
-#define GP_MATRIX_MAX_CHUNK_DATA 64U
+/* Multi-layer bitmap format: each layer = 1-byte header (seq/total) + 32-byte bitmap + 3-byte RGB = 36 bytes.
+   An image is the concatenation of N layers. Seq[3:0] is the 0-based layer index, total[7:4] is the layer count. */
+#define GP_MATRIX_BITMAP_LAYER_HEADER_BYTES 1U
+#define GP_MATRIX_BITMAP_LAYER_BITMAP_BYTES (GP_MATRIX_HEIGHT * 2U)
+#define GP_MATRIX_BITMAP_LAYER_COLOR_BYTES 3U
+#define GP_MATRIX_BITMAP_LAYER_TOTAL_BYTES \
+    (GP_MATRIX_BITMAP_LAYER_HEADER_BYTES + GP_MATRIX_BITMAP_LAYER_BITMAP_BYTES + GP_MATRIX_BITMAP_LAYER_COLOR_BYTES)
+#define GP_MATRIX_BITMAP_LAYERED_MAX_COLORS 16U
+#define GP_MATRIX_BITMAP_LAYERED_MAX_FRAME_SIZE (GP_MATRIX_BITMAP_LAYER_TOTAL_BYTES * GP_MATRIX_BITMAP_LAYERED_MAX_COLORS)
+#define GP_MATRIX_ANIMATION_MAX_LAYERS 4U
+#define GP_MATRIX_ANIMATION_LAYERED_MAX_FRAME_SIZE \
+    (GP_MATRIX_BITMAP_LAYER_TOTAL_BYTES * GP_MATRIX_ANIMATION_MAX_LAYERS)
+
+#define GP_MATRIX_MAX_CHUNK_DATA 160U
+/* Max layered frame bytes that fit in one LayeredFrame command packet (4 layers). */
+#define GP_MATRIX_LAYERED_FRAME_MAX_PAYLOAD (GP_MATRIX_BITMAP_LAYER_TOTAL_BYTES * GP_MATRIX_ANIMATION_MAX_LAYERS)
 #define GP_MATRIX_MAX_GLYPH_TRANSFER_BYTES 128U
 #define GP_MATRIX_PACKET_HEADER_SIZE 12U
 #define GP_MATRIX_PACKET_HEADER_CRC_BYTES (GP_MATRIX_PACKET_HEADER_SIZE - 1U)
@@ -92,6 +114,12 @@ typedef enum GpMatrixCommand {
     kGpMatrixCommandAnimationStart = 0x13,
     kGpMatrixCommandAnimationFrame = 0x14,
     kGpMatrixCommandAnimationEnd = 0x15,
+    /* Lightweight single-packet layered frame: payload = raw BITMAP_LAYERED bytes.
+       Implicit: format=0x04, 16x16, mode=SolidFrame. No FrameStart/Chunk/Commit needed. */
+    kGpMatrixCommandLayeredFrame = 0x18,
+    /* Lightweight animation frame: payload = [frame_index:1][layered_data:N].
+       Eliminates separate AnimationStart overhead for simple looping animations. */
+    kGpMatrixCommandLayeredAnimFrame = 0x19,
     kGpMatrixCommandScrollGlyphStart = 0x20,
     kGpMatrixCommandScrollGlyphChunk = 0x21,
     kGpMatrixCommandScrollGlyphCommit = 0x22,
@@ -177,6 +205,16 @@ typedef struct GpMatrixPacketHeader {
     uint8_t command;
     uint8_t header_crc8;
 } GpMatrixPacketHeader;
+
+/* V3 compact header (6 bytes). Detection: after magic 0x47, if byte1 != 0x50 it's V3. */
+typedef struct GpMatrixPacketHeaderV3 {
+    uint8_t magic;
+    uint8_t flags;           /* [reserved:5][is_reply:1][local_only:1][ack_req:1] */
+    uint8_t sequence;
+    uint8_t command;
+    uint8_t payload_length;  /* 0..255, covers max 163-byte payload */
+    uint8_t header_crc8;     /* CRC8 of bytes 0..4 */
+} GpMatrixPacketHeaderV3;
 
 typedef struct GpMatrixFrameStartPayload {
     uint8_t format;

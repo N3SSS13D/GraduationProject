@@ -156,6 +156,12 @@ static const char *GpLedMatrixAi8051u_CommandName(uint8_t command)
         case kGpMatrixCommandAnimationEnd:
             return "aend";
 
+        case kGpMatrixCommandLayeredFrame:
+            return "lfr";
+
+        case kGpMatrixCommandLayeredAnimFrame:
+            return "lafr";
+
         case kGpMatrixCommandScrollGlyphStart:
             return "gstr";
 
@@ -210,7 +216,7 @@ static void GpLedMatrixAi8051u_ResetPacketAssembly(void)
 
 static void GpLedMatrixAi8051u_ResetContext(GpLedMatrixAi8051uContext xdata *context, uint8_t transportAddress)
 {
-    for (g_gpMatrixLoopIndex = 0U; g_gpMatrixLoopIndex < GP_MATRIX_RGB332_FRAME_SIZE; ++g_gpMatrixLoopIndex)
+    for (g_gpMatrixLoopIndex = 0U; g_gpMatrixLoopIndex < GP_MATRIX_AI8051U_FRAME_BUFFER_SIZE; ++g_gpMatrixLoopIndex)
     {
         context->frameBuffer[g_gpMatrixLoopIndex] = 0U;
     }
@@ -298,23 +304,19 @@ static void GpLedMatrixAi8051u_ResyncFromByte(GpLedMatrixAi8051uContext xdata *c
 
 static void GpLedMatrixAi8051u_PushStreamByte(GpLedMatrixAi8051uContext xdata *context, uint8_t rxByte)
 {
-    const GpMatrixPacketHeader xdata *header;
+    const GpMatrixPacketHeader xdata *headerV2;
+    const GpMatrixPacketHeaderV3 xdata *headerV3;
     uint16_t payloadLength;
     uint16_t expectedLength;
+    uint8_t detectedV3;
 
     if (g_gpMatrixStreamLength == 0U)
     {
-        if (rxByte == GP_MATRIX_PROTOCOL_MAGIC0)
+        if (rxByte == GP_MATRIX_PROTOCOL_MAGIC)
         {
             context->rxBuffer[0] = rxByte;
             g_gpMatrixStreamLength = 1U;
         }
-        return;
-    }
-
-    if ((g_gpMatrixStreamLength == 1U) && (rxByte != GP_MATRIX_PROTOCOL_MAGIC1))
-    {
-        GpLedMatrixAi8051u_ResyncFromByte(context, rxByte);
         return;
     }
 
@@ -324,32 +326,84 @@ static void GpLedMatrixAi8051u_PushStreamByte(GpLedMatrixAi8051uContext xdata *c
         return;
     }
 
+    /* Byte 1 determines format: 0x50 = V2 (12-byte header), otherwise = V3 compact (6-byte header). */
+    if (g_gpMatrixStreamLength == 1U)
+    {
+        if ((rxByte != GP_MATRIX_PROTOCOL_MAGIC1) && ((rxByte & 0x80U) != 0U))
+        {
+            /* Not V2 and not valid V3 flags (bit7 reserved=0): resync. */
+            GpLedMatrixAi8051u_ResyncFromByte(context, rxByte);
+            return;
+        }
+    }
+
     context->rxBuffer[g_gpMatrixStreamLength] = rxByte;
     g_gpMatrixStreamLength++;
 
-    if ((g_gpMatrixStreamLength >= GP_MATRIX_PACKET_HEADER_SIZE) && (g_gpMatrixExpectedPacketLength == 0U))
+    detectedV3 = 0U;
+    if ((g_gpMatrixStreamLength == GP_MATRIX_PACKET_HEADER_SIZE_V3) && (g_gpMatrixExpectedPacketLength == 0U))
     {
-        header = (const GpMatrixPacketHeader xdata *)context->rxBuffer;
-        if ((header->version != GP_MATRIX_PROTOCOL_VERSION)
-            || (header->header_size != GP_MATRIX_PACKET_HEADER_SIZE)
-            || (header->packet_type != (uint8_t)kGpMatrixPacketTypeRequest)
-            || (GpMatrixComputeHeaderCrc8(context->rxBuffer, GP_MATRIX_PACKET_HEADER_CRC_BYTES)
-                != header->header_crc8))
+        if (context->rxBuffer[1U] != GP_MATRIX_PROTOCOL_MAGIC1)
         {
+            /* Potential V3 packet: validate CRC8 immediately. Reject on mismatch. */
+            headerV3 = (const GpMatrixPacketHeaderV3 xdata *)context->rxBuffer;
+            if ((GpMatrixComputeHeaderCrc8(context->rxBuffer, GP_MATRIX_PACKET_HEADER_CRC_BYTES_V3)
+                 == headerV3->header_crc8)
+                && (headerV3->payload_length <= GP_MATRIX_PACKET_MAX_PAYLOAD_BYTES))
+            {
+                expectedLength = (uint16_t)(GP_MATRIX_PACKET_HEADER_SIZE_V3
+                                            + headerV3->payload_length
+                                            + GP_MATRIX_PACKET_TRAILER_SIZE);
+                if ((expectedLength >= GP_MATRIX_PROTOCOL_MIN_PACKET_LENGTH)
+                    && (expectedLength <= GP_MATRIX_AI8051U_RX_BUFFER_SIZE))
+                {
+                    g_gpMatrixExpectedPacketLength = expectedLength;
+                    detectedV3 = 1U;
+                }
+            }
+            if (detectedV3 == 0U)
+            {
+                /* V3 header CRC failed: resync immediately. */
+                GpLedMatrixAi8051u_ResyncFromByte(context, rxByte);
+                return;
+            }
+        }
+    }
+
+    if ((detectedV3 == 0U) && (g_gpMatrixStreamLength == GP_MATRIX_PACKET_HEADER_SIZE)
+        && (g_gpMatrixExpectedPacketLength == 0U))
+    {
+        if (context->rxBuffer[1U] == GP_MATRIX_PROTOCOL_MAGIC1)
+        {
+            headerV2 = (const GpMatrixPacketHeader xdata *)context->rxBuffer;
+            if ((headerV2->version == GP_MATRIX_PROTOCOL_VERSION)
+                && (headerV2->header_size == GP_MATRIX_PACKET_HEADER_SIZE)
+                && (headerV2->packet_type == (uint8_t)kGpMatrixPacketTypeRequest)
+                && (GpMatrixComputeHeaderCrc8(context->rxBuffer, GP_MATRIX_PACKET_HEADER_CRC_BYTES)
+                    == headerV2->header_crc8))
+            {
+                payloadLength = GpLedMatrixAi8051u_ReadLe16(&headerV2->payload_length_lo);
+                expectedLength = (uint16_t)(headerV2->header_size + payloadLength
+                                            + GP_MATRIX_PACKET_TRAILER_SIZE);
+                if ((expectedLength >= GP_MATRIX_PROTOCOL_MIN_PACKET_LENGTH)
+                    && (expectedLength <= GP_MATRIX_AI8051U_RX_BUFFER_SIZE))
+                {
+                    g_gpMatrixExpectedPacketLength = expectedLength;
+                }
+            }
+            if (g_gpMatrixExpectedPacketLength == 0U)
+            {
+                /* V2 header validation failed: resync immediately. */
+                GpLedMatrixAi8051u_ResyncFromByte(context, rxByte);
+                return;
+            }
+        }
+        else
+        {
+            /* rxBuffer[1] != 0x50 and V3 was already rejected at length 6: resync. */
             GpLedMatrixAi8051u_ResyncFromByte(context, rxByte);
             return;
         }
-
-        payloadLength = GpLedMatrixAi8051u_ReadLe16(&header->payload_length_lo);
-        expectedLength = (uint16_t)(header->header_size + payloadLength + GP_MATRIX_PACKET_TRAILER_SIZE);
-        if ((expectedLength < GP_MATRIX_PROTOCOL_MIN_PACKET_LENGTH)
-            || (expectedLength > GP_MATRIX_AI8051U_RX_BUFFER_SIZE))
-        {
-            GpLedMatrixAi8051u_ResyncFromByte(context, rxByte);
-            return;
-        }
-
-        g_gpMatrixExpectedPacketLength = expectedLength;
     }
 
     if ((g_gpMatrixExpectedPacketLength != 0U) && (g_gpMatrixStreamLength == g_gpMatrixExpectedPacketLength))
@@ -529,6 +583,15 @@ static GpMatrixStatusCode GpLedMatrixAi8051u_HandleFrameStart(void)
             return kGpMatrixStatusBadLength;
         }
     }
+    else if (frameFormat == GP_MATRIX_PAYLOAD_FORMAT_BITMAP_LAYERED)
+    {
+        if ((g_gpMatrixTotalBytes < GP_MATRIX_BITMAP_LAYER_TOTAL_BYTES)
+            || (g_gpMatrixTotalBytes > GP_MATRIX_AI8051U_FRAME_BUFFER_SIZE)
+            || ((g_gpMatrixTotalBytes % GP_MATRIX_BITMAP_LAYER_TOTAL_BYTES) != 0U))
+        {
+            return kGpMatrixStatusBadLength;
+        }
+    }
     else
     {
         return kGpMatrixStatusUnsupported;
@@ -594,7 +657,13 @@ static GpMatrixStatusCode GpLedMatrixAi8051u_HandleFrameCommit(void)
         return kGpMatrixStatusBadLength;
     }
 
-    if (g_gpMatrixCtx->frameFormat == GP_MATRIX_PAYLOAD_FORMAT_BITMAP_RGB888)
+    if (g_gpMatrixCtx->frameFormat == GP_MATRIX_PAYLOAD_FORMAT_BITMAP_LAYERED)
+    {
+        status = GpLedAction_ApplyFrameBitmapLayered(g_gpMatrixCtx->frameBuffer,
+                                                      g_gpMatrixCtx->receivedBytes,
+                                                      mode);
+    }
+    else if (g_gpMatrixCtx->frameFormat == GP_MATRIX_PAYLOAD_FORMAT_BITMAP_RGB888)
     {
         status = GpLedAction_ApplyFrameBitmapRgb888(g_gpMatrixCtx->frameBuffer,
                                                     g_gpMatrixCtx->receivedBytes,
@@ -686,12 +755,21 @@ static GpMatrixStatusCode GpLedMatrixAi8051u_HandleGlyphCommit(void)
 
 static GpMatrixStatusCode GpLedMatrixAi8051u_HandleAnimationStart(void)
 {
+    uint8_t animFormat;
+
     if (g_gpMatrixPayloadLength != GP_MATRIX_ANIMATION_START_PAYLOAD_BYTES)
     {
         return kGpMatrixStatusBadLength;
     }
 
-    return GpLedAction_BeginAnimationUpload(g_gpMatrixPayload[0],
+    animFormat = g_gpMatrixPayload[0];
+    if ((animFormat != GP_MATRIX_PAYLOAD_FORMAT_BITMAP_RGB888)
+        && (animFormat != GP_MATRIX_PAYLOAD_FORMAT_BITMAP_LAYERED))
+    {
+        return kGpMatrixStatusUnsupported;
+    }
+
+    return GpLedAction_BeginAnimationUpload(animFormat,
                                             g_gpMatrixPayload[1],
                                             GpLedMatrixAi8051u_ReadLe16(&g_gpMatrixPayload[2]),
                                             g_gpMatrixPayload[4]);
@@ -699,14 +777,17 @@ static GpMatrixStatusCode GpLedMatrixAi8051u_HandleAnimationStart(void)
 
 static GpMatrixStatusCode GpLedMatrixAi8051u_HandleAnimationFrame(void)
 {
-    if (g_gpMatrixPayloadLength != (GP_MATRIX_ANIMATION_FRAME_PREFIX_BYTES + GP_MATRIX_BITMAP_RGB888_FRAME_SIZE))
+    uint16_t frameDataLen;
+
+    if (g_gpMatrixPayloadLength < (GP_MATRIX_ANIMATION_FRAME_PREFIX_BYTES + GP_MATRIX_BITMAP_RGB888_FRAME_SIZE))
     {
         return kGpMatrixStatusBadLength;
     }
 
+    frameDataLen = (uint16_t)(g_gpMatrixPayloadLength - GP_MATRIX_ANIMATION_FRAME_PREFIX_BYTES);
     return GpLedAction_StoreAnimationFrame(g_gpMatrixPayload[0],
                                            &g_gpMatrixPayload[GP_MATRIX_ANIMATION_FRAME_PREFIX_BYTES],
-                                           GP_MATRIX_BITMAP_RGB888_FRAME_SIZE);
+                                           frameDataLen);
 }
 
 static GpMatrixStatusCode GpLedMatrixAi8051u_HandleAnimationEnd(void)
@@ -719,17 +800,54 @@ static GpMatrixStatusCode GpLedMatrixAi8051u_HandleAnimationEnd(void)
     return GpLedAction_CommitAnimation(g_gpMatrixPayload[0]);
 }
 
+static GpMatrixStatusCode GpLedMatrixAi8051u_HandleLayeredFrame(void)
+{
+    GpMatrixStatusCode status;
+
+    if ((g_gpMatrixPayloadLength < GP_MATRIX_BITMAP_LAYER_TOTAL_BYTES)
+        || (g_gpMatrixPayloadLength > GP_MATRIX_LAYERED_FRAME_MAX_PAYLOAD)
+        || ((g_gpMatrixPayloadLength % GP_MATRIX_BITMAP_LAYER_TOTAL_BYTES) != 0U))
+    {
+        return kGpMatrixStatusBadLength;
+    }
+
+    status = GpLedAction_ApplyFrameBitmapLayered(g_gpMatrixPayload,
+                                                  g_gpMatrixPayloadLength,
+                                                  kGpMatrixModeSolidFrame);
+    GpLedAction_NotifyCommunicationActive();
+    return status;
+}
+
+static GpMatrixStatusCode GpLedMatrixAi8051u_HandleLayeredAnimFrame(void)
+{
+    uint8_t frameIndex;
+
+    if (g_gpMatrixPayloadLength < (1U + GP_MATRIX_BITMAP_LAYER_TOTAL_BYTES))
+    {
+        return kGpMatrixStatusBadLength;
+    }
+
+    frameIndex = g_gpMatrixPayload[0];
+    GpLedAction_NotifyCommunicationActive();
+    return GpLedAction_StoreAnimationFrame(frameIndex,
+                                            &g_gpMatrixPayload[1U],
+                                            (uint16_t)(g_gpMatrixPayloadLength - 1U));
+}
+
 static GpMatrixStatusCode GpLedMatrixAi8051u_ProcessPacket(GpLedMatrixAi8051uContext xdata *context,
                                                            const uint8_t xdata *packet,
                                                            uint16_t packetLength)
 {
-    const GpMatrixPacketHeader xdata *header;
+    const GpMatrixPacketHeader xdata *headerV2;
+    const GpMatrixPacketHeaderV3 xdata *headerV3;
     GpMatrixStatusCode status;
     uint8_t command;
     uint8_t sequence;
+    uint8_t headerSize;
     uint16_t payloadLength;
     uint16_t expectedLength;
     uint16_t packetCrc;
+    uint8_t headerCrcBytes;
     const uint8_t xdata *payload;
 
     if (packetLength < GP_MATRIX_PROTOCOL_MIN_PACKET_LENGTH)
@@ -737,36 +855,58 @@ static GpMatrixStatusCode GpLedMatrixAi8051u_ProcessPacket(GpLedMatrixAi8051uCon
         return kGpMatrixStatusBadLength;
     }
 
-    header = (const GpMatrixPacketHeader xdata *)packet;
-    if ((header->magic0 != GP_MATRIX_PROTOCOL_MAGIC0)
-        || (header->magic1 != GP_MATRIX_PROTOCOL_MAGIC1)
-        || (header->version != GP_MATRIX_PROTOCOL_VERSION))
+    if (packet[0] != GP_MATRIX_PROTOCOL_MAGIC)
     {
         return kGpMatrixStatusUnsupported;
-    }
-    if (header->header_size != GP_MATRIX_PACKET_HEADER_SIZE)
-    {
-        return kGpMatrixStatusBadLength;
-    }
-    if (header->packet_type != (uint8_t)kGpMatrixPacketTypeRequest)
-    {
-        return kGpMatrixStatusUnsupported;
-    }
-    if (GpMatrixComputeHeaderCrc8(packet, GP_MATRIX_PACKET_HEADER_CRC_BYTES) != header->header_crc8)
-    {
-        return kGpMatrixStatusBadChecksum;
     }
 
-    command = header->command;
-    sequence = header->sequence;
-    g_gpMatrixFlags = header->flags;
-    payloadLength = GpLedMatrixAi8051u_ReadLe16(&header->payload_length_lo);
+    /* Detect format by byte 1: 0x50 = V2 (12-byte), else = V3 compact (6-byte). */
+    if (packet[1] == GP_MATRIX_PROTOCOL_MAGIC1)
+    {
+        headerV2 = (const GpMatrixPacketHeader xdata *)packet;
+        if ((headerV2->version != GP_MATRIX_PROTOCOL_VERSION)
+            || (headerV2->header_size != GP_MATRIX_PACKET_HEADER_SIZE)
+            || (headerV2->packet_type != (uint8_t)kGpMatrixPacketTypeRequest))
+        {
+            return kGpMatrixStatusUnsupported;
+        }
+        headerCrcBytes = GP_MATRIX_PACKET_HEADER_CRC_BYTES;
+        if (GpMatrixComputeHeaderCrc8(packet, headerCrcBytes) != headerV2->header_crc8)
+        {
+            return kGpMatrixStatusBadChecksum;
+        }
+        command = headerV2->command;
+        sequence = headerV2->sequence;
+        g_gpMatrixFlags = headerV2->flags;
+        payloadLength = GpLedMatrixAi8051u_ReadLe16(&headerV2->payload_length_lo);
+        headerSize = headerV2->header_size;
+    }
+    else
+    {
+        headerV3 = (const GpMatrixPacketHeaderV3 xdata *)packet;
+        headerCrcBytes = GP_MATRIX_PACKET_HEADER_CRC_BYTES_V3;
+        if (GpMatrixComputeHeaderCrc8(packet, headerCrcBytes) != headerV3->header_crc8)
+        {
+            return kGpMatrixStatusBadChecksum;
+        }
+        if ((headerV3->flags & GP_MATRIX_PROTOCOL_FLAG_V3_IS_REPLY) != 0U)
+        {
+            return kGpMatrixStatusUnsupported;
+        }
+        command = headerV3->command;
+        sequence = headerV3->sequence;
+        g_gpMatrixFlags = (headerV3->flags & (GP_MATRIX_PROTOCOL_FLAG_ACK_REQUIRED
+                                               | GP_MATRIX_PROTOCOL_FLAG_LOCAL_ONLY));
+        payloadLength = headerV3->payload_length;
+        headerSize = GP_MATRIX_PACKET_HEADER_SIZE_V3;
+    }
+
     g_gpMatrixCtx = context;
     g_gpMatrixCommand = command;
     g_gpMatrixSequence = sequence;
     g_gpMatrixReplyDetail = (uint8_t)kGpMatrixReplyDetailNone;
 
-    expectedLength = (uint16_t)(header->header_size + payloadLength + GP_MATRIX_PACKET_TRAILER_SIZE);
+    expectedLength = (uint16_t)(headerSize + payloadLength + GP_MATRIX_PACKET_TRAILER_SIZE);
     if (expectedLength != packetLength)
     {
         g_gpMatrixReplyDetail = (uint8_t)kGpMatrixReplyDetailPayloadLength;
@@ -785,7 +925,7 @@ static GpMatrixStatusCode GpLedMatrixAi8051u_ProcessPacket(GpLedMatrixAi8051uCon
     context->lastCommand = command;
     context->lastSequence = sequence;
     context->lastFlags = g_gpMatrixFlags;
-    payload = &packet[header->header_size];
+    payload = &packet[headerSize];
     g_gpMatrixPayload = payload;
     g_gpMatrixPayloadLength = payloadLength;
     GpLedMatrixAi8051u_LogPacketRx(command, sequence, payloadLength);
@@ -841,6 +981,14 @@ static GpMatrixStatusCode GpLedMatrixAi8051u_ProcessPacket(GpLedMatrixAi8051uCon
 
         case kGpMatrixCommandAnimationEnd:
             status = GpLedMatrixAi8051u_HandleAnimationEnd();
+            break;
+
+        case kGpMatrixCommandLayeredFrame:
+            status = GpLedMatrixAi8051u_HandleLayeredFrame();
+            break;
+
+        case kGpMatrixCommandLayeredAnimFrame:
+            status = GpLedMatrixAi8051u_HandleLayeredAnimFrame();
             break;
 
         case kGpMatrixCommandScrollGlyphStart:

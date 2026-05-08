@@ -88,22 +88,28 @@ Use this template when a topic must never be answered directly and always requir
 ## 2. Global Invariants (Always True)
 
 - Matrix resolution is always `16x16`.
-- Compact LED-ready frame is always `38 bytes`:
-  - `32-byte bitmap` + `3-byte primary RGB888` + `3-byte background RGB888`.
-- `bitmap_rows_hex` is only the bitmap portion.
+- Image format: **BITMAP_LAYERED** (multi-layer bitmap).
+  - Each layer = `1-byte header` + `32-byte bitmap` + `3-byte RGB888 color` = **36 bytes**.
+  - Header byte: high 4 bits = total layer count, low 4 bits = layer index (0-based).
+  - Layers are ordered back-to-front: layer 0 is background, higher layers paint on top.
+  - A 2-color image uses 2 layers (72 bytes total).
+- `bitmap_rows_hex` is the bitmap portion of one layer.
   - Canonical form: exactly `64` hex characters (`16 rows x 16 bits = 32 bytes`).
+- `primary_rgb888` maps to the foreground color (layer 1).
+- `background_rgb888` maps to the background color (layer 0), default `#000000`.
 - `bitmap_ascii` is an LLM-friendly alias for one frame:
   - exactly `16` rows x `16` chars.
   - on-pixels: `1/#/X/*/@`; off-pixels: `0/./_/-/space`.
 - `ops` is an LLM-friendly structured draw list:
   - each item includes `op` and operation-specific numeric fields.
 - Bitmap semantics are fixed:
-  - `1 = LED on`, `0 = LED off`.
+  - `1 = LED on` (paint this layer's color), `0 = LED off` (transparent).
   - Rows are `top -> bottom`.
   - In each row, high bit (`bit15`) is the leftmost LED.
 - Do not pass `0/1` arrays, ASCII art, spaced binary strings, or `256-byte frame_rgb332_hex` into `bitmap_rows_hex` fields.
 - Include `source` and `transcript` whenever possible for traceability.
-- For downstream transfer to `LED端`, prefer compact `bitmap_rows_hex + RGB888` over expanded `256-byte RGB332`.
+- **Only bitmap format is supported.** Preset, frame_rgb332_hex, and glyph methods are disabled.
+- `draw_frame` requires `bitmap_rows_hex` + `primary_rgb888` (+ optional `background_rgb888`).
 - Buffered animation playback uses one shared `frame_interval_ms` per batch.
 - If animation input has more than `24` frames, host bridge resamples to `24` and scales interval to preserve total duration.
 
@@ -115,6 +121,8 @@ Use this template when a topic must never be answered directly and always requir
    - Use `self.screen.matrix_16x16.show_text`.
 3. Need buffered LED-side animation sequence:
    - Use `self.screen.matrix_16x16.draw_animation`.
+   - For per-frame drawing control, use `ops_sequence` mode.
+   - For simple effect from one base image, use `image + effect` mode.
 4. Already have one final bitmap or full RGB332 frame:
    - Use `self.screen.matrix_16x16.draw_frame`.
 5. Only have vague natural language prompt and no explicit draw plan:
@@ -325,21 +333,52 @@ Use this when LLM has one base image and wants animation by effect parameters.
 }
 ```
 
-Supported `effect.name`:
+Supported `effect.name` (14 effects):
 
-- `blink`
-- `breathe`
-- `marquee`
-- `marquee_left`
-- `marquee_right`
+| Effect | Description | Key parameters |
+|---|---|---|
+| `blink` | On/off toggle | `duty_cycle` (0..1) |
+| `flash` | Brief flash | `on_count` (frames per flash) |
+| `wipe_left` | Reveal from left | — |
+| `wipe_right` | Reveal from right | — |
+| `wipe_up` | Reveal from top | — |
+| `wipe_down` | Reveal from bottom | — |
+| `marquee_left` | Scroll left | `step` (px/frame) |
+| `marquee_right` | Scroll right | `step` (px/frame) |
+| `scroll_up` | Vertical scroll up | `step` (px/frame) |
+| `scroll_down` | Vertical scroll down | `step` (px/frame) |
+| `breathe` | Density breathing | `min_density`, `max_density` |
+| `fade_in` | Density 0→1 | — |
+| `fade_out` | Density 1→0 | — |
+| `pulse` | Grow/shrink from center | `min_scale`, `max_scale` |
 
-Effect parameter notes:
+Common parameters:
+- `frame_count`: generated frame count (2..96, default 16).
+- `step`: shift step (1..16, default 1).
+- `duty_cycle`: 0..1 ratio for blink.
+- `min_density`/`max_density`: 0..1 for breathe/fade.
+- `min_scale`/`max_scale`: 0.1..1.0 for pulse.
 
-- `frame_count`: generated animation frame count.
-- `duty_cycle`: blink on-ratio (0..1).
-- `step`: marquee shift step per frame.
-- `direction`: optional for `marquee` (`left` or `right`).
-- `min_density`/`max_density`: breathe density range (0..1).
+### 4.3.1 `ops_sequence` — per-frame ops animation
+
+Use to specify each animation frame as an individual ops array:
+
+```json
+{
+  "ops_sequence": [
+    [{"op": "clear", "fill": 0}, {"op": "fill_circle", "cx": 7, "cy": 7, "radius": 3}],
+    [{"op": "clear", "fill": 0}, {"op": "fill_circle", "cx": 8, "cy": 8, "radius": 3}],
+    [{"op": "clear", "fill": 0}, {"op": "fill_circle", "cx": 8, "cy": 8, "radius": 4}]
+  ],
+  "frame_interval_ms": 120,
+  "primary_rgb888": "#00FF88",
+  "background_rgb888": "#000000",
+  "source": "mcp_animation",
+  "transcript": "circle pulse via ops_sequence"
+}
+```
+
+Each inner array is a complete frame's ops — same format as `draw_python` ops.
 
 #### Compatibility fallback
 
@@ -364,7 +403,7 @@ If `image + effect` is used, bridge synthesizes frames on AI-side path before LE
 
 ### 4.4 `self.screen.matrix_16x16.draw_frame`
 
-Use when you already have final frame data.
+Use when you already have final frame data. **Bitmap-only** — preset and frame_rgb332_hex are no longer supported.
 
 #### Input
 
@@ -380,9 +419,11 @@ Use when you already have final frame data.
 
 #### Contract
 
-- `bitmap_rows_hex`: exactly `64` hex chars.
+- `bitmap_rows_hex`: exactly `64` hex chars (**required**).
 - `bitmap_ascii`: accepted as alias, normalized to `bitmap_rows_hex`.
-- `frame_rgb332_hex`: exactly `512` hex chars (if used instead).
+- `primary_rgb888`: foreground color in `#RRGGBB` (**required**).
+- `background_rgb888`: background color in `#RRGGBB` (optional, defaults to `#000000`).
+- Internally converted to BITMAP_LAYERED format (2 layers: background + foreground).
 
 ### 4.5 `self.screen.matrix_16x16.render_prompt`
 
@@ -554,6 +595,41 @@ All templates below are safe defaults for direct LLM use.
 
 ## 6. Flexible Animation Patterns (Diversity Without Failure)
 
+### 6.0 Random Draw Mode (`draw_random_pattern_request`)
+
+The debug websocket supports a random draw mode that cycles through diverse patterns and effects:
+
+| Category | Weight | Examples |
+|---|---|---|
+| Static patterns | 30% | heart, diamond, cross, ring, arrow, checker, border, smile |
+| Effect animations | 30% | blink/flash/wipe/marquee/breathe/fade from random patterns |
+| **吉林大学 scroll** | **20%** | Horizontal scrolling "吉林大学" text (mandatory) |
+| ops_sequence | 20% | circle loading, moving square, cross fade, snake |
+
+Each random draw picks a random color from: red, green, blue, yellow, orange, purple, pink, cyan, white.
+
+### 6.1 吉林大学 Scrolling Text (Mandatory)
+
+Every random draw session includes a 20% chance of showing "吉林大学" scrolling horizontally across the 16x16 matrix. The text uses 4 hardcoded 16x16 glyph bitmaps matching the LED-side font data.
+
+To explicitly trigger a JLU scroll:
+```json
+{
+  "tool": "self.screen.matrix_16x16.draw_animation",
+  "arguments": {
+    "bitmap_rows_hex_list": ["<glyph_frames...>"],
+    "primary_rgb888": "#FFD60A",
+    "background_rgb888": "#000000",
+    "frame_interval_ms": 160,
+    "transcript": "吉林大学"
+  }
+}
+```
+
+### 6.2 Ops-Sequence Animations
+
+Four built-in animation templates for programmatic frame generation:
+
 Use these safe transformations on standard templates:
 
 - Speed variants:
@@ -592,20 +668,24 @@ Output JSON only.
   - Fix: remove `yield_frame`, encode timing with `frame_interval_ms`.
 - Error pattern: syntax error from escaped newlines
   - Fix: keep each frame logic short and single-purpose.
-- Error pattern: wrong hex length (`frame_rgb332_hex` / `bitmap_rows_hex`)
-  - Fix: `frame_rgb332_hex = 512` hex, `bitmap_rows_hex = 64` hex.
+- Error pattern: wrong hex length (`bitmap_rows_hex`)
+  - Fix: `bitmap_rows_hex = 64` hex chars (16 rows × 4 hex digits each).
+- Error pattern: `preset` or `frame_rgb332_hex` not accepted
+  - Fix: use `bitmap_rows_hex` + `primary_rgb888` only. Preset and RGB332 modes are removed.
 
 ## 8. Output Payload Quick Reference
 
 ### 8.1 Single frame output (`draw_python`, `draw_frame`, `render_prompt`)
 
-- `data_format = matrix_frame_v1`
-- Includes `frame_rgb332_hex`, `bitmap_rows_hex`, colors, dimensions, trace fields.
+- `data_format = matrix_frame_v2`
+- Includes `frame_rgb332_hex` (preview), `bitmap_rows_hex`, `compact_layered_hex` (BITMAP_LAYERED binary), colors, dimensions, trace fields.
+- `compact_layered_hex` = 2 layers (background + foreground) × 36 bytes = 72 bytes hex-encoded.
 
 ### 8.2 Sequence output (`show_text`, `draw_animation`)
 
-- `data_format = matrix_frame_sequence_v1`
+- `data_format = matrix_frame_sequence_v2`
 - Includes `frame_interval_ms`, `frame_count`, `frames[]`.
+- Each frame includes its own `compact_layered_hex` for layered transport.
 - Animation output includes compact format metadata and per-frame indices.
 
 ## 9. Final LLM Checklist Before Calling MCP
@@ -619,14 +699,40 @@ Output JSON only.
 7. Payload is JSON-only, no explanation text mixed in.
 8. Keep each frame logic simple and deterministic.
 
-## 10. Delivery Notes
+## 10. Delivery Notes & Pipeline Verification
 
-- Single-frame tools prefer debug websocket delivery when available.
-- Single-frame tools can fall back to HTTP preview flow.
-- Text and animation playback are intended for debug websocket path.
-- Animation sequence transport should use:
-  - `matrix_animation_start`
-  - indexed `matrix_pattern_result` frames
-  - `matrix_animation_end`
-- `AI端` should buffer and loop preview locally, then forward full batch to `LED端`.
-- Compact bitmap frames are `38` bytes, so low-latency flow can rely on final `FrameCommit` ACK when payload fits one chunk.
+### 10.1 Animation Transmission Pipeline
+
+```
+Python (MCP bridge)
+  → Debug WS: matrix_animation_start + N×matrix_pattern_result + matrix_animation_end
+    → ESP32 (lichuang_dev_board): accumulate PendingMatrixAnimation[] (max 24)
+      → ShowBitmapAnimation() → ShowLayeredAnimationLocked()
+        → BLE: AnimationStart(0x04) + N×AnimationFrame + AnimationEnd
+          → AI8051U: BeginAnimationUpload → StoreAnimationFrame × N → CommitAnimation
+            → Tick1ms → RenderAnimationFrame → RenderBitmapLayeredFrame
+```
+
+### 10.2 Key Limits
+
+- Max animation frames: **24** (protocol `GP_MATRIX_ANIMATION_MAX_FRAMES`)
+- Max layers per frame: **16** (protocol `GP_MATRIX_BITMAP_LAYERED_MAX_COLORS`)
+- Max layers per animation frame: **4** (protocol `GP_MATRIX_ANIMATION_MAX_LAYERS`)
+- Per-layer size: **36 bytes** (1 header + 32 bitmap + 3 RGB)
+- 2-color frame payload: **72 bytes** (2 layers)
+- Frame chunk size: **64 bytes** (2 chunks per frame)
+- Input frames > 24: **auto-resampled** to 24 with scaled interval
+
+### 10.3 Format Verification
+
+- All frames use **BITMAP_LAYERED** (format 0x04)
+- Single frames: FrameStart(0x04) → FrameChunk(s) → FrameCommit
+- Animation frames: AnimationStart(0x04) → AnimationFrame[] → AnimationEnd
+- LED-side rendering: clear→black, then layer 0 (background) → layer 1 (foreground) paint-on-top
+
+### 10.4 Delivery Modes
+
+- Single-frame tools: debug websocket → `matrix_pattern_result`
+- Animation tools: debug websocket → `matrix_animation_start` + frames + `matrix_animation_end`
+- Preview: ESP32 LCD shows bitmap preview during accumulation
+- Fallback: HTTP preview for single frames when debug WS unavailable

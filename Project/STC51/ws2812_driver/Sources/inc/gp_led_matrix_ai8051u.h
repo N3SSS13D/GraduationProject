@@ -15,12 +15,13 @@
 
 #define GP_MATRIX_AI8051U_RX_BUFFER_SIZE (GP_MATRIX_PACKET_MAX_SIZE + 8U)
 #define GP_MATRIX_AI8051U_TX_BUFFER_SIZE 32U
+#define GP_MATRIX_AI8051U_FRAME_BUFFER_SIZE (GP_MATRIX_BITMAP_LAYERED_MAX_FRAME_SIZE)
 
 typedef struct
 {
     uint8_t rxBuffer[GP_MATRIX_AI8051U_RX_BUFFER_SIZE];
     uint8_t txBuffer[GP_MATRIX_AI8051U_TX_BUFFER_SIZE];
-    uint8_t frameBuffer[GP_MATRIX_RGB332_FRAME_SIZE];
+    uint8_t frameBuffer[GP_MATRIX_AI8051U_FRAME_BUFFER_SIZE];
     uint8_t glyphBuffer[GP_MATRIX_MAX_GLYPH_TRANSFER_BYTES];
     uint8_t transportEndpoint;
     uint8_t brightness;

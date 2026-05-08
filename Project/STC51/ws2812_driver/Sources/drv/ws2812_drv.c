@@ -748,6 +748,11 @@ bit WS2812DRV_IsDmaBusy(void)
 	return g_ws2812DmaBusy;
 }
 
+bit WS2812DRV_IsPwmSwapPending(void)
+{
+	return g_ws2812PwmSwapPending;
+}
+
 uint8_t WS2812DRV_SetDisplayMode(WS2812DRV_DisplayMode_t mode)
 {
 	uint8_t activeCols;

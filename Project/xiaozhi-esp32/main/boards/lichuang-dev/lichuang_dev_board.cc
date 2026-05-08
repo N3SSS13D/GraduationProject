@@ -364,33 +364,6 @@ std::optional<uint32_t> ParseRgb888(const std::string& text) {
     return std::nullopt;
 }
 
-std::optional<std::array<uint8_t, GP_MATRIX_RGB332_FRAME_SIZE>> ParseRgb332FrameHex(const std::string& text) {
-    std::array<uint8_t, GP_MATRIX_RGB332_FRAME_SIZE> frame = {};
-    std::string hex_digits;
-
-    hex_digits.reserve(text.size());
-    for (char ch : text) {
-        if (std::isxdigit(static_cast<unsigned char>(ch)) != 0) {
-            hex_digits.push_back(ch);
-        }
-    }
-
-    if (hex_digits.size() != (GP_MATRIX_RGB332_FRAME_SIZE * 2U)) {
-        return std::nullopt;
-    }
-
-    for (size_t index = 0; index < frame.size(); ++index) {
-        unsigned int value = 0;
-
-        if (std::sscanf(hex_digits.substr(index * 2U, 2U).c_str(), "%2x", &value) != 1) {
-            return std::nullopt;
-        }
-        frame[index] = static_cast<uint8_t>(value & 0xFFU);
-    }
-
-    return frame;
-}
-
 std::optional<std::array<uint16_t, GP_MATRIX_HEIGHT>> ParseMatrixBitmapRowsHex(const std::string& text) {
     std::array<uint16_t, GP_MATRIX_HEIGHT> rows = {};
     std::string hex_digits;
@@ -416,30 +389,6 @@ std::optional<std::array<uint16_t, GP_MATRIX_HEIGHT>> ParseMatrixBitmapRowsHex(c
     }
 
     return rows;
-}
-
-uint8_t Rgb888ToRgb332(uint32_t rgb888) {
-    const uint8_t red = static_cast<uint8_t>((rgb888 >> 16) & 0xFFU);
-    const uint8_t green = static_cast<uint8_t>((rgb888 >> 8) & 0xFFU);
-    const uint8_t blue = static_cast<uint8_t>(rgb888 & 0xFFU);
-
-    return static_cast<uint8_t>((red & 0xE0U) | ((green >> 3) & 0x1CU) | ((blue >> 6) & 0x03U));
-}
-
-std::array<uint8_t, GP_MATRIX_RGB332_FRAME_SIZE> BuildRgb332FrameFromBitmapRows(
-    const std::array<uint16_t, GP_MATRIX_HEIGHT>& rows,
-    uint32_t primary_rgb888) {
-    std::array<uint8_t, GP_MATRIX_RGB332_FRAME_SIZE> frame = {};
-    const uint8_t primary_rgb332 = Rgb888ToRgb332(primary_rgb888);
-
-    for (size_t row = 0; row < GP_MATRIX_HEIGHT; ++row) {
-        for (size_t column = 0; column < GP_MATRIX_WIDTH; ++column) {
-            const bool enabled = ((rows[row] >> (15U - column)) & 0x0001U) != 0U;
-            frame[row * GP_MATRIX_WIDTH + column] = enabled ? primary_rgb332 : 0U;
-        }
-    }
-
-    return frame;
 }
 
 GpColorDebugAnimation ParseAnimationName(const std::string& text) {
@@ -2248,94 +2197,63 @@ cleanup:
             });
 
         mcp_server.AddTool("self.screen.matrix_16x16.draw",
-            "Draw one 16x16 matrix frame on the LED side. Use preset=python_demo, frame_rgb332_hex with 256 RGB332 bytes, or compact bitmap_rows_hex plus one primary_rgb888 color.",
+            "Draw one 16x16 matrix frame on the LED side via layered bitmap format. "
+            "Requires bitmap_rows_hex (64 hex chars, 16x16 bitmap) plus primary_rgb888 and optional background_rgb888.",
             PropertyList({
-                Property("preset", kPropertyTypeString, std::string("")),
-                Property("frame_rgb332_hex", kPropertyTypeString, std::string("")),
                 Property("bitmap_rows_hex", kPropertyTypeString, std::string("")),
                 Property("primary_rgb888", kPropertyTypeString, std::string("")),
+                Property("background_rgb888", kPropertyTypeString, std::string("#000000")),
                 Property("source", kPropertyTypeString, std::string("mcp")),
                 Property("transcript", kPropertyTypeString, std::string(""))
             }),
             [this](const PropertyList& properties) -> ReturnValue {
                 auto* matrix_led = led_matrix_.get();
                 auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display_);
-                const std::string preset = ToAsciiLower(properties["preset"].value<std::string>());
-                const std::string frame_hex = properties["frame_rgb332_hex"].value<std::string>();
                 const std::string bitmap_rows_hex = properties["bitmap_rows_hex"].value<std::string>();
                 const std::string primary_text = properties["primary_rgb888"].value<std::string>();
+                const std::string background_text = properties["background_rgb888"].value<std::string>();
                 const std::string source = properties["source"].value<std::string>();
                 const std::string transcript = properties["transcript"].value<std::string>();
                 bool applied = false;
-                std::string resolved_frame_hex = frame_hex;
-                std::string resolved_primary_text = primary_text;
 
                 if (matrix_led == nullptr) {
                     throw std::runtime_error("LED matrix transport is not initialized");
                 }
 
-                if (!preset.empty()) {
-                    if (preset == "python_demo") {
-                        applied = matrix_led->ShowRgb332FramePreset(GpColorDebugPreset::kPythonDemo);
-                    } else {
-                        throw std::runtime_error("Unsupported 16x16 preset: " + preset);
-                    }
-                } else if (!frame_hex.empty()) {
-                    const auto frame = ParseRgb332FrameHex(frame_hex);
-
-                    if (!frame.has_value()) {
-                        throw std::runtime_error("frame_rgb332_hex must contain exactly 256 RGB332 bytes encoded as 512 hex characters");
-                    }
-                    applied = matrix_led->ShowRgb332Frame(frame->data(), frame->size(), kGpMatrixModeSolidFrame);
-                } else if (!bitmap_rows_hex.empty()) {
-                    const auto bitmap_rows = ParseMatrixBitmapRowsHex(bitmap_rows_hex);
-                    const auto primary_rgb = ParseRgb888(primary_text);
-                    const auto frame = bitmap_rows.has_value() && primary_rgb.has_value()
-                        ? BuildRgb332FrameFromBitmapRows(*bitmap_rows, *primary_rgb)
-                        : std::array<uint8_t, GP_MATRIX_RGB332_FRAME_SIZE> {};
-
-                    if (!bitmap_rows.has_value()) {
-                        throw std::runtime_error("bitmap_rows_hex must contain exactly 16 rows encoded as 64 hex characters");
-                    }
-                    if (!primary_rgb.has_value()) {
-                        throw std::runtime_error("primary_rgb888 must be a RGB888 string like #RRGGBB");
-                    }
-
-                    if (debug_display != nullptr) {
-                        debug_display->ApplyMatrixBitmapPreview(*bitmap_rows, *primary_rgb, 0x000000U);
-                    }
-                    applied = matrix_led->ShowBitmapFrame(bitmap_rows->data(),
-                                                          bitmap_rows->size(),
-                                                          *primary_rgb,
-                                                          0x000000U,
-                                                          kGpMatrixModeSolidFrame);
-
-                    char rgb_text[16] = {0};
-                    std::snprintf(rgb_text, sizeof(rgb_text), "#%06X", static_cast<unsigned int>(*primary_rgb & 0xFFFFFFU));
-                    resolved_primary_text = rgb_text;
-
-                    {
-                        std::string compact_hex;
-                        compact_hex.reserve(frame.size() * 2U);
-                        for (uint8_t value : frame) {
-                            char byte_text[3] = {0};
-                            std::snprintf(byte_text, sizeof(byte_text), "%02x", static_cast<unsigned int>(value));
-                            compact_hex += byte_text;
-                        }
-                        resolved_frame_hex = compact_hex;
-                    }
-                } else {
-                    throw std::runtime_error("Either preset, frame_rgb332_hex, or bitmap_rows_hex plus primary_rgb888 is required");
+                if (bitmap_rows_hex.empty()) {
+                    throw std::runtime_error("bitmap_rows_hex is required");
                 }
+
+                const auto bitmap_rows = ParseMatrixBitmapRowsHex(bitmap_rows_hex);
+                const auto primary_rgb = ParseRgb888(primary_text);
+                const auto background_rgb = ParseRgb888(background_text);
+
+                if (!bitmap_rows.has_value()) {
+                    throw std::runtime_error("bitmap_rows_hex must contain exactly 16 rows encoded as 64 hex characters");
+                }
+                if (!primary_rgb.has_value()) {
+                    throw std::runtime_error("primary_rgb888 must be a RGB888 string like #RRGGBB");
+                }
+
+                if (debug_display != nullptr) {
+                    debug_display->ApplyMatrixBitmapPreview(*bitmap_rows, *primary_rgb, background_rgb.value_or(0x000000U));
+                }
+                applied = matrix_led->ShowBitmapFrame(bitmap_rows->data(),
+                                                      bitmap_rows->size(),
+                                                      *primary_rgb,
+                                                      background_rgb.value_or(0x000000U),
+                                                      kGpMatrixModeSolidFrame);
 
                 if (!applied) {
                     throw std::runtime_error("16x16 frame draw failed");
                 }
 
-                return BuildMatrixFrameResultJson(preset.c_str(),
-                                                  resolved_frame_hex.c_str(),
+                char rgb_text[16] = {0};
+                std::snprintf(rgb_text, sizeof(rgb_text), "#%06X", static_cast<unsigned int>(*primary_rgb & 0xFFFFFFU));
+                return BuildMatrixFrameResultJson("",
+                                                  "",
                                                   bitmap_rows_hex.c_str(),
-                                                  resolved_primary_text.c_str(),
+                                                  rgb_text,
                                                   applied,
                                                   source.c_str(),
                                                   transcript.c_str());
