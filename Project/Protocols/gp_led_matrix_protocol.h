@@ -16,15 +16,12 @@
         (dest_bytes)[1] = (uint8_t)(((value) >> 8) & 0xFFU); \
     } while (0)
 
-#define GP_MATRIX_PROTOCOL_MAGIC0 0x47U
-#define GP_MATRIX_PROTOCOL_MAGIC1 0x50U
-#define GP_MATRIX_PROTOCOL_VERSION 0x02U
-
-/* V3 compact header: 6 bytes, detected when byte1 != 0x50 after magic 0x47. */
 #define GP_MATRIX_PROTOCOL_MAGIC 0x47U
-#define GP_MATRIX_PACKET_HEADER_SIZE_V3 6U
-#define GP_MATRIX_PACKET_HEADER_CRC_BYTES_V3 (GP_MATRIX_PACKET_HEADER_SIZE_V3 - 1U)
-#define GP_MATRIX_PROTOCOL_FLAG_V3_IS_REPLY 0x04U
+
+/* Compact 6-byte header: magic + flags + sequence + command + payload_length + header_crc8. */
+#define GP_MATRIX_PACKET_HEADER_SIZE 6U
+#define GP_MATRIX_PACKET_HEADER_CRC_BYTES (GP_MATRIX_PACKET_HEADER_SIZE - 1U)
+#define GP_MATRIX_PROTOCOL_FLAG_IS_REPLY 0x04U
 
 /* Reserved endpoint identifier kept for local link diagnostics on the active transport. */
 #define GP_MATRIX_TRANSPORT_ENDPOINT_ID 0x31U
@@ -74,8 +71,6 @@
 /* Max layered frame bytes that fit in one LayeredFrame command packet (4 layers). */
 #define GP_MATRIX_LAYERED_FRAME_MAX_PAYLOAD (GP_MATRIX_BITMAP_LAYER_TOTAL_BYTES * GP_MATRIX_ANIMATION_MAX_LAYERS)
 #define GP_MATRIX_MAX_GLYPH_TRANSFER_BYTES 128U
-#define GP_MATRIX_PACKET_HEADER_SIZE 12U
-#define GP_MATRIX_PACKET_HEADER_CRC_BYTES (GP_MATRIX_PACKET_HEADER_SIZE - 1U)
 #define GP_MATRIX_PACKET_TRAILER_SIZE 2U
 #define GP_MATRIX_PACKET_OVERHEAD_SIZE (GP_MATRIX_PACKET_HEADER_SIZE + GP_MATRIX_PACKET_TRAILER_SIZE)
 #define GP_MATRIX_FRAME_START_PAYLOAD_BYTES 5U
@@ -94,11 +89,6 @@
 #define GP_MATRIX_DEBUG_LED_MAX_INDEX 7U
 #define GP_MATRIX_DEBUG_LED_FLOW_STOP 0x00U
 #define GP_MATRIX_DEBUG_LED_FLOW_START 0x01U
-
-typedef enum GpMatrixPacketType {
-    kGpMatrixPacketTypeRequest = 0x01,
-    kGpMatrixPacketTypeReply = 0x02,
-} GpMatrixPacketType;
 
 typedef enum GpMatrixCommand {
     kGpMatrixCommandPing = 0x01,
@@ -191,30 +181,15 @@ typedef enum GpMatrixReplyDetail {
     kGpMatrixReplyDetailChunkSize = 0x07,
 } GpMatrixReplyDetail;
 
+/* Compact 6-byte header. flags: [reserved:5][is_reply:1][local_only:1][ack_req:1] */
 typedef struct GpMatrixPacketHeader {
-    uint8_t magic0;
-    uint8_t magic1;
-    uint8_t version;
-    uint8_t header_size;
-    uint8_t packet_type;
+    uint8_t magic;
     uint8_t flags;
     uint8_t sequence;
-    uint8_t reply_to_sequence;
-    uint8_t payload_length_lo;
-    uint8_t payload_length_hi;
     uint8_t command;
-    uint8_t header_crc8;
-} GpMatrixPacketHeader;
-
-/* V3 compact header (6 bytes). Detection: after magic 0x47, if byte1 != 0x50 it's V3. */
-typedef struct GpMatrixPacketHeaderV3 {
-    uint8_t magic;
-    uint8_t flags;           /* [reserved:5][is_reply:1][local_only:1][ack_req:1] */
-    uint8_t sequence;
-    uint8_t command;
-    uint8_t payload_length;  /* 0..255, covers max 163-byte payload */
+    uint8_t payload_length;  /* 0..255 */
     uint8_t header_crc8;     /* CRC8 of bytes 0..4 */
-} GpMatrixPacketHeaderV3;
+} GpMatrixPacketHeader;
 
 typedef struct GpMatrixFrameStartPayload {
     uint8_t format;

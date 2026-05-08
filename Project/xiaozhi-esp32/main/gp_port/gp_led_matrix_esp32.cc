@@ -89,50 +89,9 @@ uint8_t BuildMatrixAnimStep(const GpColorDebugState& state) {
 }
 
 static_assert(sizeof(GpMatrixPacketHeader) == GP_MATRIX_PACKET_HEADER_SIZE,
-              "Unexpected GP matrix V2 header size");
-static_assert(sizeof(GpMatrixPacketHeaderV3) == GP_MATRIX_PACKET_HEADER_SIZE_V3,
-              "Unexpected GP matrix V3 header size");
+              "Unexpected GP matrix header size");
 static_assert(sizeof(GpMatrixFrameChunkPrefix) == GP_MATRIX_FRAME_CHUNK_PREFIX_BYTES,
               "Unexpected GP matrix chunk prefix size");
-
-GpMatrixPacketHeaderV3 BuildPacketHeaderV3(uint8_t flags,
-                                           uint8_t sequence,
-                                           uint8_t command,
-                                           uint8_t payload_length) {
-    GpMatrixPacketHeaderV3 header = {};
-
-    header.magic = GP_MATRIX_PROTOCOL_MAGIC;
-    header.flags = flags & (GP_MATRIX_PROTOCOL_FLAG_ACK_REQUIRED | GP_MATRIX_PROTOCOL_FLAG_LOCAL_ONLY);
-    header.sequence = sequence;
-    header.command = command;
-    header.payload_length = payload_length;
-    header.header_crc8 = GpMatrixComputeHeaderCrc8(reinterpret_cast<const uint8_t*>(&header),
-                                                    GP_MATRIX_PACKET_HEADER_CRC_BYTES_V3);
-    return header;
-}
-
-GpMatrixPacketHeader BuildPacketHeader(GpMatrixPacketType packet_type,
-                                       uint8_t flags,
-                                       uint8_t sequence,
-                                       uint8_t reply_to_sequence,
-                                       uint8_t command,
-                                       uint16_t payload_length) {
-    GpMatrixPacketHeader header = {};
-
-    header.magic0 = GP_MATRIX_PROTOCOL_MAGIC0;
-    header.magic1 = GP_MATRIX_PROTOCOL_MAGIC1;
-    header.version = GP_MATRIX_PROTOCOL_VERSION;
-    header.header_size = GP_MATRIX_PACKET_HEADER_SIZE;
-    header.packet_type = static_cast<uint8_t>(packet_type);
-    header.flags = flags;
-    header.sequence = sequence;
-    header.reply_to_sequence = reply_to_sequence;
-    GP_MATRIX_WRITE_LE16(&header.payload_length_lo, payload_length);
-    header.command = command;
-    header.header_crc8 = GpMatrixComputeHeaderCrc8(reinterpret_cast<const uint8_t*>(&header),
-                                                   GP_MATRIX_PACKET_HEADER_CRC_BYTES);
-    return header;
-}
 
 void WriteChunkPrefix(uint8_t* payload, uint16_t offset, uint8_t chunk_size) {
     GP_MATRIX_WRITE_LE16(payload, offset);
@@ -609,11 +568,7 @@ bool GpLedMatrixEsp32::SendCommand(uint8_t command,
                                    bool ack_required,
                                    bool track_activity) {
     const uint8_t flags = static_cast<uint8_t>(ack_required ? GP_MATRIX_PROTOCOL_FLAG_ACK_REQUIRED : 0U);
-    const bool use_v3 = ((command == kGpMatrixCommandLayeredFrame)
-                         || (command == kGpMatrixCommandLayeredAnimFrame));
-    const uint8_t actual_header_size = static_cast<uint8_t>(use_v3
-        ? GP_MATRIX_PACKET_HEADER_SIZE_V3 : GP_MATRIX_PACKET_HEADER_SIZE);
-    std::vector<uint8_t> buffer(static_cast<size_t>(actual_header_size)
+    std::vector<uint8_t> buffer(static_cast<size_t>(GP_MATRIX_PACKET_HEADER_SIZE)
                                 + payload_length + GP_MATRIX_PACKET_TRAILER_SIZE);
     GpMatrixStatusCode reply_status;
     GpMatrixPacketHeader header = {};
@@ -634,38 +589,21 @@ bool GpLedMatrixEsp32::SendCommand(uint8_t command,
     }
 
     sequence = sequence_++;
-
-    /* Use V3 compact header (6 bytes) for lightweight commands, V2 for legacy. */
-    if (use_v3)
-    {
-        const auto header_v3 = BuildPacketHeaderV3(flags, sequence, command,
-                                                    static_cast<uint8_t>(payload_length));
-        std::memcpy(buffer.data(), &header_v3, sizeof(header_v3));
-        if (payload_length > 0 && payload != nullptr) {
-            std::memcpy(buffer.data() + GP_MATRIX_PACKET_HEADER_SIZE_V3, payload, payload_length);
-        }
-        packet_crc = GpMatrixComputePacketCrc16(buffer.data(),
-                                                 static_cast<uint16_t>(GP_MATRIX_PACKET_HEADER_SIZE_V3
-                                                                       + payload_length));
-        GP_MATRIX_WRITE_LE16(buffer.data() + GP_MATRIX_PACKET_HEADER_SIZE_V3 + payload_length,
-                              packet_crc);
+    header.magic = GP_MATRIX_PROTOCOL_MAGIC;
+    header.flags = flags;
+    header.sequence = sequence;
+    header.command = command;
+    header.payload_length = static_cast<uint8_t>(payload_length);
+    header.header_crc8 = GpMatrixComputeHeaderCrc8(reinterpret_cast<const uint8_t*>(&header),
+                                                    GP_MATRIX_PACKET_HEADER_CRC_BYTES);
+    std::memcpy(buffer.data(), &header, sizeof(header));
+    if (payload_length > 0 && payload != nullptr) {
+        std::memcpy(buffer.data() + GP_MATRIX_PACKET_HEADER_SIZE, payload, payload_length);
     }
-    else
-    {
-        header = BuildPacketHeader(kGpMatrixPacketTypeRequest,
-                                   flags,
-                                   sequence,
-                                   0U,
-                                   command,
-                                   static_cast<uint16_t>(payload_length));
-        std::memcpy(buffer.data(), &header, sizeof(header));
-        if (payload_length > 0 && payload != nullptr) {
-            std::memcpy(buffer.data() + GP_MATRIX_PACKET_HEADER_SIZE, payload, payload_length);
-        }
-        packet_crc = GpMatrixComputePacketCrc16(buffer.data(),
-                                                 static_cast<uint16_t>(buffer.size() - GP_MATRIX_PACKET_TRAILER_SIZE));
-        GP_MATRIX_WRITE_LE16(buffer.data() + buffer.size() - GP_MATRIX_PACKET_TRAILER_SIZE, packet_crc);
-    }
+    packet_crc = GpMatrixComputePacketCrc16(buffer.data(),
+                                             static_cast<uint16_t>(GP_MATRIX_PACKET_HEADER_SIZE
+                                                                   + payload_length));
+    GP_MATRIX_WRITE_LE16(buffer.data() + GP_MATRIX_PACKET_HEADER_SIZE + payload_length, packet_crc);
     last_payload_summary_ = BuildPayloadSummary(command, payload, payload_length);
     if ((command == kGpMatrixCommandSetDebugLed) && !ack_required) {
         ESP_LOGD(TAG,
@@ -727,30 +665,26 @@ bool GpLedMatrixEsp32::ReadReply(uint8_t expected_sequence, uint8_t expected_com
     for (uint32_t attempt = 0; attempt < kReplyPollRetries; ++attempt) {
         if ((transport_ != nullptr) && transport_->ReadPacket(reply.data(), reply.size(), &reply_length, 100)) {
             const auto* header = reinterpret_cast<const GpMatrixPacketHeader*>(reply.data());
-            uint16_t payload_length;
+            uint8_t payload_length;
             uint16_t packet_crc;
             uint8_t reply_detail;
 
             if (reply_length < GP_MATRIX_PACKET_OVERHEAD_SIZE) {
                 continue;
             }
-            if ((header->magic0 != GP_MATRIX_PROTOCOL_MAGIC0)
-                || (header->magic1 != GP_MATRIX_PROTOCOL_MAGIC1)
-                || (header->version != GP_MATRIX_PROTOCOL_VERSION)) {
-                continue;
-            }
-            if ((header->header_size != GP_MATRIX_PACKET_HEADER_SIZE)
-                || (header->packet_type != kGpMatrixPacketTypeReply)) {
+            if ((header->magic != GP_MATRIX_PROTOCOL_MAGIC)
+                || ((header->flags & GP_MATRIX_PROTOCOL_FLAG_IS_REPLY) == 0U)) {
                 continue;
             }
             if (GpMatrixComputeHeaderCrc8(reply.data(), GP_MATRIX_PACKET_HEADER_CRC_BYTES) != header->header_crc8) {
                 continue;
             }
-            payload_length = GP_MATRIX_READ_LE16(&header->payload_length_lo);
-            if ((static_cast<size_t>(header->header_size) + payload_length + GP_MATRIX_PACKET_TRAILER_SIZE) != reply_length) {
+            payload_length = header->payload_length;
+            if ((static_cast<size_t>(GP_MATRIX_PACKET_HEADER_SIZE) + payload_length
+                 + GP_MATRIX_PACKET_TRAILER_SIZE) != reply_length) {
                 continue;
             }
-            if ((header->reply_to_sequence != expected_sequence) || (header->command != expected_command)) {
+            if ((header->sequence != expected_sequence) || (header->command != expected_command)) {
                 continue;
             }
             if (payload_length < kReplyMinPayloadBytes) {

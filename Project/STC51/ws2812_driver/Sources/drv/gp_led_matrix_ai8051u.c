@@ -291,7 +291,7 @@ static void GpLedMatrixAi8051u_QueueCompletePacket(GpLedMatrixAi8051uContext xda
 
 static void GpLedMatrixAi8051u_ResyncFromByte(GpLedMatrixAi8051uContext xdata *context, uint8_t rxByte)
 {
-    if (rxByte == GP_MATRIX_PROTOCOL_MAGIC0)
+    if (rxByte == GP_MATRIX_PROTOCOL_MAGIC)
     {
         context->rxBuffer[0] = rxByte;
         g_gpMatrixStreamLength = 1U;
@@ -304,11 +304,8 @@ static void GpLedMatrixAi8051u_ResyncFromByte(GpLedMatrixAi8051uContext xdata *c
 
 static void GpLedMatrixAi8051u_PushStreamByte(GpLedMatrixAi8051uContext xdata *context, uint8_t rxByte)
 {
-    const GpMatrixPacketHeader xdata *headerV2;
-    const GpMatrixPacketHeaderV3 xdata *headerV3;
-    uint16_t payloadLength;
+    const GpMatrixPacketHeader xdata *header;
     uint16_t expectedLength;
-    uint8_t detectedV3;
 
     if (g_gpMatrixStreamLength == 0U)
     {
@@ -326,81 +323,28 @@ static void GpLedMatrixAi8051u_PushStreamByte(GpLedMatrixAi8051uContext xdata *c
         return;
     }
 
-    /* Byte 1 determines format: 0x50 = V2 (12-byte header), otherwise = V3 compact (6-byte header). */
-    if (g_gpMatrixStreamLength == 1U)
-    {
-        if ((rxByte != GP_MATRIX_PROTOCOL_MAGIC1) && ((rxByte & 0x80U) != 0U))
-        {
-            /* Not V2 and not valid V3 flags (bit7 reserved=0): resync. */
-            GpLedMatrixAi8051u_ResyncFromByte(context, rxByte);
-            return;
-        }
-    }
-
     context->rxBuffer[g_gpMatrixStreamLength] = rxByte;
     g_gpMatrixStreamLength++;
 
-    detectedV3 = 0U;
-    if ((g_gpMatrixStreamLength == GP_MATRIX_PACKET_HEADER_SIZE_V3) && (g_gpMatrixExpectedPacketLength == 0U))
+    if ((g_gpMatrixStreamLength == GP_MATRIX_PACKET_HEADER_SIZE) && (g_gpMatrixExpectedPacketLength == 0U))
     {
-        if (context->rxBuffer[1U] != GP_MATRIX_PROTOCOL_MAGIC1)
+        header = (const GpMatrixPacketHeader xdata *)context->rxBuffer;
+        if ((header->magic == GP_MATRIX_PROTOCOL_MAGIC)
+            && (GpMatrixComputeHeaderCrc8(context->rxBuffer, GP_MATRIX_PACKET_HEADER_CRC_BYTES)
+                == header->header_crc8)
+            && (header->payload_length <= GP_MATRIX_PACKET_MAX_PAYLOAD_BYTES))
         {
-            /* Potential V3 packet: validate CRC8 immediately. Reject on mismatch. */
-            headerV3 = (const GpMatrixPacketHeaderV3 xdata *)context->rxBuffer;
-            if ((GpMatrixComputeHeaderCrc8(context->rxBuffer, GP_MATRIX_PACKET_HEADER_CRC_BYTES_V3)
-                 == headerV3->header_crc8)
-                && (headerV3->payload_length <= GP_MATRIX_PACKET_MAX_PAYLOAD_BYTES))
+            expectedLength = (uint16_t)(GP_MATRIX_PACKET_HEADER_SIZE
+                                        + header->payload_length
+                                        + GP_MATRIX_PACKET_TRAILER_SIZE);
+            if ((expectedLength >= GP_MATRIX_PROTOCOL_MIN_PACKET_LENGTH)
+                && (expectedLength <= GP_MATRIX_AI8051U_RX_BUFFER_SIZE))
             {
-                expectedLength = (uint16_t)(GP_MATRIX_PACKET_HEADER_SIZE_V3
-                                            + headerV3->payload_length
-                                            + GP_MATRIX_PACKET_TRAILER_SIZE);
-                if ((expectedLength >= GP_MATRIX_PROTOCOL_MIN_PACKET_LENGTH)
-                    && (expectedLength <= GP_MATRIX_AI8051U_RX_BUFFER_SIZE))
-                {
-                    g_gpMatrixExpectedPacketLength = expectedLength;
-                    detectedV3 = 1U;
-                }
-            }
-            if (detectedV3 == 0U)
-            {
-                /* V3 header CRC failed: resync immediately. */
-                GpLedMatrixAi8051u_ResyncFromByte(context, rxByte);
-                return;
+                g_gpMatrixExpectedPacketLength = expectedLength;
             }
         }
-    }
-
-    if ((detectedV3 == 0U) && (g_gpMatrixStreamLength == GP_MATRIX_PACKET_HEADER_SIZE)
-        && (g_gpMatrixExpectedPacketLength == 0U))
-    {
-        if (context->rxBuffer[1U] == GP_MATRIX_PROTOCOL_MAGIC1)
+        if (g_gpMatrixExpectedPacketLength == 0U)
         {
-            headerV2 = (const GpMatrixPacketHeader xdata *)context->rxBuffer;
-            if ((headerV2->version == GP_MATRIX_PROTOCOL_VERSION)
-                && (headerV2->header_size == GP_MATRIX_PACKET_HEADER_SIZE)
-                && (headerV2->packet_type == (uint8_t)kGpMatrixPacketTypeRequest)
-                && (GpMatrixComputeHeaderCrc8(context->rxBuffer, GP_MATRIX_PACKET_HEADER_CRC_BYTES)
-                    == headerV2->header_crc8))
-            {
-                payloadLength = GpLedMatrixAi8051u_ReadLe16(&headerV2->payload_length_lo);
-                expectedLength = (uint16_t)(headerV2->header_size + payloadLength
-                                            + GP_MATRIX_PACKET_TRAILER_SIZE);
-                if ((expectedLength >= GP_MATRIX_PROTOCOL_MIN_PACKET_LENGTH)
-                    && (expectedLength <= GP_MATRIX_AI8051U_RX_BUFFER_SIZE))
-                {
-                    g_gpMatrixExpectedPacketLength = expectedLength;
-                }
-            }
-            if (g_gpMatrixExpectedPacketLength == 0U)
-            {
-                /* V2 header validation failed: resync immediately. */
-                GpLedMatrixAi8051u_ResyncFromByte(context, rxByte);
-                return;
-            }
-        }
-        else
-        {
-            /* rxBuffer[1] != 0x50 and V3 was already rejected at length 6: resync. */
             GpLedMatrixAi8051u_ResyncFromByte(context, rxByte);
             return;
         }
@@ -434,16 +378,11 @@ static void GpLedMatrixAi8051u_BuildReply(GpMatrixStatusCode status)
     }
 
     header = (GpMatrixPacketHeader xdata *)g_gpMatrixCtx->txBuffer;
-    header->magic0 = GP_MATRIX_PROTOCOL_MAGIC0;
-    header->magic1 = GP_MATRIX_PROTOCOL_MAGIC1;
-    header->version = GP_MATRIX_PROTOCOL_VERSION;
-    header->header_size = GP_MATRIX_PACKET_HEADER_SIZE;
-    header->packet_type = (uint8_t)kGpMatrixPacketTypeReply;
-    header->flags = 0U;
+    header->magic = GP_MATRIX_PROTOCOL_MAGIC;
+    header->flags = GP_MATRIX_PROTOCOL_FLAG_IS_REPLY;
     header->sequence = g_gpMatrixSequence;
-    header->reply_to_sequence = g_gpMatrixSequence;
-    GpLedMatrixAi8051u_WriteLe16(&header->payload_length_lo, GP_MATRIX_REPLY_PAYLOAD_BYTES);
     header->command = g_gpMatrixCommand;
+    header->payload_length = GP_MATRIX_REPLY_PAYLOAD_BYTES;
     header->header_crc8 = GpMatrixComputeHeaderCrc8(g_gpMatrixCtx->txBuffer, GP_MATRIX_PACKET_HEADER_CRC_BYTES);
     GpLedMatrixAi8051u_CopyBytes(&g_gpMatrixCtx->txBuffer[GP_MATRIX_PACKET_HEADER_SIZE],
                                  g_gpMatrixReplyPayload,
@@ -838,16 +777,13 @@ static GpMatrixStatusCode GpLedMatrixAi8051u_ProcessPacket(GpLedMatrixAi8051uCon
                                                            const uint8_t xdata *packet,
                                                            uint16_t packetLength)
 {
-    const GpMatrixPacketHeader xdata *headerV2;
-    const GpMatrixPacketHeaderV3 xdata *headerV3;
+    const GpMatrixPacketHeader xdata *header;
     GpMatrixStatusCode status;
     uint8_t command;
     uint8_t sequence;
-    uint8_t headerSize;
     uint16_t payloadLength;
     uint16_t expectedLength;
     uint16_t packetCrc;
-    uint8_t headerCrcBytes;
     const uint8_t xdata *payload;
 
     if (packetLength < GP_MATRIX_PROTOCOL_MIN_PACKET_LENGTH)
@@ -855,58 +791,29 @@ static GpMatrixStatusCode GpLedMatrixAi8051u_ProcessPacket(GpLedMatrixAi8051uCon
         return kGpMatrixStatusBadLength;
     }
 
-    if (packet[0] != GP_MATRIX_PROTOCOL_MAGIC)
+    header = (const GpMatrixPacketHeader xdata *)packet;
+    if ((header->magic != GP_MATRIX_PROTOCOL_MAGIC)
+        || (GpMatrixComputeHeaderCrc8(packet, GP_MATRIX_PACKET_HEADER_CRC_BYTES) != header->header_crc8))
+    {
+        return kGpMatrixStatusBadChecksum;
+    }
+    if ((header->flags & GP_MATRIX_PROTOCOL_FLAG_IS_REPLY) != 0U)
     {
         return kGpMatrixStatusUnsupported;
     }
 
-    /* Detect format by byte 1: 0x50 = V2 (12-byte), else = V3 compact (6-byte). */
-    if (packet[1] == GP_MATRIX_PROTOCOL_MAGIC1)
-    {
-        headerV2 = (const GpMatrixPacketHeader xdata *)packet;
-        if ((headerV2->version != GP_MATRIX_PROTOCOL_VERSION)
-            || (headerV2->header_size != GP_MATRIX_PACKET_HEADER_SIZE)
-            || (headerV2->packet_type != (uint8_t)kGpMatrixPacketTypeRequest))
-        {
-            return kGpMatrixStatusUnsupported;
-        }
-        headerCrcBytes = GP_MATRIX_PACKET_HEADER_CRC_BYTES;
-        if (GpMatrixComputeHeaderCrc8(packet, headerCrcBytes) != headerV2->header_crc8)
-        {
-            return kGpMatrixStatusBadChecksum;
-        }
-        command = headerV2->command;
-        sequence = headerV2->sequence;
-        g_gpMatrixFlags = headerV2->flags;
-        payloadLength = GpLedMatrixAi8051u_ReadLe16(&headerV2->payload_length_lo);
-        headerSize = headerV2->header_size;
-    }
-    else
-    {
-        headerV3 = (const GpMatrixPacketHeaderV3 xdata *)packet;
-        headerCrcBytes = GP_MATRIX_PACKET_HEADER_CRC_BYTES_V3;
-        if (GpMatrixComputeHeaderCrc8(packet, headerCrcBytes) != headerV3->header_crc8)
-        {
-            return kGpMatrixStatusBadChecksum;
-        }
-        if ((headerV3->flags & GP_MATRIX_PROTOCOL_FLAG_V3_IS_REPLY) != 0U)
-        {
-            return kGpMatrixStatusUnsupported;
-        }
-        command = headerV3->command;
-        sequence = headerV3->sequence;
-        g_gpMatrixFlags = (headerV3->flags & (GP_MATRIX_PROTOCOL_FLAG_ACK_REQUIRED
-                                               | GP_MATRIX_PROTOCOL_FLAG_LOCAL_ONLY));
-        payloadLength = headerV3->payload_length;
-        headerSize = GP_MATRIX_PACKET_HEADER_SIZE_V3;
-    }
+    command = header->command;
+    sequence = header->sequence;
+    g_gpMatrixFlags = (header->flags & (GP_MATRIX_PROTOCOL_FLAG_ACK_REQUIRED
+                                       | GP_MATRIX_PROTOCOL_FLAG_LOCAL_ONLY));
+    payloadLength = header->payload_length;
 
     g_gpMatrixCtx = context;
     g_gpMatrixCommand = command;
     g_gpMatrixSequence = sequence;
     g_gpMatrixReplyDetail = (uint8_t)kGpMatrixReplyDetailNone;
 
-    expectedLength = (uint16_t)(headerSize + payloadLength + GP_MATRIX_PACKET_TRAILER_SIZE);
+    expectedLength = (uint16_t)(GP_MATRIX_PACKET_HEADER_SIZE + payloadLength + GP_MATRIX_PACKET_TRAILER_SIZE);
     if (expectedLength != packetLength)
     {
         g_gpMatrixReplyDetail = (uint8_t)kGpMatrixReplyDetailPayloadLength;
@@ -925,7 +832,7 @@ static GpMatrixStatusCode GpLedMatrixAi8051u_ProcessPacket(GpLedMatrixAi8051uCon
     context->lastCommand = command;
     context->lastSequence = sequence;
     context->lastFlags = g_gpMatrixFlags;
-    payload = &packet[headerSize];
+    payload = &packet[GP_MATRIX_PACKET_HEADER_SIZE];
     g_gpMatrixPayload = payload;
     g_gpMatrixPayloadLength = payloadLength;
     GpLedMatrixAi8051u_LogPacketRx(command, sequence, payloadLength);

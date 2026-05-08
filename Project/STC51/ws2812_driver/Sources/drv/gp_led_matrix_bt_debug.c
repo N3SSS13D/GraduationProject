@@ -331,8 +331,7 @@ static uint8_t GpLedMatrixBtDebug_ContainsProtocolPacket(const uint8_t *buffer, 
 
     for (index = 0U; index + 1U < length; ++index)
     {
-        if ((buffer[index] == GP_MATRIX_PROTOCOL_MAGIC0)
-            && (buffer[index + 1U] == GP_MATRIX_PROTOCOL_MAGIC1))
+        if (buffer[index] == GP_MATRIX_PROTOCOL_MAGIC)
         {
             return 1U;
         }
