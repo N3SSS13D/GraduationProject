@@ -76,16 +76,14 @@ const char* CommandName(uint8_t command) {
 
 void LogRxPacket(const uint8_t* data, size_t length) {
     const auto* header = reinterpret_cast<const GpMatrixPacketHeader*>(data);
-    const uint16_t payload_length = GP_MATRIX_READ_LE16(&header->payload_length_lo);
-    const char* packet_type = (header->packet_type == kGpMatrixPacketTypeReply) ? "reply" : "request";
+    const char* packet_type = ((header->flags & GP_MATRIX_PROTOCOL_FLAG_IS_REPLY) != 0U) ? "reply" : "request";
 
     ESP_LOGI(TAG,
-             "[BT_RX] %s cmd=%s seq=%u reply=%u payload=%u raw=%u",
+             "[BT_RX] %s cmd=%s seq=%u payload=%u raw=%u",
              packet_type,
              CommandName(header->command),
              static_cast<unsigned int>(header->sequence),
-             static_cast<unsigned int>(header->reply_to_sequence),
-             static_cast<unsigned int>(payload_length),
+             static_cast<unsigned int>(header->payload_length),
              static_cast<unsigned int>(length));
     ESP_LOG_BUFFER_HEX_LEVEL(TAG, data, length, ESP_LOG_INFO);
 }
@@ -93,7 +91,7 @@ void LogRxPacket(const uint8_t* data, size_t length) {
 bool IsReplyPacket(const GpMatrixRxPacket& packet) {
     const auto* header = reinterpret_cast<const GpMatrixPacketHeader*>(packet.data);
 
-    return header->packet_type == kGpMatrixPacketTypeReply;
+    return (header->flags & GP_MATRIX_PROTOCOL_FLAG_IS_REPLY) != 0U;
 }
 
 class GpMatrixBtUartTransport final : public GpMatrixTransport {
@@ -340,8 +338,7 @@ private:
         while (true) {
             while (!rx_buffer_.empty()) {
                 if ((rx_buffer_.size() >= 2U)
-                    && (rx_buffer_[0] == GP_MATRIX_PROTOCOL_MAGIC0)
-                    && (rx_buffer_[1] == GP_MATRIX_PROTOCOL_MAGIC1)) {
+                    && (rx_buffer_[0] == GP_MATRIX_PROTOCOL_MAGIC)) {
                     break;
                 }
                 rx_buffer_.erase(rx_buffer_.begin());
@@ -352,12 +349,7 @@ private:
             }
 
             header = reinterpret_cast<const GpMatrixPacketHeader*>(rx_buffer_.data());
-            if (header->version != GP_MATRIX_PROTOCOL_VERSION) {
-                rx_buffer_.erase(rx_buffer_.begin());
-                continue;
-            }
-            if (header->header_size != GP_MATRIX_PACKET_HEADER_SIZE) {
-                ESP_LOGW(TAG, "HC-05 UART bad header size=%u", static_cast<unsigned int>(header->header_size));
+            if (header->magic != GP_MATRIX_PROTOCOL_MAGIC) {
                 rx_buffer_.erase(rx_buffer_.begin());
                 continue;
             }
@@ -368,8 +360,8 @@ private:
                 continue;
             }
 
-            payload_length = GP_MATRIX_READ_LE16(&header->payload_length_lo);
-            packet_length = static_cast<size_t>(header->header_size) + payload_length + GP_MATRIX_PACKET_TRAILER_SIZE;
+            payload_length = header->payload_length;
+            packet_length = static_cast<size_t>(GP_MATRIX_PACKET_HEADER_SIZE) + payload_length + GP_MATRIX_PACKET_TRAILER_SIZE;
             if ((packet_length < GP_MATRIX_PACKET_OVERHEAD_SIZE) || (packet_length > kBtMaxPacketBytes)) {
                 ESP_LOGW(TAG, "HC-05 UART bad packet length=%u", static_cast<unsigned int>(packet_length));
                 rx_buffer_.erase(rx_buffer_.begin());

@@ -27,7 +27,26 @@ V2 版本明确以以下目标为优先级：
 
 ### 包结构
 
-每个发送单元为一包，格式如下：
+#### V3 紧凑包头（推荐，6字节）
+
+轻量命令（`LayeredFrame`/`LayeredAnimFrame`）使用 V3 紧凑格式：
+
+| 字段 | 长度 | 说明 |
+| --- | --- | --- |
+| `magic` | 1 | 固定 `0x47` |
+| `flags` | 1 | `[reserved:5][is_reply:1][local_only:1][ack_req:1]` |
+| `sequence` | 1 | 包序号，循环递增 |
+| `command` | 1 | 命令字 |
+| `payload_length` | 1 | 负载长度（0..255） |
+| `header_crc8` | 1 | 前 5 字节的 CRC8 |
+| `payload` | N | 命令负载 |
+| `packet_crc16` | 2 | 从 magic 到 payload 末尾的 CRC16 |
+
+**检测方式**：`byte[0]=0x47`，若 `byte[1]!=0x50` 则为 V3（V2 的 byte[1] 固定为 `0x50`）。
+
+**总开销**：6 头 + 2 尾 = **8 字节**（V2 为 14 字节）。
+
+#### V2 包头（保留兼容，12字节）
 
 | 字段 | 长度 | 说明 |
 | --- | --- | --- |
@@ -36,10 +55,10 @@ V2 版本明确以以下目标为优先级：
 | `version` | 1 | 当前为 `0x02` |
 | `header_size` | 1 | 当前固定为 `12` |
 | `packet_type` | 1 | `0x01=Request`，`0x02=Reply` |
-| `flags` | 1 | 当前保留 ACK 请求位和本地链路位 |
+| `flags` | 1 | ACK 请求位和本地链路位 |
 | `sequence` | 1 | 当前包序号，循环递增 |
 | `reply_to_sequence` | 1 | Reply 关联的请求序号；Request 固定为 `0` |
-| `payload_length` | 2 | 负载长度，按 little-endian 解释 |
+| `payload_length` | 2 | 负载长度，LE16 |
 | `command` | 1 | 命令字；Reply 直接回显原命令 |
 | `header_crc8` | 1 | 前 `11` 字节的 CRC8 |
 | `payload` | N | 具体命令负载 |
@@ -47,10 +66,10 @@ V2 版本明确以以下目标为优先级：
 
 说明：
 
-- 多字节字段统一按 little-endian 手工序列化，不依赖编译器结构体内存布局。
-- `LED端` 和 `AI端` 都必须在读取完整包头后，先校验 `magic/version/header_size/header_crc8`，再信任 `payload_length`。
-- `packet_crc16` 覆盖 `header + payload`，用于真正的整包完整性校验；`header_crc8` 只负责快速判定包头是否合法。
-- 当前优先支持 `AI端` 与 `LED端` 的本地蓝牙闭环，再向更高层桥接扩展。
+- 多字节字段统一按 little-endian 手工序列化。
+- `LED端` 通过 `byte[1]` 自动检测 V2/V3 格式，无需协商。
+- Reply 始终使用 V2 格式（兼容性）。
+- `packet_crc16` 覆盖 `header + payload`；`header_crc8` 快速判定包头合法性。
 
 ### 命令集合
 
@@ -61,9 +80,14 @@ V2 版本明确以以下目标为优先级：
 | `SetMode` | `0x03` | 设置播放模式 |
 | `StateHint` | `0x04` | 同步 `AI端` 当前状态 |
 | `SetAction` | `0x05` | 下发本地动作描述（图案、效果、颜色、方向等） |
-| `FrameStart` | `0x10` | 开始一次 RGB332 帧传输 |
-| `FrameChunk` | `0x11` | 分片发送 RGB332 帧 |
-| `FrameCommit` | `0x12` | 提交并显示 RGB332 帧 |
+| `FrameStart` | `0x10` | 开始一次帧传输（保留兼容） |
+| `FrameChunk` | `0x11` | 分片发送帧数据（保留兼容） |
+| `FrameCommit` | `0x12` | 提交并显示帧（保留兼容） |
+| `AnimationStart` | `0x13` | 开始动画传输 |
+| `AnimationFrame` | `0x14` | 单帧动画数据（保留兼容） |
+| `AnimationEnd` | `0x15` | 提交动画并播放 |
+| **`LayeredFrame`** | **`0x18`** | **单包轻量帧：payload = BITMAP_LAYERED 数据，免握手** |
+| **`LayeredAnimFrame`** | **`0x19`** | **轻量动画帧：payload = [frame_index:1][layered_data:N]** |
 | `ScrollGlyphStart` | `0x20` | 开始滚动字模传输 |
 | `ScrollGlyphChunk` | `0x21` | 分片发送字模数据 |
 | `ScrollGlyphCommit` | `0x22` | 提交并进入滚动显示 |
@@ -88,7 +112,56 @@ Reply 不再使用单独的 `Status/Error` 命令字，而是统一复用原请�
 
 ### 图像负载
 
-#### 动作负载
+#### BITMAP_LAYERED 格式（V2 主格式）
+
+当前主力图像格式，替代旧 RGB332 和 BITMAP_RGB888。
+
+**层结构**：每层 = 1字节头 + 32字节bitmap + 3字节RGB = 36字节
+
+| 字段 | 长度 | 说明 |
+| --- | --- | --- |
+| `seq_total` | 1 | `[total:4][seq:4]`，总层数 + 当前层序号(0-based) |
+| `bitmap` | 32 | 16行 × 2字节/行 uint16_t LE，MSB=左，行序上→下 |
+| `rgb` | 3 | RGB888 颜色 |
+
+**完整图像** = Layer0 + Layer1 + ... + Layer(N-1)，多层串联。
+
+**渲染规则**：Layer 0（最底层）→ Layer (N-1)（最顶层），bitmap=1 的像素用该层颜色覆盖，高位层覆盖低位层。首层未覆盖像素填黑色。
+
+**轻量传输**：≤4层（≤144字节）直接使用 `LayeredFrame`(0x18) 单包发送，免去 FrameStart/Chunk/Commit 三次握手。
+
+#### LayeredFrame 命令 (0x18)
+
+单包发送完整 BITMAP_LAYERED 帧。
+- Payload = 多层串联数据（N×36 bytes）
+- 隐含：format=0x04, 16×16, mode=SolidFrame
+- LED端直接校验→渲染→ACK
+
+**传输效率对比**（2层72字节payload）：
+
+| 方式 | 发包数 | 总字节 | 效率 |
+| --- | --- | --- | --- |
+| FrameStart+Chunk+Commit | 3 | ~123 | 59% |
+| **LayeredFrame (新)** | **1** | **~86** | **84%** |
+
+#### LayeredAnimFrame 命令 (0x19)
+
+轻量动画帧。
+- Payload = `[frame_index:1][layered_data:N]`
+- 需先发 AnimationStart 设定帧数/间隔
+- 跳过 AnimationFrame 的格式校验，LED端直接存储
+
+#### 动画批量传输
+
+```
+AnimationStart(0x13) → [format:1, frame_count:1, interval_ms:2, flags:1]
+LayeredAnimFrame(0x19) × N → [frame_index:1][layered_data:N]
+AnimationEnd(0x15) → [frame_count:1]
+```
+
+最大24帧，每帧最大4层（144字节）。
+
+#### 动作负载（保留兼容）
 
 `SetAction` 负载是一个固定长度动作对象，用于在不依赖额外桥接改造的情况下，直接打通 `AI端` 到 `LED端` 的动作链。其字段覆盖：
 
@@ -103,17 +176,15 @@ Reply 不再使用单独的 `Status/Error` 命令字，而是统一复用原请�
 - `scroll_step` / `anim_step` / `gradient_span`
 - `flags`：是否使用次色、是否进入远程模式、是否释放远程模式
 
-这套动作对象是对 `AI端` 结果对象的二进制裁剪映射，优先适配当前本地蓝牙通信。
-
-#### RGB332 帧
+#### RGB332 帧（保留兼容）
 
 - 分辨率固定为 `16 x 16`。
 - 每像素 1 字节，格式与 `test_image.h` 中现有帧一致。
-- 一帧总长度 256 字节，因此必须通过 `FrameStart + FrameChunk + FrameCommit` 发送。
-- 当前每片最大数据负载为 `64` 字节。
-- `FrameChunk` 前缀改为 `byte_offset_lo + byte_offset_hi + size`，显式表示本片写入的字节偏移，不再使用“第几片 * 64”这种隐式推导。
+- 一帧总长度 256 字节，必须通过 `FrameStart + FrameChunk + FrameCommit` 发送。
+- 每片最大数据负载为 `160` 字节。
+- `FrameChunk` 前缀为 `byte_offset_lo + byte_offset_hi + size`。
 
-#### 字模滚动
+#### 字模滚动（保留兼容）
 
 - 单个汉字按 16 行 `uint16_t` 表示，每行 16 bit。
 - `ScrollGlyphStart` 负载包含字数、字宽、字距与总字节数。
@@ -121,12 +192,10 @@ Reply 不再使用单独的 `Status/Error` 命令字，而是统一复用原请�
 
 ### 推荐时序
 
-1. ESP32 上电后保持链路空闲，直到出现显式图像更新请求。
-2. 如果只需切换图案、效果、颜色或亮度，优先使用 `SetAction`，避免每次都下发整帧。
-3. 每次设备状态变化默认不自动覆盖上一条矩阵图像，只有显式图像更新才触发发送。
-4. 如果使用滚动字模，先完整下发字模，再以 `SetMode` 或 `ScrollGlyphCommit` 切换显示模式。
-5. 对需要确认执行结果的关键命令启用 `ACK_REQUIRED`，并在主机侧按 `packet_type=Reply + reply_to_sequence` 匹配回包。
-6. RGB332 整帧传输固定按 `64` 字节数据分片，外加 `3` 字节显式偏移前缀，这样 `AI端` 与 `LED端` 的 UART 缓冲区、ACK 节奏和错误定位都更稳定。
+1. **优先使用 `LayeredFrame`(0x18)** 发送单帧，免三次握手。
+2. 动画使用 `AnimationStart + LayeredAnimFrame×N + AnimationEnd`。
+3. 对需要确认的关键命令启用 `ACK_REQUIRED`。
+4. 旧命令 `FrameStart/FrameChunk/FrameCommit` 和 `AnimationFrame` 保留兼容。
 
 ### 当前验证重点
 

@@ -775,6 +775,8 @@ void Test_Init(void)
 void Test_TaskLoop(void)
 {
     GpLedMatrixAi8051u_Poll(&g_testAiMatrixCtx);
+    /* Process deferred animation frame rendering so heavy encoding stays out of ISR. */
+    GpLedAction_RenderPendingAnimationFrame();
     MidTask_Process();
 }
 
