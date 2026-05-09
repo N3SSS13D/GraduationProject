@@ -10,7 +10,7 @@
 #include "gp_led_matrix_bt_debug.h"
 #include "ws2812_drv.h"
 
-#define TEST_SCHED_TICK_US               1000UL
+#define TEST_SCHED_TICK_US               500UL
 #define TEST_ROW_INTERVAL_US_DEFAULT_NORMAL  1000UL
 #define TEST_ROW_INTERVAL_US_DEFAULT_LEGACY  1000UL
 #define TEST_ROW_INTERVAL_US_MIN         300UL

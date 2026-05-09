@@ -26,6 +26,8 @@ constexpr uint8_t kColorWhite = 0xFF;
 constexpr uint32_t kStartupLinkTestIntervalMs = 1000;
 constexpr uint32_t kReplyPollIntervalMs = 8;
 constexpr uint32_t kReplyPollRetries = 12;
+constexpr uint32_t kMaxSendRetries = 3;
+constexpr uint32_t kSendRetryDelayMs = 30;
 constexpr size_t kReplyMinPayloadBytes = 1U;
 constexpr uint8_t kMatrixDebugPatternDiamond = 0;
 constexpr uint8_t kMatrixDebugPatternCross = 1;
@@ -101,6 +103,12 @@ void WriteChunkPrefix(uint8_t* payload, uint16_t offset, uint8_t chunk_size) {
 uint8_t BuildMatrixGradientSpan(const GpColorDebugState& state) {
     const uint16_t scaled_span = static_cast<uint16_t>(state.dot_size_px) * 2U;
     return static_cast<uint8_t>(std::clamp<uint16_t>(scaled_span, 32U, 120U));
+}
+
+bool IsHighFrequencyFrameCommand(uint8_t command) {
+    return (command == kGpMatrixCommandFrameChunk)
+           || (command == kGpMatrixCommandAnimationFrame)
+           || (command == kGpMatrixCommandLayeredAnimFrame);
 }
 
 uint32_t ResolveMatrixBackgroundRgb888(const GpColorDebugState& state) {
@@ -450,9 +458,11 @@ bool GpLedMatrixEsp32::ShowLayeredAnimationLocked(const std::vector<std::vector<
         return false;
     }
 
+    std::vector<uint8_t> frame_payload;
+    std::vector<uint8_t> payload;
     for (frame_index = 0U; frame_index < frame_count; ++frame_index) {
-        std::vector<uint8_t> frame_payload;
-        std::vector<uint8_t> payload;
+        frame_payload.clear();
+        payload.clear();
 
         PackLayeredFramePayload(frame_payload, frameLayers[frame_index]);
         payload.reserve(1U + frame_payload.size());
@@ -612,6 +622,13 @@ bool GpLedMatrixEsp32::SendCommand(uint8_t command,
                  static_cast<unsigned int>(sequence),
                  static_cast<unsigned int>(payload_length),
                  last_payload_summary_.c_str());
+    } else if (IsHighFrequencyFrameCommand(command)) {
+        ESP_LOGD(TAG,
+                 "[GP_TX] cmd=%s seq=%u len=%u %s",
+                 CommandShortName(command),
+                 static_cast<unsigned int>(sequence),
+                 static_cast<unsigned int>(payload_length),
+                 last_payload_summary_.c_str());
     } else {
         ESP_LOGI(TAG,
                  "[GP_TX] cmd=%s seq=%u len=%u %s",
@@ -621,25 +638,66 @@ bool GpLedMatrixEsp32::SendCommand(uint8_t command,
                  last_payload_summary_.c_str());
     }
 
-    if ((transport_ == nullptr) || !transport_->WritePacket(buffer.data(), buffer.size(), 100)) {
-        link_verified_ = false;
-        failure_count_++;
-        ESP_LOGW(TAG, "Matrix transport write failed for command 0x%02x", command);
-        NotifyLinkStatus(false, BuildStatusText(false, command, sequence, payload_length, ESP_FAIL, kGpMatrixStatusInternalError, false));
-        return false;
-    }
+    for (uint32_t retry = 0; retry < kMaxSendRetries; ++retry) {
+        if ((transport_ == nullptr) || !transport_->WritePacket(buffer.data(), buffer.size(), 100)) {
+            if (retry + 1U < kMaxSendRetries) {
+                ESP_LOGW(TAG,
+                         "[GP_TX] cmd=%s seq=%u write fail, retry %lu/%lu",
+                         CommandShortName(command),
+                         static_cast<unsigned int>(sequence),
+                         static_cast<unsigned long>(retry + 1U),
+                         static_cast<unsigned long>(kMaxSendRetries - 1U));
+                vTaskDelay(pdMS_TO_TICKS(kSendRetryDelayMs));
+                continue;
+            }
 
-    success_count_++;
-    if (!ack_required) {
-        return true;
-    }
+            link_verified_ = false;
+            failure_count_++;
+            ESP_LOGW(TAG, "Matrix transport write failed for command 0x%02x", command);
+            NotifyLinkStatus(false,
+                             BuildStatusText(false,
+                                             command,
+                                             sequence,
+                                             payload_length,
+                                             ESP_FAIL,
+                                             kGpMatrixStatusInternalError,
+                                             false));
+            return false;
+        }
 
-    reply_valid = ReadReply(sequence, command, reply_status);
-    if (!reply_valid) {
+        if (!ack_required) {
+            success_count_++;
+            return true;
+        }
+
+        reply_valid = ReadReply(sequence, command, reply_status);
+        if (reply_valid) {
+            success_count_++;
+            break;
+        }
+
+        if (retry + 1U < kMaxSendRetries) {
+            ESP_LOGW(TAG,
+                     "[GP_RX] cmd=%s seq=%u timeout, retry %lu/%lu",
+                     CommandShortName(command),
+                     static_cast<unsigned int>(sequence),
+                     static_cast<unsigned long>(retry + 1U),
+                     static_cast<unsigned long>(kMaxSendRetries - 1U));
+            vTaskDelay(pdMS_TO_TICKS(kSendRetryDelayMs));
+            continue;
+        }
+
         link_verified_ = false;
         no_reply_count_++;
         failure_count_++;
-        NotifyLinkStatus(false, BuildStatusText(false, command, sequence, payload_length, ESP_ERR_TIMEOUT, kGpMatrixStatusInternalError, false));
+        NotifyLinkStatus(false,
+                         BuildStatusText(false,
+                                         command,
+                                         sequence,
+                                         payload_length,
+                                         ESP_ERR_TIMEOUT,
+                                         kGpMatrixStatusInternalError,
+                                         false));
         return false;
     }
 

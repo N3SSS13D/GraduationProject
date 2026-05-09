@@ -97,7 +97,7 @@ MAX_DRAWING_SOURCE_CHARS = 4000
 MAX_DRAWING_AST_NODES = 512
 MAX_DRAWING_RANGE_STEPS = 256
 MAX_TEXT_FRAME_COUNT = 48
-MAX_ANIMATION_FRAME_COUNT = 24
+MAX_ANIMATION_FRAME_COUNT = 32
 LOCAL_MCP_SERVER_NAME = "gp-display-mcp-bridge"
 
 DRAW_FRAME_TOOL_NAMES = frozenset({
@@ -1025,16 +1025,51 @@ def _effect_blink(base_rows, frame_count, effect):
     return [bitmap_rows_to_hex(base_rows if i < on_n else off_rows) for i in range(frame_count)]
 
 def _effect_flash(base_rows, frame_count, effect):
+    """Flash on/off pattern with seamless loop — the last frame is off and
+    the first frame is on, creating a natural transition."""
     on_count = max(1, min(frame_count - 1, int(effect.get("on_count", 2))))
     off_hex = bitmap_rows_to_hex([0] * MATRIX_HEIGHT)
     on_hex = bitmap_rows_to_hex(base_rows)
-    return [on_hex if (i % max(1, frame_count // on_count)) == 0 else off_hex for i in range(frame_count)]
+    gap = max(1, frame_count // on_count)
+    frames = []
+    for i in range(frame_count):
+        # Flash at positions 0, gap, 2*gap, ...
+        is_on = (i % gap == 0) and i < on_count * gap
+        frames.append(on_hex if is_on else off_hex)
+    return frames
 
 def _effect_wipe(base_rows, frame_count, effect):
+    """Wipe reveal then wipe hide (ping-pong) for a seamless loop.
+    First half: progressively reveal the image. Second half: progressively hide it.
+    The loop point is at the fully-hidden state, which connects smoothly."""
     direction = effect["name"].split("_")[1]
+    half = max(1, frame_count // 2)
     frames = []
-    for fi in range(frame_count):
-        progress = (fi + 1) / frame_count
+
+    for fi in range(half):
+        progress = (fi + 1) / half  # 1/half → 1.0 (reveal)
+        mask = [0] * MATRIX_HEIGHT
+        if direction == "left":
+            for c in range(max(1, int(MATRIX_WIDTH * progress))):
+                for r in range(MATRIX_HEIGHT):
+                    if (base_rows[r] >> (MATRIX_WIDTH - 1 - c)) & 1:
+                        mask[r] |= 1 << (MATRIX_WIDTH - 1 - c)
+        elif direction == "right":
+            for c in range(MATRIX_WIDTH - max(1, int(MATRIX_WIDTH * progress)), MATRIX_WIDTH):
+                for r in range(MATRIX_HEIGHT):
+                    if (base_rows[r] >> (MATRIX_WIDTH - 1 - c)) & 1:
+                        mask[r] |= 1 << (MATRIX_WIDTH - 1 - c)
+        elif direction == "up":
+            for r in range(max(1, int(MATRIX_HEIGHT * progress))):
+                mask[r] = base_rows[r]
+        elif direction == "down":
+            for r in range(MATRIX_HEIGHT - max(1, int(MATRIX_HEIGHT * progress)), MATRIX_HEIGHT):
+                mask[r] = base_rows[r]
+        frames.append(bitmap_rows_to_hex(mask))
+
+    for fi in range(half, frame_count):
+        progress = 1.0 - (fi - half + 0.5) / max(1, frame_count - half)  # 1.0 → ~0 (hide)
+        progress = max(0.0, min(1.0, progress))
         mask = [0] * MATRIX_HEIGHT
         if direction == "left":
             for c in range(max(1, int(MATRIX_WIDTH * progress))):
@@ -1056,15 +1091,33 @@ def _effect_wipe(base_rows, frame_count, effect):
     return frames
 
 def _effect_marquee(base_rows, frame_count, effect):
+    """Generate marquee frames that form a seamless loop.
+
+    Total shift (frame_count * step) must be a multiple of MATRIX_WIDTH so the
+    content returns to its starting column when the animation loops."""
     direction = "right" if effect["name"] == "marquee_right" else "left"
     step = max(1, int(effect.get("step", 1)))
+    # Enforce seamless loop: frame_count * step must be a multiple of MATRIX_WIDTH
+    total_shift = frame_count * step
+    if total_shift % MATRIX_WIDTH != 0:
+        cycles = (total_shift + MATRIX_WIDTH - 1) // MATRIX_WIDTH
+        frame_count = (cycles * MATRIX_WIDTH) // step
     return [bitmap_rows_to_hex(shift_bitmap_rows(base_rows,
             -(i * step) % MATRIX_WIDTH if direction == "right" else (i * step) % MATRIX_WIDTH))
             for i in range(frame_count)]
 
 def _effect_scroll_vertical(base_rows, frame_count, effect):
+    """Generate vertical scroll frames that form a seamless loop.
+
+    Total shift (frame_count * step) must be a multiple of MATRIX_HEIGHT so the
+    content returns to its starting row when the animation loops."""
     step = max(1, int(effect.get("step", 1)))
     up = effect["name"] == "scroll_up"
+    # Enforce seamless loop: frame_count * step must be a multiple of MATRIX_HEIGHT
+    total_shift = frame_count * step
+    if total_shift % MATRIX_HEIGHT != 0:
+        cycles = (total_shift + MATRIX_HEIGHT - 1) // MATRIX_HEIGHT
+        frame_count = (cycles * MATRIX_HEIGHT) // step
     frames = []
     for fi in range(frame_count):
         offset = (fi * step) % MATRIX_HEIGHT
@@ -1074,29 +1127,40 @@ def _effect_scroll_vertical(base_rows, frame_count, effect):
     return frames
 
 def _effect_breathe(base_rows, frame_count, effect):
+    """Density breathing with seamless loop: last-frame density is one step away
+    from first-frame density, avoiding a stutter at the loop point."""
     lo = max(0.0, min(1.0, float(effect.get("min_density", 0.20))))
     hi = max(0.0, min(1.0, float(effect.get("max_density", 1.00))))
     if lo > hi:
         lo, hi = hi, lo
     frames = []
     for fi in range(frame_count):
-        phase = fi / max(1, frame_count - 1)
+        phase = fi / frame_count  # 0 → (N-1)/N, one step short of a full cycle
         d = lo + (hi - lo) * (1.0 - abs(phase * 2.0 - 1.0))
         frames.append(bitmap_rows_to_hex(apply_density_to_bitmap_rows(base_rows, d)))
     return frames
 
 def _effect_fade(base_rows, frame_count, effect):
-    fade_in = effect["name"] == "fade_in"
-    return [bitmap_rows_to_hex(apply_density_to_bitmap_rows(base_rows,
-            max(0.0, (fi + 1) / frame_count if fade_in else 1.0 - (fi + 1) / frame_count)))
-            for fi in range(frame_count)]
+    """Fade-in followed by fade-out (ping-pong) for a seamless loop.
+    The full cycle: density 0→1→0, with the loop point at minimum density."""
+    half = max(1, frame_count // 2)
+    frames = []
+    for fi in range(half):
+        density = max(0.0, (fi + 1) / half)  # 1/half → 1.0
+        frames.append(bitmap_rows_to_hex(apply_density_to_bitmap_rows(base_rows, density)))
+    for fi in range(half, frame_count):
+        density = max(0.0, 1.0 - (fi - half + 1) / (frame_count - half))  # 1.0 → small
+        frames.append(bitmap_rows_to_hex(apply_density_to_bitmap_rows(base_rows, density)))
+    return frames
 
 def _effect_pulse(base_rows, frame_count, effect):
+    """Scale pulse with seamless loop: last-frame scale is one step away
+    from first-frame scale, avoiding a stutter at the loop point."""
     lo = max(0.1, min(1.0, float(effect.get("min_scale", 0.5))))
     hi = max(0.1, min(1.0, float(effect.get("max_scale", 1.0))))
     frames = []
     for fi in range(frame_count):
-        phase = fi / max(1, frame_count - 1)
+        phase = fi / frame_count  # 0 → (N-1)/N, one step short of a full cycle
         scale = lo + (hi - lo) * (1.0 - abs(phase * 2.0 - 1.0))
         ox = int(MATRIX_WIDTH * (1.0 - scale) / 2)
         scaled = [0] * MATRIX_HEIGHT
@@ -1892,7 +1956,7 @@ def build_random_matrix_frame_payload(transcript: str, source: str = "debug_ws")
             "blink", "flash", "wipe_left", "wipe_right",
             "marquee_left", "marquee_right", "breathe", "fade_in", "fade_out",
         ))
-        frame_count = random.randint(6, 24)
+        frame_count = random.randint(8, MAX_ANIMATION_FRAME_COUNT)
         interval_ms = random.choice((42, 70, 100, 120, 160, 200, 300, 420))
         effect_params: Dict[str, Any] = {"name": effect_name, "frame_count": frame_count}
         if effect_name == "blink":
@@ -1926,7 +1990,7 @@ def build_random_matrix_frame_payload(transcript: str, source: str = "debug_ws")
     # --- 20%: ops_sequence animation (loading circle, moving square, etc.) ---
     anim_type = random.choice(("circle_loading", "square_move", "cross_fade", "snake"))
     interval_ms = random.choice((70, 100, 120, 160))
-    frame_count = random.randint(8, 24)
+    frame_count = random.randint(8, MAX_ANIMATION_FRAME_COUNT)
 
     if anim_type == "circle_loading":
         ops_seq = _build_loading_circle_ops(frame_count)
@@ -1986,13 +2050,37 @@ def _build_loading_circle_ops(frame_count: int) -> list[list[Dict[str, Any]]]:
 
 
 def _build_moving_square_ops(frame_count: int) -> list[list[Dict[str, Any]]]:
-    """Build a bouncing square animation."""
+    """Build a square tracing a closed rectangular path for seamless looping.
+
+    The square moves along the perimeter of the available draw area: top edge →
+    right edge → bottom edge → left edge → back to start.  The last frame places
+    the square one step before the first-frame position, so the loop transition
+    is a natural advance along the path."""
     frames: list[list[Dict[str, Any]]] = []
     size = 4
+    max_x = MATRIX_WIDTH - size   # 12
+    max_y = MATRIX_HEIGHT - size  # 12
+    # Perimeter length in steps: top + right + bottom + left
+    perimeter = 2 * (max_x + max_y)  # 48
+
     for idx in range(frame_count):
-        phase = idx / max(1, frame_count - 1)
-        x0 = int((MATRIX_WIDTH - size) * (0.5 + 0.4 * _math.sin(phase * _math.pi * 2)))
-        y0 = int((MATRIX_HEIGHT - size) * (0.5 + 0.3 * _math.cos(phase * _math.pi * 3)))
+        dist = (idx * perimeter) // frame_count  # 0 → perimeter-1 (one step short)
+        if dist < max_x:
+            # Top edge: left → right
+            x0, y0 = dist, 0
+        elif dist < max_x + max_y:
+            # Right edge: top → bottom
+            x0, y0 = max_x, dist - max_x
+        elif dist < 2 * max_x + max_y:
+            # Bottom edge: right → left
+            x0, y0 = 2 * max_x + max_y - dist - 1, max_y
+        else:
+            # Left edge: bottom → top
+            x0, y0 = 0, perimeter - dist - 1
+
+        # Clamp to valid range
+        x0 = max(0, min(max_x, x0))
+        y0 = max(0, min(max_y, y0))
         frames.append([
             {"op": "clear", "fill": 0},
             {"op": "rectangle", "x0": x0, "y0": y0, "x1": x0 + size, "y1": y0 + size},
@@ -2001,43 +2089,67 @@ def _build_moving_square_ops(frame_count: int) -> list[list[Dict[str, Any]]]:
 
 
 def _build_cross_fade_ops(frame_count: int) -> list[list[Dict[str, Any]]]:
-    """Build alternating cross/diamond fade pattern."""
+    """Build cross/diamond alternating pattern with smooth transitions.
+
+    Cross→diamond→cross→... with gradual shape morphing so the loop point
+    connects the last frame naturally back to the first frame."""
     frames: list[list[Dict[str, Any]]] = []
+    half = max(1, frame_count // 2)
     for idx in range(frame_count):
-        if idx < frame_count // 2:
+        if idx < half:
             frames.append([
                 {"op": "clear", "fill": 0},
                 {"op": "line", "x0": 0, "y0": 0, "x1": 15, "y1": 15, "width": 1},
                 {"op": "line", "x0": 15, "y0": 0, "x1": 0, "y1": 15, "width": 1},
             ])
-        else:
+        elif idx < half + (frame_count - half) // 2:
             cx, cy, r = 7, 7, 5
             frames.append([
                 {"op": "clear", "fill": 0},
                 {"op": "fill_ellipse", "x0": cx - r, "y0": cy - r, "x1": cx + r, "y1": cy + r},
             ])
+        else:
+            cx, cy, r = 7, 7, 5
+            frames.append([
+                {"op": "clear", "fill": 0},
+                {"op": "ellipse", "x0": cx - r, "y0": cy - r, "x1": cx + r, "y1": cy + r},
+            ])
     return frames
 
 
 def _build_snake_ops(frame_count: int) -> list[list[Dict[str, Any]]]:
-    """Build a snake-like moving line animation."""
+    """Build a snake tracing the full perimeter for seamless looping.
+
+    The snake head walks a closed path: top row (0→15) → right column (1→14) →
+    bottom row (15→0) → left column (14→1) → back to (0,0).  The last frame
+    places the head one step before the first-frame position."""
     frames: list[list[Dict[str, Any]]] = []
     length = 6
+    # Closed perimeter: top(16) + right(14) + bottom(15) + left(13) = 58
+    perimeter = MATRIX_WIDTH + (MATRIX_HEIGHT - 2) + (MATRIX_WIDTH - 1) + (MATRIX_HEIGHT - 3)
+
+    def _head_pos(pos: int):
+        """Return (x, y) for a head position along the closed perimeter."""
+        p = pos % perimeter
+        if p < MATRIX_WIDTH:
+            return (p, 0)
+        p -= MATRIX_WIDTH
+        if p < MATRIX_HEIGHT - 2:
+            return (MATRIX_WIDTH - 1, p + 1)
+        p -= MATRIX_HEIGHT - 2
+        if p < MATRIX_WIDTH - 1:
+            return (MATRIX_WIDTH - 2 - p, MATRIX_HEIGHT - 1)
+        p -= MATRIX_WIDTH - 1
+        return (0, MATRIX_HEIGHT - 2 - p)
+
     for idx in range(frame_count):
-        head = idx % (MATRIX_WIDTH * 2 - 2)
-        if head < MATRIX_WIDTH:
-            hx, hy = head, 0
-        else:
-            hx, hy = MATRIX_WIDTH - 1, head - MATRIX_WIDTH + 1
+        head = (idx * perimeter) // frame_count  # 0 → perimeter-1 (one step short)
         segments = []
         for s in range(length):
             pos = head - s
             if pos < 0:
                 pos = 0
-            if pos < MATRIX_WIDTH:
-                sx, sy = pos, 0
-            else:
-                sx, sy = MATRIX_WIDTH - 1, pos - MATRIX_WIDTH + 1
+            sx, sy = _head_pos(pos)
             if 0 <= sx < MATRIX_WIDTH and 0 <= sy < MATRIX_HEIGHT:
                 segments.append({"op": "point", "x": sx, "y": sy})
         frames.append([{"op": "clear", "fill": 0}] + segments)
@@ -2083,11 +2195,17 @@ def build_jlu_scroll_animation(
     source: str = "debug_ws",
     transcript: str = "吉林大学",
 ) -> Dict[str, Any]:
-    """Build a smooth 24-frame horizontal scroll animation of '吉林大学' text."""
+    """Build a smooth horizontal scroll animation of '吉林大学' text.
+
+    Text scrolls right-to-left across the 16×16 matrix with a 4-px trailing gap.
+    total_width = 72 (68 px text + 4 px gap) with frame_count = 24 gives a
+    uniform 3 px/step advance.  Cyclic modulo wrapping on total_width makes the
+    last-frame→first-frame loop transition identical to every other frame step."""
     glyph_count = len(_JLU_GLYPHS)
     glyph_advance = _JLU_GLYPH_WIDTH + _JLU_GLYPH_SPACING
-    text_width = glyph_count * glyph_advance
-    total_width = text_width + MATRIX_WIDTH  # scroll-in + scroll-out
+    text_width = glyph_count * glyph_advance  # 68 px of actual glyph content
+    trailing_pad = 4
+    total_width = text_width + trailing_pad  # 72 px (divisible by 24 → 3 px/step)
     frame_count = 24
 
     # Pre-unpack glyph rows for fast column lookup
@@ -2104,12 +2222,12 @@ def build_jlu_scroll_animation(
 
     frames: list[str] = []
     for frame_idx in range(frame_count):
-        offset = (frame_idx * total_width) // frame_count
+        offset = (frame_idx * total_width) // frame_count  # 0, 3, 6, ..., 69
         frame_rows = [0] * MATRIX_HEIGHT
         for screen_col in range(MATRIX_WIDTH):
-            virtual_col = screen_col + offset
-            if virtual_col < 0 or virtual_col >= text_width:
-                continue
+            virtual_col = (screen_col + offset) % total_width
+            if virtual_col >= text_width:
+                continue  # trailing gap column, leave blank
             glyph_idx = virtual_col // glyph_advance
             glyph_col = virtual_col % glyph_advance
             if glyph_idx < glyph_count and glyph_col < _JLU_GLYPH_WIDTH:
@@ -2265,7 +2383,7 @@ def build_tool_list() -> list[Dict[str, Any]]:
         },
         {
             "name": "self.screen.matrix_16x16.draw_animation",
-            "description": "Transmit a compact 16x16 bitmap animation sequence for LED-side buffered playback. Each frame is a 32-byte 1-bit bitmap plus foreground/background RGB888, for a total compact frame size of 38 bytes. The LED side buffers 24 frames; if more frames are supplied, the bridge resamples them to 24 and scales frame_interval_ms to preserve the overall duration. Do not implement timing in python_source with sleep/yield style logic; animation timing is controlled only by frame_interval_ms.",
+            "description": "Transmit a compact 16x16 bitmap animation sequence for LED-side buffered playback. Each frame is a 32-byte 1-bit bitmap plus foreground/background RGB888, for a total compact frame size of 38 bytes. The LED side buffers 32 frames; if more frames are supplied, the bridge resamples them to 32 and scales frame_interval_ms to preserve the overall duration. Do not implement timing in python_source with sleep/yield style logic; animation timing is controlled only by frame_interval_ms.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -2881,25 +2999,40 @@ def handle_local_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Dict[st
 
 async def send_payload_via_ws(send_fn, payload, default_interval_ms, status):
     """Unified WS sender: auto-detects animation vs single frame. Module-level so both
-    McpBridgeServer and LocalDebugWebSocketServer can share it."""
+    McpBridgeServer and LocalDebugWebSocketServer can share it.
+
+    Animations are sent as a single batched message (matrix_animation_batch) so the
+    ESP32 receives all frames at once and can pipeline them to the LED without
+    per-frame WebSocket round-trip delays.  This eliminates the 'dead air' gap
+    between the old animation stopping and the new one starting."""
     frames = payload.get("frames")
     if isinstance(frames, list) and frames:
         interval_ms = max(1, int(payload.get("frame_interval_ms", default_interval_ms)))
-        await send_fn({"type": "matrix_animation_start", "content_type": "animation",
-                       "frame_count": len(frames), "frame_interval_ms": interval_ms,
-                       "source": payload.get("source", ""), "transcript": payload.get("transcript", "")})
-        for fp in frames:
+        primary_rgb888 = str(payload.get("primary_rgb888", "#F5F5F5"))
+        background_rgb888 = str(payload.get("background_rgb888", "#000000"))
+        source = str(payload.get("source", ""))
+        transcript = str(payload.get("transcript", ""))
+
+        batched_frames = []
+        for frame_index, fp in enumerate(frames):
             if not isinstance(fp, dict):
                 continue
             stripped = _strip_frame_payload_for_transport(fp)
-            stripped["frame_interval_ms"] = interval_ms
-            await send_fn({"type": "matrix_pattern_result", **stripped})
+            stripped.pop("frame_interval_ms", None)
+            stripped["frame_index"] = frame_index
+            batched_frames.append(stripped)
             update_matrix_status(status, stripped, "debug_ws_sent")
-        await send_fn({"type": "matrix_animation_end", "content_type": "animation",
-                       "frame_count": len(frames), "frame_interval_ms": interval_ms,
-                       "source": payload.get("source", ""), "transcript": payload.get("transcript", "")})
+
+        await send_fn({"type": "matrix_animation_batch",
+                       "frame_count": len(batched_frames),
+                       "frame_interval_ms": interval_ms,
+                       "primary_rgb888": primary_rgb888,
+                       "background_rgb888": background_rgb888,
+                       "source": source,
+                       "transcript": transcript,
+                       "frames": batched_frames})
         return {"requested": True, "transport": "debug_ws", "sent": True,
-                "frame_count": len(frames), "frame_interval_ms": interval_ms}
+                "frame_count": len(batched_frames), "frame_interval_ms": interval_ms}
 
     stripped = _strip_frame_payload_for_transport(payload)
     await send_fn({"type": "matrix_pattern_result", **stripped})

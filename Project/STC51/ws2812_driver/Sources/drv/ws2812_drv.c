@@ -237,7 +237,7 @@ static void WS2812DRV_EncodeRowToPwmBuffer(uint8_t bufIdx, uint8_t row)
     uint8_t activeCols;
     uint16_t activePwmNum;
 
-    activeCols = g_ws2812ActiveCols;
+	activeCols = g_ws2812ActiveCols;
     activePwmNum = WS2812DRV_GetActivePwmNum();
 
 	/* Reserve reset low window before each row payload to improve decoding stability. */

@@ -278,6 +278,7 @@ private:
 
     void ResetRxState() {
         rx_buffer_.clear();
+        std::vector<uint8_t>().swap(rx_buffer_);
         uart_flush_input(uart_port_);
         if (uart_event_queue_ != nullptr) {
             xQueueReset(uart_event_queue_);

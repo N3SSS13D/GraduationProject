@@ -763,11 +763,25 @@ void Application::Run() {
             HandleStopListeningEvent();
         }
 
-        if (bits & MAIN_EVENT_SEND_AUDIO) {
+        if ((bits & MAIN_EVENT_SEND_AUDIO) && protocol_) {
+            bool rearmed = false;
             while (auto packet = audio_service_.PopPacketFromSendQueue()) {
-                if (protocol_ && !protocol_->SendAudio(std::move(packet))) {
+                if (!protocol_->SendAudio(std::move(packet))) {
+                    if (!rearmed && audio_service_.HasPendingSendPackets()) {
+                        xEventGroupSetBits(event_group_, MAIN_EVENT_SEND_AUDIO);
+                        rearmed = true;
+                    }
                     break;
                 }
+            }
+        }
+
+        if (bits & MAIN_EVENT_SCHEDULE) {
+            std::unique_lock<std::mutex> lock(mutex_);
+            auto tasks = std::move(main_tasks_);
+            lock.unlock();
+            for (auto& task : tasks) {
+                task();
             }
         }
 
@@ -782,23 +796,18 @@ void Application::Run() {
             }
         }
 
-        if (bits & MAIN_EVENT_SCHEDULE) {
-            std::unique_lock<std::mutex> lock(mutex_);
-            auto tasks = std::move(main_tasks_);
-            lock.unlock();
-            for (auto& task : tasks) {
-                task();
-            }
-        }
-
         if (bits & MAIN_EVENT_CLOCK_TICK) {
             clock_ticks_++;
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
-        
+
             // Print debug info every 10 seconds
             if (clock_ticks_ % 10 == 0) {
                 SystemInfo::PrintHeapStats();
+            }
+
+            if (protocol_ && audio_service_.HasPendingSendPackets()) {
+                xEventGroupSetBits(event_group_, MAIN_EVENT_SEND_AUDIO);
             }
         }
     }

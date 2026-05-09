@@ -83,7 +83,7 @@ curl -X POST http://127.0.0.1:8765/control/matrix_prompt_16x16 \
 9. 若需要点亮 `LED端` 板载调试 LED，统一使用独立的 `SetDebugLed` 协议命令；不要再从 `AI端` 向 HC-05 发送裸 `LED n` 文本命令。
 10. 若需要验证链路能否稳定持续收发，而不仅仅是收一条短 ACK，`AI端` 可通过 `1s` 周期任务持续发送 `SetDebugLed` 命令，在 `LED端` 板载调试 LED 上做 `0..7` 的流水灯。
 11. 当前 `LED端` UART2 接收链路已针对长包分片做修正：主协议循环在进入 `TryPopByte()` 前统一执行一次 `UART2_ServiceRx()`，不再在逐字节出队过程中重复推进 DMA idle 重装判定，以减少 `FrameChunk` 尾字节被过早丢弃的风险。
-12. `LED端` 成功显示通过蓝牙传输的图像后，会保持最后一帧输出；若收到动画批次，则会把最多 `24` 帧保存到本地缓冲区，并按 `AnimationStart` 包内的 `frame_interval_ms` 循环播放，默认间隔为 `42 ms`。
+12. `LED端` 成功显示通过蓝牙传输的图像后，会保持最后一帧输出；若收到动画批次，则会把最多 `32` 帧保存到本地缓冲区，并按 `AnimationStart` 包内的 `frame_interval_ms` 循环播放，默认间隔为 `42 ms`。
 13. 从 V2 开始，主机侧匹配 ACK 时应使用 `packet_type=Reply` 和 `reply_to_sequence`，不要再假定存在固定 `Status/Error` 命令字或固定 `13` 字节回包。
 
 ## English
@@ -98,7 +98,7 @@ The AI-side device now emits a dedicated `custom` request named `matrix_pattern_
 - Final Bluetooth upload mode: single frames still use `FrameStart + FrameChunk + FrameCommit`, while buffered animations use `AnimationStart + AnimationFrame x N + AnimationEnd`; chunked uploads now use an explicit little-endian byte offset plus chunk size, and compact single frames may rely on the final `FrameCommit` ACK only when the payload fits in one chunk.
 - LLM-facing `bitmap_rows_hex` fields should carry only the bitmap portion: the canonical form is exactly `64` hex characters = `32` bytes for `16` rows of `16` bits, with `1 = on`, `0 = off`, `top row first`, and `MSB = leftmost LED`. The bridge also tolerates common `16`-row hex token lists and normalizes them back to the canonical form. The full compact LED-ready frame is `bitmap_rows_hex + primary_rgb888 + background_rgb888 = 38 bytes`.
 - For animation sequences, the host should send `matrix_animation_start`, indexed `matrix_pattern_result` frames, and `matrix_animation_end` over the debug websocket. The `AI side` should cache and loop the preview locally before forwarding the full batch to the `LED side`.
-- The LED-side animation buffer stores `24` frames and now uses a shared `frame_interval_ms` field in the start packet. Intervals support `1..65535 ms`; if the host receives more than `24` input frames, it should resample the sequence and scale the interval to preserve total duration.
+- The LED-side animation buffer stores `32` frames and now uses a shared `frame_interval_ms` field in the start packet. Intervals support `1..65535 ms`; if the host receives more than `32` input frames, it should resample the sequence and scale the interval to preserve total duration.
 - When `bitmap_rows_hex` is available, the `AI side` should prefer compact `bitmap + RGB888` Bluetooth payloads over expanding to a full `256`-byte RGB332 frame.
 - For link debugging, rely on protocol-level `[GP_TX] / [GP_RX] / [GP_DROP] / [GP_SYNC]` logs first; `[BT_MON]` is only a bounded raw UART sniff window and may clip long packets.
 - From protocol V2 onward, ACK matching should use `packet_type=Reply` plus `reply_to_sequence`; do not assume dedicated `Status/Error` commands or a fixed reply packet length.

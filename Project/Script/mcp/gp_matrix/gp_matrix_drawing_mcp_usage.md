@@ -1,91 +1,28 @@
-# GP Matrix Drawing MCP Reference
+# GP Matrix Display — MCP 绘图工具知识库
 
-## Category
+## 0. 项目概述
 
-`本地绘图脚本`
+本知识库为小智AI提供 GP Matrix Display MCP 桥接服务的完整工具参考。桥接服务 (`gp_display_mcp_bridge.py`) 作为 MCP 端点客户端运行，将大模型的绘图指令转换为 16×16 LED 点阵屏上的实时显示内容。
 
-## 0. Canonical Entry
-
-Run the local MCP bridge with:
-
+**运行方式：**
 ```bash
 python Project/Script/mcp/gp_matrix/gp_display_mcp_bridge.py
 ```
 
-Canonical LLM-facing entry: `Project/Script/mcp/gp_matrix/gp_display_mcp_bridge.py`
-
-Compatibility entry: `Project/Script/mcp/gp_matrix/gp_mcp_endpoint_client.py`
-
-Related protocol docs:
-
+**相关协议文档：**
 - `Project/Protocols/gp_led_matrix_protocol_spec.md`
 - `Project/Protocols/gp_matrix_pattern_protocol.md`
 
-### 0.1 Runtime Layout (Modularized)
+**模块分工：**
+| 模块 | 职责 |
+|------|------|
+| `gp_display_mcp_bridge.py` | 总入口脚本 |
+| `gp_mcp_endpoint_client.py` | MCP 编排与工具分发 |
+| `gp_matrix_llm_inputs.py` | 绘图输入归一化 |
+| `gp_bridge_mcp_service.py` | MCP Schema 辅助块 |
+| `gp_bridge_transport_service.py` | 传输与运行时参数解析 |
 
-The bridge is now organized into independent modules while preserving the same LLM-facing tool names.
-
-1. `gp_display_mcp_bridge.py`
-Role: total entry script, direct run without extra arguments.
-
-2. `gp_mcp_endpoint_client.py`
-Role: MCP orchestration and tool dispatch.
-
-3. `gp_matrix_llm_inputs.py`
-Role: drawing-input normalization for LLM-friendly formats (`bitmap_ascii`, `ops`).
-
-4. `gp_bridge_mcp_service.py`
-Role: MCP schema helper blocks shared by tools.
-
-5. `gp_bridge_transport_service.py`
-Role: transport/runtime argument parser builder.
-
-## 1. Slice Index (For Auto-Segmented LLM Reading)
-
-Use this index when the document is automatically chunked.
-
-- `Section 2`: Global invariants and hard constraints (always apply).
-- `Section 3`: Tool selection decision tree.
-- `Section 4`: Per-tool contracts (`draw_python`, `show_text`, `draw_animation`, `draw_frame`, `render_prompt`).
-- `Section 5`: Standard anti-failure animation templates (slow blink, breathing, marquee).
-- `Section 6`: Flexible animation construction patterns for diverse effects.
-- `Section 7`: Common failure patterns and direct fixes.
-- `Section 8`: Output payload quick reference.
-- `Section 9`: LLM final checklist before tool call.
-
-## 1.1 Tool-Gated Knowledge Template (Must Query Tool First)
-
-Use this template when a topic must never be answered directly and always requires a tool query first.
-
-### 1.1.1 Generic Template
-
-```text
-本文档包含 "xxxxx" 等相关内容。当用户提及这些内容时，我不能直接作答，必须在每次对话中调用该工具查询资料后，再依据查询结果进行回答。
-
-## 以下是 “xxxxx” 的内容
-(这里填写文档的总结内容)
-```
-
-### 1.1.2 Recommended Filled Template (Copy And Edit)
-
-```text
-本文档包含 "16x16 动画输入规范"、"bitmap_rows_hex 格式约束"、"draw_animation 反失败模板" 等相关内容。当用户提及这些内容时，我不能直接作答，必须在每次对话中先调用工具查询资料（例如查询最新工具 schema、规则段落或示例模板），再依据查询结果进行回答。
-
-## 以下是 “16x16 动画输入规范” 的内容
-1. 动画优先使用 frames 模式，每帧只允许一种输入源：bitmap_rows_hex 或 bitmap_rows 或 python_source/eval_source。
-2. 禁止在绘图语句中实现时序：禁止 yield_frame、time.sleep、import。
-3. 动画时序只通过 frame_interval_ms 控制。
-4. 位图字段与 RGB332 字段不可混用：bitmap_rows_hex 是 64 hex，frame_rgb332_hex 是 512 hex。
-5. 若输入帧数超过 24，桥接会重采样到 24 并缩放间隔以尽量保持总时长。
-```
-
-### 1.1.3 LLM Execution Notes
-
-- If user asks about any protected topic in `xxxxx`, call the required lookup tool first.
-- Do not answer from stale memory if tool lookup is required by policy.
-- In the final answer, use the tool result as the source of truth and keep wording aligned with queried data.
-
-## 2. Global Invariants (Always True)
+## 1. 全局约束（始终生效）
 
 - Matrix resolution is always `16x16`.
 - Image format: **BITMAP_LAYERED** (multi-layer bitmap).
@@ -111,9 +48,9 @@ Use this template when a topic must never be answered directly and always requir
 - **Only bitmap format is supported.** Preset, frame_rgb332_hex, and glyph methods are disabled.
 - `draw_frame` requires `bitmap_rows_hex` + `primary_rgb888` (+ optional `background_rgb888`).
 - Buffered animation playback uses one shared `frame_interval_ms` per batch.
-- If animation input has more than `24` frames, host bridge resamples to `24` and scales interval to preserve total duration.
+- If animation input has more than `32` frames, host bridge resamples to `32` and scales interval to preserve total duration.
 
-## 3. Tool Selection (Decision Tree)
+## 2. 工具选择决策树
 
 1. Need one custom pattern from code-like instructions:
    - Use `self.screen.matrix_16x16.draw_python`.
@@ -128,9 +65,9 @@ Use this template when a topic must never be answered directly and always requir
 5. Only have vague natural language prompt and no explicit draw plan:
    - Use `self.screen.matrix_16x16.render_prompt`.
 
-## 4. Tool Contracts
+## 3. 工具详细约定
 
-### 4.1 `self.screen.matrix_16x16.draw_python`
+### 3.1 `self.screen.matrix_16x16.draw_python` — 代码绘图
 
 Use when generating one frame from restricted drawing logic.
 
@@ -202,7 +139,7 @@ Supported `op` values:
 - File/network access.
 - Attribute access other than allowed `draw.<method>`.
 
-### 4.2 `self.screen.matrix_16x16.show_text`
+### 3.2 `self.screen.matrix_16x16.show_text` — 文字逐字显示
 
 Use when each character should become one frame.
 
@@ -224,7 +161,7 @@ Use when each character should become one frame.
 - One character -> one `16x16` frame.
 - `frame_interval_ms` controls sequence playback interval.
 
-### 4.3 `self.screen.matrix_16x16.draw_animation`
+### 3.3 `self.screen.matrix_16x16.draw_animation` — 多帧动画
 
 Use for multi-frame buffered animation.
 
@@ -359,7 +296,7 @@ Common parameters:
 - `min_density`/`max_density`: 0..1 for breathe/fade.
 - `min_scale`/`max_scale`: 0.1..1.0 for pulse.
 
-### 4.3.1 `ops_sequence` — per-frame ops animation
+### 3.3.1 `ops_sequence` — 逐帧 ops 动画
 
 Use to specify each animation frame as an individual ops array:
 
@@ -401,7 +338,7 @@ If `image + effect` is used, bridge synthesizes frames on AI-side path before LE
 - Do not write any `import` statements in drawing code.
 - Do not split one frame into `16` items in `bitmap_rows_hex_list` unless each item is full `64`-hex frame.
 
-### 4.4 `self.screen.matrix_16x16.draw_frame`
+### 3.4 `self.screen.matrix_16x16.draw_frame` — 直接提交位图帧
 
 Use when you already have final frame data. **Bitmap-only** — preset and frame_rgb332_hex are no longer supported.
 
@@ -425,7 +362,7 @@ Use when you already have final frame data. **Bitmap-only** — preset and frame
 - `background_rgb888`: background color in `#RRGGBB` (optional, defaults to `#000000`).
 - Internally converted to BITMAP_LAYERED format (2 layers: background + foreground).
 
-### 4.5 `self.screen.matrix_16x16.render_prompt`
+### 3.5 `self.screen.matrix_16x16.render_prompt` — 自然语言渲染
 
 Use as a fallback when no explicit drawing plan exists.
 
@@ -439,11 +376,11 @@ Use as a fallback when no explicit drawing plan exists.
 }
 ```
 
-## 5. Standard Anti-Failure Animation Templates
+## 4. 动画安全模板
 
 All templates below are safe defaults for direct LLM use.
 
-### 5.1 Template: Slow Blink
+### 4.1 模板：慢速闪烁
 
 ```json
 {
@@ -462,7 +399,7 @@ All templates below are safe defaults for direct LLM use.
 }
 ```
 
-### 5.2 Template: Breathing Pulse (Area breathing)
+### 4.2 模板：呼吸脉冲
 
 ```json
 {
@@ -487,7 +424,7 @@ All templates below are safe defaults for direct LLM use.
 }
 ```
 
-### 5.3 Template: Marquee (Column scan)
+### 4.3 模板：跑马灯扫描
 
 ```json
 {
@@ -520,7 +457,7 @@ All templates below are safe defaults for direct LLM use.
 }
 ```
 
-### 5.4 Template: Image + Blink Effect (Direct LLM Call)
+### 4.4 模板：图像+闪烁特效
 
 ```json
 {
@@ -543,7 +480,7 @@ All templates below are safe defaults for direct LLM use.
 }
 ```
 
-### 5.5 Template: Image + Breathe Effect (Direct LLM Call)
+### 4.5 模板：图像+呼吸特效
 
 ```json
 {
@@ -570,7 +507,7 @@ All templates below are safe defaults for direct LLM use.
 }
 ```
 
-### 5.6 Template: Image + Marquee Effect (Direct LLM Call)
+### 4.6 模板：图像+跑马灯特效
 
 ```json
 {
@@ -593,9 +530,9 @@ All templates below are safe defaults for direct LLM use.
 }
 ```
 
-## 6. Flexible Animation Patterns (Diversity Without Failure)
+## 5. 灵活动画模式
 
-### 6.0 Random Draw Mode (`draw_random_pattern_request`)
+### 5.1 随机绘制模式 (`draw_random_pattern_request`)
 
 The debug websocket supports a random draw mode that cycles through diverse patterns and effects:
 
@@ -608,7 +545,7 @@ The debug websocket supports a random draw mode that cycles through diverse patt
 
 Each random draw picks a random color from: red, green, blue, yellow, orange, purple, pink, cyan, white.
 
-### 6.1 吉林大学 Scrolling Text (Mandatory)
+### 5.2 吉林大学滚动文字
 
 Every random draw session includes a 20% chance of showing "吉林大学" scrolling horizontally across the 16x16 matrix. The text uses 4 hardcoded 16x16 glyph bitmaps matching the LED-side font data.
 
@@ -626,7 +563,7 @@ To explicitly trigger a JLU scroll:
 }
 ```
 
-### 6.2 Ops-Sequence Animations
+### 5.3 Ops-Sequence 动画
 
 Four built-in animation templates for programmatic frame generation:
 
@@ -653,14 +590,14 @@ Constraints:
 1) Use frames[] mode.
 2) Each frame must contain exactly one source and use python_source only.
 3) No import, no time.sleep, no yield_frame.
-4) Frame count 6..24.
+4) Frame count 6..32.
 5) frame_interval_ms 40..500.
 6) Every python_source starts with clear(0).
 7) Provide explicit primary_rgb888 and background_rgb888.
 Output JSON only.
 ```
 
-## 7. Failure Patterns -> Direct Fix
+## 6. 常见错误与修复
 
 - Error pattern: `bitmap_rows_hex_list[] must contain ...`
   - Fix: use `frames[]` mode or provide full `64`-hex frame per list item.
@@ -673,22 +610,22 @@ Output JSON only.
 - Error pattern: `preset` or `frame_rgb332_hex` not accepted
   - Fix: use `bitmap_rows_hex` + `primary_rgb888` only. Preset and RGB332 modes are removed.
 
-## 8. Output Payload Quick Reference
+## 7. 输出负载参考
 
-### 8.1 Single frame output (`draw_python`, `draw_frame`, `render_prompt`)
+### 7.1 单帧输出（draw_python / draw_frame / render_prompt）
 
 - `data_format = matrix_frame_v2`
 - Includes `frame_rgb332_hex` (preview), `bitmap_rows_hex`, `compact_layered_hex` (BITMAP_LAYERED binary), colors, dimensions, trace fields.
 - `compact_layered_hex` = 2 layers (background + foreground) × 36 bytes = 72 bytes hex-encoded.
 
-### 8.2 Sequence output (`show_text`, `draw_animation`)
+### 7.2 序列输出（show_text / draw_animation）
 
 - `data_format = matrix_frame_sequence_v2`
 - Includes `frame_interval_ms`, `frame_count`, `frames[]`.
 - Each frame includes its own `compact_layered_hex` for layered transport.
 - Animation output includes compact format metadata and per-frame indices.
 
-## 9. Final LLM Checklist Before Calling MCP
+## 8. 调用前检查清单
 
 1. Correct tool selected by intent.
 2. For animation, prefer `frames[]` mode.
@@ -699,38 +636,38 @@ Output JSON only.
 7. Payload is JSON-only, no explanation text mixed in.
 8. Keep each frame logic simple and deterministic.
 
-## 10. Delivery Notes & Pipeline Verification
+## 9. 传输管道与验证
 
-### 10.1 Animation Transmission Pipeline
+### 9.1 动画传输管道
 
 ```
 Python (MCP bridge)
   → Debug WS: matrix_animation_start + N×matrix_pattern_result + matrix_animation_end
-    → ESP32 (lichuang_dev_board): accumulate PendingMatrixAnimation[] (max 24)
+    → ESP32 (lichuang_dev_board): accumulate PendingMatrixAnimation[] (max 32)
       → ShowBitmapAnimation() → ShowLayeredAnimationLocked()
         → BLE: AnimationStart(0x04) + N×AnimationFrame + AnimationEnd
           → AI8051U: BeginAnimationUpload → StoreAnimationFrame × N → CommitAnimation
             → Tick1ms → RenderAnimationFrame → RenderBitmapLayeredFrame
 ```
 
-### 10.2 Key Limits
+### 9.2 关键限制
 
-- Max animation frames: **24** (protocol `GP_MATRIX_ANIMATION_MAX_FRAMES`)
+- Max animation frames: **32** (protocol `GP_MATRIX_ANIMATION_MAX_FRAMES`)
 - Max layers per frame: **16** (protocol `GP_MATRIX_BITMAP_LAYERED_MAX_COLORS`)
 - Max layers per animation frame: **4** (protocol `GP_MATRIX_ANIMATION_MAX_LAYERS`)
 - Per-layer size: **36 bytes** (1 header + 32 bitmap + 3 RGB)
 - 2-color frame payload: **72 bytes** (2 layers)
 - Frame chunk size: **64 bytes** (2 chunks per frame)
-- Input frames > 24: **auto-resampled** to 24 with scaled interval
+- Input frames > 32: **auto-resampled** to 32 with scaled interval
 
-### 10.3 Format Verification
+### 9.3 格式验证
 
 - All frames use **BITMAP_LAYERED** (format 0x04)
 - Single frames: FrameStart(0x04) → FrameChunk(s) → FrameCommit
 - Animation frames: AnimationStart(0x04) → AnimationFrame[] → AnimationEnd
 - LED-side rendering: clear→black, then layer 0 (background) → layer 1 (foreground) paint-on-top
 
-### 10.4 Delivery Modes
+### 9.4 投递模式
 
 - Single-frame tools: debug websocket → `matrix_pattern_result`
 - Animation tools: debug websocket → `matrix_animation_start` + frames + `matrix_animation_end`

@@ -56,6 +56,8 @@ constexpr const char* kSerialDebugWebsocketCommand = "debug_ws";
 constexpr const char* kDebugWebsocketDefaultUrl = "ws://49.140.69.242:8766/debug";
 constexpr uint16_t kDebugPreviewServerPort = 8781;
 constexpr size_t kDebugPreviewMaxImageBytes = 256U * 1024U;
+constexpr uint32_t kPendingMatrixAnimationExpireMs = 10000U;
+constexpr size_t kPendingMatrixTranscriptMaxBytes = 192U;
 constexpr uint32_t kBtConfigReplyTimeoutMs = 1200;
 constexpr uint32_t kBtConfigInquiryTimeoutMs = 5000;
 constexpr uint32_t kBtConfigLinkTimeoutMs = 5000;
@@ -85,6 +87,14 @@ std::string TrimAsciiWhitespace(std::string text) {
         return !is_space(ch);
     }).base(), text.end());
     return text;
+}
+
+std::string TrimStoredTranscript(const std::string& text) {
+    if (text.size() <= kPendingMatrixTranscriptMaxBytes) {
+        return text;
+    }
+
+    return text.substr(0U, kPendingMatrixTranscriptMaxBytes);
 }
 
 bool StartsWithCommand(const std::string& text, std::string_view prefix) {
@@ -648,6 +658,7 @@ private:
     uint16_t pending_matrix_animation_interval_ms_ = kDebugPreviewAnimationIntervalMs;
     std::string pending_matrix_animation_transcript_;
     bool pending_matrix_animation_active_ = false;
+    uint64_t pending_matrix_animation_last_update_us_ = 0U;
     std::unique_ptr<WebSocket> debug_websocket_;
 
     void ResetPendingMatrixAnimation() {
@@ -660,6 +671,28 @@ private:
         pending_matrix_animation_interval_ms_ = kDebugPreviewAnimationIntervalMs;
         pending_matrix_animation_transcript_.clear();
         pending_matrix_animation_active_ = false;
+        pending_matrix_animation_last_update_us_ = 0U;
+    }
+
+    void ExpirePendingMatrixAnimationIfStale(const char* reason) {
+        uint64_t now_us;
+        uint64_t elapsed_ms;
+
+        if (!pending_matrix_animation_active_ || (pending_matrix_animation_last_update_us_ == 0U)) {
+            return;
+        }
+
+        now_us = static_cast<uint64_t>(esp_timer_get_time());
+        elapsed_ms = (now_us - pending_matrix_animation_last_update_us_) / 1000U;
+        if (elapsed_ms < kPendingMatrixAnimationExpireMs) {
+            return;
+        }
+
+        ESP_LOGW(TAG,
+                 "[DBG_WS] stale pending matrix animation cleared: idle_ms=%lu reason=%s",
+                 static_cast<unsigned long>(elapsed_ms),
+                 (reason != nullptr) ? reason : "unknown");
+        ResetPendingMatrixAnimation();
     }
 
     void BeginPendingMatrixAnimation(size_t frame_count,
@@ -668,8 +701,9 @@ private:
         ResetPendingMatrixAnimation();
         pending_matrix_animation_frame_count_ = std::min(frame_count, pending_matrix_animation_frames_.size());
         pending_matrix_animation_interval_ms_ = std::max<uint16_t>(1U, frame_interval_ms);
-        pending_matrix_animation_transcript_ = transcript_text;
+        pending_matrix_animation_transcript_ = TrimStoredTranscript(transcript_text);
         pending_matrix_animation_active_ = (pending_matrix_animation_frame_count_ != 0U);
+        pending_matrix_animation_last_update_us_ = static_cast<uint64_t>(esp_timer_get_time());
     }
 
     void StorePendingMatrixAnimationFrame(size_t frame_index,
@@ -686,8 +720,9 @@ private:
         pending_matrix_animation_frames_[frame_index].frame.background_rgb888 = background_rgb888;
         pending_matrix_animation_frames_[frame_index].valid = true;
         if (!transcript_text.empty()) {
-            pending_matrix_animation_transcript_ = transcript_text;
+            pending_matrix_animation_transcript_ = TrimStoredTranscript(transcript_text);
         }
+        pending_matrix_animation_last_update_us_ = static_cast<uint64_t>(esp_timer_get_time());
 
         pending_matrix_animation_ready_frames_ = 0U;
         while ((pending_matrix_animation_ready_frames_ < pending_matrix_animation_frame_count_)
@@ -1154,6 +1189,129 @@ private:
             return;
         }
 
+        if (std::strcmp(type->valuestring, "matrix_animation_batch") == 0) {
+            const auto* frame_count = cJSON_GetObjectItem(root, "frame_count");
+            const auto* frame_interval_ms = cJSON_GetObjectItem(root, "frame_interval_ms");
+            const auto* primary_rgb888 = cJSON_GetObjectItem(root, "primary_rgb888");
+            const auto* background_rgb888 = cJSON_GetObjectItem(root, "background_rgb888");
+            const auto* transcript = cJSON_GetObjectItem(root, "transcript");
+            const auto* frames_array = cJSON_GetObjectItem(root, "frames");
+            uint16_t scheduled_interval_ms = kDebugPreviewAnimationIntervalMs;
+
+            if (!cJSON_IsNumber(frame_count) || (frame_count->valueint <= 0)
+                || (frame_count->valueint > static_cast<int>(GP_MATRIX_ANIMATION_MAX_FRAMES))
+                || !cJSON_IsArray(frames_array)) {
+                ESP_LOGW(TAG, "[DBG_WS] matrix_animation_batch missing frame_count or frames array");
+                cJSON_Delete(root);
+                return;
+            }
+
+            if (cJSON_IsNumber(frame_interval_ms) && (frame_interval_ms->valueint > 0)) {
+                scheduled_interval_ms = static_cast<uint16_t>(frame_interval_ms->valueint);
+            }
+
+            const std::string transcript_text = cJSON_IsString(transcript) ? transcript->valuestring : "";
+            const std::string primary_color = cJSON_IsString(primary_rgb888) ? primary_rgb888->valuestring : "#F5F5F5";
+            const std::string background_color = cJSON_IsString(background_rgb888) ? background_rgb888->valuestring : "#000000";
+            const size_t scheduled_frame_count = static_cast<size_t>(frame_count->valueint);
+            const int array_size = cJSON_GetArraySize(frames_array);
+
+            /* Pre-extract all frame data on the WebSocket thread so the main-thread
+               lambda only does lightweight copies. */
+            struct BatchedFrame {
+                std::string bitmap_rows_hex;
+                std::string primary_rgb;
+                std::string background_rgb;
+                int frame_index;
+            };
+            auto batched_frames = std::make_shared<std::vector<BatchedFrame>>();
+            batched_frames->reserve(static_cast<size_t>(array_size));
+
+            for (int idx = 0; idx < array_size; ++idx) {
+                const auto* frame_obj = cJSON_GetArrayItem(frames_array, idx);
+                if (!cJSON_IsObject(frame_obj)) continue;
+
+                BatchedFrame bf;
+                const auto* bm_hex = cJSON_GetObjectItem(frame_obj, "bitmap_rows_hex");
+                const auto* fg = cJSON_GetObjectItem(frame_obj, "primary_rgb888");
+                const auto* bg = cJSON_GetObjectItem(frame_obj, "background_rgb888");
+                const auto* fi = cJSON_GetObjectItem(frame_obj, "frame_index");
+
+                bf.bitmap_rows_hex = cJSON_IsString(bm_hex) ? bm_hex->valuestring : "";
+                bf.primary_rgb = cJSON_IsString(fg) ? fg->valuestring : primary_color;
+                bf.background_rgb = cJSON_IsString(bg) ? bg->valuestring : background_color;
+                bf.frame_index = cJSON_IsNumber(fi) ? fi->valueint : idx;
+                batched_frames->push_back(std::move(bf));
+            }
+
+            cJSON_Delete(root);
+
+            Application::GetInstance().Schedule([this,
+                                                 batched_frames,
+                                                 scheduled_frame_count,
+                                                 scheduled_interval_ms,
+                                                 transcript_text]() {
+                auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display_);
+                auto* matrix_led = led_matrix_.get();
+
+                BeginPendingMatrixAnimation(scheduled_frame_count, scheduled_interval_ms, transcript_text);
+                if (debug_display != nullptr) {
+                    debug_display->BeginMatrixAnimationPreview(scheduled_frame_count, scheduled_interval_ms);
+                }
+
+                for (const auto& bf : *batched_frames) {
+                    if (bf.bitmap_rows_hex.empty()) continue;
+                    const auto bitmap_rows = ParseMatrixBitmapRowsHex(bf.bitmap_rows_hex.c_str());
+                    const auto primary_rgb = ParseRgb888(bf.primary_rgb.c_str());
+                    uint32_t background_rgb = 0x000000U;
+                    const auto parsed_bg = ParseRgb888(bf.background_rgb.c_str());
+                    if (parsed_bg.has_value()) {
+                        background_rgb = *parsed_bg;
+                    }
+                    if (!bitmap_rows.has_value() || !primary_rgb.has_value()) continue;
+
+                    StorePendingMatrixAnimationFrame(static_cast<size_t>(bf.frame_index),
+                                                    *bitmap_rows,
+                                                    *primary_rgb,
+                                                    background_rgb,
+                                                    transcript_text);
+                    if (debug_display != nullptr) {
+                        debug_display->ApplyMatrixAnimationPreviewFrame(
+                            static_cast<size_t>(bf.frame_index),
+                            *bitmap_rows,
+                            *primary_rgb,
+                            background_rgb);
+                    }
+                }
+
+                bool led_forwarded = false;
+                if (IsPendingMatrixAnimationComplete(scheduled_frame_count) && (matrix_led != nullptr)) {
+                    std::vector<GpLedMatrixEsp32::BitmapAnimationFrame> frames;
+                    frames.reserve(pending_matrix_animation_frame_count_);
+                    for (size_t fi = 0U; fi < pending_matrix_animation_frame_count_; ++fi) {
+                        frames.push_back(pending_matrix_animation_frames_[fi].frame);
+                    }
+                    led_forwarded = matrix_led->ShowBitmapAnimation(frames, scheduled_interval_ms);
+                    if (!led_forwarded) {
+                        ESP_LOGW(TAG, "[DBG_WS] failed to relay batched animation to LED over Bluetooth");
+                    }
+                }
+
+                if (debug_display != nullptr) {
+                    debug_display->EndMatrixAnimationPreview();
+                }
+                if (display_ != nullptr) {
+                    display_->ShowNotification(led_forwarded ? "WS anim batch relayed" : "WS anim batch preview only", 1500);
+                    if (!transcript_text.empty()) {
+                        display_->SetChatMessage("system", transcript_text.c_str());
+                    }
+                }
+                ResetPendingMatrixAnimation();
+            });
+            UpdateDebugWebsocketStatus(true, "Debug WS animation batch received");
+            return;
+        }
+
         if (std::strcmp(type->valuestring, "matrix_pattern_result") == 0) {
             const auto* bitmap_rows_hex = cJSON_GetObjectItem(root, "bitmap_rows_hex");
             const auto* primary_rgb888 = cJSON_GetObjectItem(root, "primary_rgb888");
@@ -1209,11 +1367,14 @@ private:
                 auto* matrix_led = led_matrix_.get();
                 bool led_forwarded = false;
 
+                ExpirePendingMatrixAnimationIfStale("matrix_pattern_result");
+
                 if ((scheduled_frame_index >= 0) && (scheduled_frame_count > 1)) {
                     const size_t frame_index_value = static_cast<size_t>(scheduled_frame_index);
                     const size_t frame_count_value = static_cast<size_t>(scheduled_frame_count);
 
-                    if ((!pending_matrix_animation_active_)
+                    if ((frame_index_value == 0U)
+                        || (!pending_matrix_animation_active_)
                         || (pending_matrix_animation_frame_count_ != frame_count_value)) {
                         BeginPendingMatrixAnimation(frame_count_value, scheduled_interval_ms, transcript_text);
                         if (debug_display != nullptr) {
@@ -1234,6 +1395,9 @@ private:
                     }
                     return;
                 }
+
+                /* Single-frame draw should not keep stale animation cache alive. */
+                ResetPendingMatrixAnimation();
 
                 if (debug_display != nullptr) {
                     debug_display->ApplyMatrixBitmapPreview(scheduled_rows,
@@ -1280,6 +1444,8 @@ private:
                 auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display_);
                 auto* matrix_led = led_matrix_.get();
                 bool led_forwarded = false;
+
+                ExpirePendingMatrixAnimationIfStale("matrix_animation_end");
 
                 if (debug_display != nullptr) {
                     debug_display->EndMatrixAnimationPreview();
@@ -2196,68 +2362,73 @@ cleanup:
                 return BuildDotResultJson(state);
             });
 
-        mcp_server.AddTool("self.screen.matrix_16x16.draw",
-            "Draw one 16x16 matrix frame on the LED side via layered bitmap format. "
-            "Requires bitmap_rows_hex (64 hex chars, 16x16 bitmap) plus primary_rgb888 and optional background_rgb888.",
-            PropertyList({
-                Property("bitmap_rows_hex", kPropertyTypeString, std::string("")),
-                Property("primary_rgb888", kPropertyTypeString, std::string("")),
-                Property("background_rgb888", kPropertyTypeString, std::string("#000000")),
-                Property("source", kPropertyTypeString, std::string("mcp")),
-                Property("transcript", kPropertyTypeString, std::string(""))
-            }),
-            [this](const PropertyList& properties) -> ReturnValue {
-                auto* matrix_led = led_matrix_.get();
-                auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display_);
-                const std::string bitmap_rows_hex = properties["bitmap_rows_hex"].value<std::string>();
-                const std::string primary_text = properties["primary_rgb888"].value<std::string>();
-                const std::string background_text = properties["background_rgb888"].value<std::string>();
-                const std::string source = properties["source"].value<std::string>();
-                const std::string transcript = properties["transcript"].value<std::string>();
-                bool applied = false;
+        auto register_matrix_frame_tool = [this, &mcp_server](const char* tool_name) {
+            mcp_server.AddTool(tool_name,
+                "Draw one 16x16 matrix frame on the LED side via layered bitmap format. "
+                "Requires bitmap_rows_hex (64 hex chars, 16x16 bitmap) plus primary_rgb888 and optional background_rgb888.",
+                PropertyList({
+                    Property("bitmap_rows_hex", kPropertyTypeString, std::string("")),
+                    Property("primary_rgb888", kPropertyTypeString, std::string("")),
+                    Property("background_rgb888", kPropertyTypeString, std::string("#000000")),
+                    Property("source", kPropertyTypeString, std::string("mcp")),
+                    Property("transcript", kPropertyTypeString, std::string(""))
+                }),
+                [this](const PropertyList& properties) -> ReturnValue {
+                    auto* matrix_led = led_matrix_.get();
+                    auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display_);
+                    const std::string bitmap_rows_hex = properties["bitmap_rows_hex"].value<std::string>();
+                    const std::string primary_text = properties["primary_rgb888"].value<std::string>();
+                    const std::string background_text = properties["background_rgb888"].value<std::string>();
+                    const std::string source = properties["source"].value<std::string>();
+                    const std::string transcript = properties["transcript"].value<std::string>();
+                    bool applied = false;
 
-                if (matrix_led == nullptr) {
-                    throw std::runtime_error("LED matrix transport is not initialized");
-                }
+                    if (matrix_led == nullptr) {
+                        throw std::runtime_error("LED matrix transport is not initialized");
+                    }
 
-                if (bitmap_rows_hex.empty()) {
-                    throw std::runtime_error("bitmap_rows_hex is required");
-                }
+                    if (bitmap_rows_hex.empty()) {
+                        throw std::runtime_error("bitmap_rows_hex is required");
+                    }
 
-                const auto bitmap_rows = ParseMatrixBitmapRowsHex(bitmap_rows_hex);
-                const auto primary_rgb = ParseRgb888(primary_text);
-                const auto background_rgb = ParseRgb888(background_text);
+                    const auto bitmap_rows = ParseMatrixBitmapRowsHex(bitmap_rows_hex);
+                    const auto primary_rgb = ParseRgb888(primary_text);
+                    const auto background_rgb = ParseRgb888(background_text);
 
-                if (!bitmap_rows.has_value()) {
-                    throw std::runtime_error("bitmap_rows_hex must contain exactly 16 rows encoded as 64 hex characters");
-                }
-                if (!primary_rgb.has_value()) {
-                    throw std::runtime_error("primary_rgb888 must be a RGB888 string like #RRGGBB");
-                }
+                    if (!bitmap_rows.has_value()) {
+                        throw std::runtime_error("bitmap_rows_hex must contain exactly 16 rows encoded as 64 hex characters");
+                    }
+                    if (!primary_rgb.has_value()) {
+                        throw std::runtime_error("primary_rgb888 must be a RGB888 string like #RRGGBB");
+                    }
 
-                if (debug_display != nullptr) {
-                    debug_display->ApplyMatrixBitmapPreview(*bitmap_rows, *primary_rgb, background_rgb.value_or(0x000000U));
-                }
-                applied = matrix_led->ShowBitmapFrame(bitmap_rows->data(),
-                                                      bitmap_rows->size(),
-                                                      *primary_rgb,
-                                                      background_rgb.value_or(0x000000U),
-                                                      kGpMatrixModeSolidFrame);
+                    if (debug_display != nullptr) {
+                        debug_display->ApplyMatrixBitmapPreview(*bitmap_rows, *primary_rgb, background_rgb.value_or(0x000000U));
+                    }
+                    applied = matrix_led->ShowBitmapFrame(bitmap_rows->data(),
+                                                          bitmap_rows->size(),
+                                                          *primary_rgb,
+                                                          background_rgb.value_or(0x000000U),
+                                                          kGpMatrixModeSolidFrame);
 
-                if (!applied) {
-                    throw std::runtime_error("16x16 frame draw failed");
-                }
+                    if (!applied) {
+                        throw std::runtime_error("16x16 frame draw failed");
+                    }
 
-                char rgb_text[16] = {0};
-                std::snprintf(rgb_text, sizeof(rgb_text), "#%06X", static_cast<unsigned int>(*primary_rgb & 0xFFFFFFU));
-                return BuildMatrixFrameResultJson("",
-                                                  "",
-                                                  bitmap_rows_hex.c_str(),
-                                                  rgb_text,
-                                                  applied,
-                                                  source.c_str(),
-                                                  transcript.c_str());
-            });
+                    char rgb_text[16] = {0};
+                    std::snprintf(rgb_text, sizeof(rgb_text), "#%06X", static_cast<unsigned int>(*primary_rgb & 0xFFFFFFU));
+                    return BuildMatrixFrameResultJson("",
+                                                      "",
+                                                      bitmap_rows_hex.c_str(),
+                                                      rgb_text,
+                                                      applied,
+                                                      source.c_str(),
+                                                      transcript.c_str());
+                });
+        };
+
+        register_matrix_frame_tool("self.screen.matrix_16x16.draw_frame");
+        register_matrix_frame_tool("self.screen.matrix_16x16.draw");
 
         mcp_server.AddTool("self.screen.preview_image.fetch_http",
             "Fetch one PNG or JPEG from a host HTTP URL and show it in the debug preview area.",
