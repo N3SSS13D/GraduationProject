@@ -31,7 +31,7 @@
 - `mcp/gp_matrix/gp_matrix_drawing_mcp_usage.md`
   - MCP 工具、参数、动画输入和失败规避规则说明。
 - `mcp/gp_matrix/gp_mcp_endpoint_client.py`
-  - 兼容入口，主要用于启动桥接服务。
+  - 兼容入口，主要用于启动桥接服务，并统一分发 bitmap/animation/native action 三类 MCP 工具输出。
 - `media_tools/led_image_converter_gui.py`
   - 图片/文字到 16x16 显示素材的手工转换工具。
 - `tools/ws2812_auto_debug.py`
@@ -40,8 +40,8 @@
 ## Current host flow
 
 1. 本地绘图请求进入 `gp_display_mcp_bridge.py`
-2. 脚本输出当前约定的绘图结果或动画序列
-3. 结果交给 `AI端` 预览与转发
+2. 脚本输出当前约定的绘图结果、动画序列或原生效果动作对象
+3. 结果交给 `AI端` 预览、动作转发或蓝牙上传
 4. `LED端` 只作为下游显示执行方，不直接暴露给脚本处理原始串口细节
 
 ## Common read bundles

@@ -13,7 +13,6 @@
 
 void GpLedMatrixBtDebug_SetReady(uint8_t ready);
 void GpLedMatrixBtDebug_PrintInit(void);
-void GpLedMatrixBtDebug_Task(void);
 void GpLedMatrixBtDebug_HandleUsbCommand(const uint8_t *commandBytes, uint8_t length);
 
 #endif

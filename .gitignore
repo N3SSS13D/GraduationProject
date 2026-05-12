@@ -43,6 +43,10 @@ Project/Debug/
 *.lnp
 *.m51
 *.build_log.htm
+**/build_nocache/
+
+# Runtime debug snapshots
+Project/debug_snapshots/
 
 # ---------------------------------------------------------------------------
 # Temporary & editor files
@@ -116,3 +120,7 @@ Project/STC51/**/*.RAR
 # ---------------------------------------------------------------------------
 Demo/Pic/jd-xhh.jpg
 Demo/Pic/jd-xhh-16-16.jpg
+
+# Thesis working markdown files
+Doc/毕业论文/**/*.md
+Doc/毕业论文/**/*.MD

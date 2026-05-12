@@ -47,6 +47,9 @@ public:
     /* Register the UI callback used to show current matrix link state. */
     void SetLinkStatusCallback(LinkStatusCallback callback);
 
+    /* Send the current Wi-Fi-synced local time to the LED-side clock cache. */
+    bool SyncClockTime(bool force = false);
+
     /* Convert one GP debug-menu state object into a matrix action and send it. */
     bool ShowDebugState(const GpColorDebugState& state);
 
@@ -87,6 +90,9 @@ public:
     /* Run the P2 LED chase only when the Bluetooth matrix link has been idle long enough. */
     bool TrySendBackgroundDebugLedCommand(uint8_t led_index, uint32_t quiet_window_ms);
 
+    /* Poll one incoming LED-originated request packet and flush any deferred replay work. */
+    bool PollIncomingRequest(uint32_t timeout_ms = 0U);
+
     /* Start or stop the LED-side 1-second debug LED chase test. */
     bool SetDebugLedFlow(bool enable);
 
@@ -100,13 +106,19 @@ private:
     uint32_t verified_count_;
     uint32_t no_reply_count_;
     uint32_t last_foreground_activity_tick_;
+    uint32_t last_clock_sync_unix_;
     bool link_verified_;
     bool remote_override_active_;
     bool has_last_action_;
     bool has_last_state_;
+    bool has_cached_bitmap_frame_;
+    bool cached_bitmap_resend_pending_;
     std::unique_ptr<GpMatrixTransport> transport_;
     GpMatrixActionPayload last_action_;
     DeviceState last_state_;
+    std::array<uint16_t, GP_MATRIX_HEIGHT> cached_bitmap_rows_;
+    uint32_t cached_bitmap_primary_rgb888_;
+    uint32_t cached_bitmap_background_rgb888_;
     std::string last_payload_summary_;
     std::mutex mutex_;
     LinkStatusCallback link_status_callback_;
@@ -128,6 +140,9 @@ private:
                          GpMatrixMode mode,
                          bool ack_each_stage);
     bool SendDebugLedCommandLocked(uint8_t led_index, bool ack_required, bool track_activity);
+    bool HandleIncomingPacketLocked(const uint8_t* data, size_t length);
+    bool FlushPendingRequestsLocked();
+    bool ResendCachedBitmapFrameLocked();
 
     /* Locked variants — assume mutex_ is already held by the caller. */
     bool ShowLayeredFrameLocked(const std::vector<LayeredFrameLayer>& layers, GpMatrixMode mode);

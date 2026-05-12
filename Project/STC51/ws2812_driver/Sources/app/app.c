@@ -1,152 +1,159 @@
 #include "config.h"
-#include "test.h"
+#include "app.h"
 #include "draw_drv.h"
 #include "offline_pattern.h"
-#include "test_image.h"
+#include "local_display_scheme.h"
+#include "local_display_assets.h"
 #include "mid_task.h"
 #include "key_ctrl.h"
 #include "gp_led_action.h"
 #include "gp_led_matrix_ai8051u.h"
-#include "gp_led_matrix_bt_debug.h"
 #include "ws2812_drv.h"
 
-#define TEST_SCHED_TICK_US               500UL
-#define TEST_ROW_INTERVAL_US_DEFAULT_NORMAL  1000UL
-#define TEST_ROW_INTERVAL_US_DEFAULT_LEGACY  1000UL
-#define TEST_ROW_INTERVAL_US_MIN         300UL
-#define TEST_ROW_INTERVAL_US_SAFETY_MARGIN_LEGACY  120UL
-#define TEST_ROW_INTERVAL_MS_MIN         1U
-#define TEST_ROW_INTERVAL_MS_MAX         50000U
-#define TEST_DRAW_FRAME_TASK32MS_PERIOD_MS   32U
-#define TEST_KEY_TASK_PERIOD_MS          10U
-#define TEST_DEBUG_TASK_PERIOD_MS        50U
-#define TEST_SCAN_BASELINE_LOG_PERIOD_MS 1000U
-#define TEST_TIMER1_US_PRESCALE_DEFAULT  0U
-#define TEST_TIMER1_PRESCALE_MIN         0U
-#define TEST_TIMER1_PRESCALE_MAX         255U
-#define TEST_TIMER1_MAX_COUNTER          65535UL
-#define TEST_TIMER1_TICK_SCALE           1024UL
-#define TEST_PRESET_MODE_COUNT           8U
+#define APP_SCHED_TICK_US               500UL
+#define APP_ROW_INTERVAL_US_DEFAULT_NORMAL  1000UL
+#define APP_ROW_INTERVAL_US_DEFAULT_LEGACY  1000UL
+#define APP_ROW_INTERVAL_US_MIN         300UL
+#define APP_ROW_INTERVAL_US_SAFETY_MARGIN_LEGACY  120UL
+#define APP_ROW_INTERVAL_MS_MIN         1U
+#define APP_ROW_INTERVAL_MS_MAX         50000U
+#define APP_DRAW_FRAME_TASK_PERIOD_MS_DEFAULT  32U
+#define APP_KEY_TASK_PERIOD_MS          10U
+#define APP_TIMER1_US_PRESCALE_DEFAULT  0U
+#define APP_TIMER1_PRESCALE_MIN         0U
+#define APP_TIMER1_PRESCALE_MAX         255U
+#define APP_TIMER1_MAX_COUNTER          65535UL
+#define APP_TIMER1_TICK_SCALE           1024UL
+#define APP_PRESET_MODE_COUNT           8U
 
-#define TEST_PRESET_DIAMOND_FADE         0U
-#define TEST_PRESET_CROSS_GRADIENT       1U
-#define TEST_PRESET_JLU_EMBLEM_STATIC    2U
-#define TEST_PRESET_JLU_SCROLL           3U
-#define TEST_PRESET_DIAMOND_TIMELINE     4U
-#define TEST_PRESET_BORDER_FADE_IN       5U
-#define TEST_PRESET_CHECKER_FADE_OUT     6U
-#define TEST_PRESET_DIAGONAL_COLOR_CYCLE  7U
+#define APP_PRESET_DIAMOND_FADE         0U
+#define APP_PRESET_CROSS_GRADIENT       1U
+#define APP_PRESET_JLU_EMBLEM_STATIC    2U
+#define APP_PRESET_JLU_SCROLL           3U
+#define APP_PRESET_DIAMOND_TIMELINE     4U
+#define APP_PRESET_BORDER_FADE_IN       5U
+#define APP_PRESET_CHECKER_FADE_OUT     6U
+#define APP_PRESET_DIAGONAL_COLOR_CYCLE  7U
 
-static uint32_t g_testRowIntervalUs = TEST_ROW_INTERVAL_US_DEFAULT_NORMAL;
-static uint32_t g_testRowIntervalUsNormal = TEST_ROW_INTERVAL_US_DEFAULT_NORMAL;
-static uint32_t g_testRowIntervalUsLegacy = TEST_ROW_INTERVAL_US_DEFAULT_LEGACY;
-static uint16_t g_testLastPwmUs = 0;
-static DrawDrv_RenderConfig_t xdata g_testRenderCfg;
-static uint8_t g_testPresetMode = TEST_PRESET_CROSS_GRADIENT;
-static volatile uint16_t g_testDbgStartUs = 0U;
-static volatile uint8_t g_testDbgPending = 0U;
-static volatile uint8_t g_testDebugMode = 0U;
-static volatile uint16_t g_testDbgRowSeq = 0U;
-static volatile uint16_t g_testTimer1CycleCount = 0U;
-static volatile uint16_t g_testTimer1CycleTarget = 1U;
-static DrawDrv_RenderConfig_t xdata g_testDebugSavedCfg;
-static GpLedDisplayProfile xdata g_testDisplayProfile;
-static uint8_t g_testDebugSavedImage = 0U;
-static uint8_t g_testDebugVisualApplied = 0U;
-static GpLedMatrixAi8051uContext xdata g_testAiMatrixCtx;
-static uint16_t g_testScanLogTickCount = 0U;
-static uint16_t g_testScanLogLastRefresh = 0U;
-static uint16_t g_testScanLogLastTrigger = 0U;
-static uint16_t g_testScanLogLastDone = 0U;
-static uint16_t g_testScanLogLastTimeout = 0U;
-static uint16_t g_testScanLogLastOddAddr = 0U;
+static uint32_t g_appRowIntervalUs = APP_ROW_INTERVAL_US_DEFAULT_NORMAL;
+static uint32_t g_appRowIntervalUsNormal = APP_ROW_INTERVAL_US_DEFAULT_NORMAL;
+static uint32_t g_appRowIntervalUsLegacy = APP_ROW_INTERVAL_US_DEFAULT_LEGACY;
+static uint16_t g_appLastPwmUs = 0;
+static DrawDrv_RenderConfig_t xdata g_appRenderCfg;
+static uint8_t g_appPresetMode = APP_PRESET_CROSS_GRADIENT;
+static volatile uint8_t g_appDebugMode = 0U;
+static volatile uint16_t g_appTimer1CycleCount = 0U;
+static volatile uint16_t g_appTimer1CycleTarget = 1U;
+static DrawDrv_RenderConfig_t xdata g_appDebugSavedCfg;
+static GpLedDisplayProfile xdata g_appDisplayProfile;
+static uint8_t g_appDebugSavedImage = 0U;
+static uint8_t g_appDebugVisualApplied = 0U;
+static GpLedMatrixAi8051uContext xdata g_appAiMatrixCtx;
+static uint8_t g_appDrawFrameTaskId = MIDTASK_INVALID_ID;
+static uint16_t g_appDrawFrameTaskPeriodMs = APP_DRAW_FRAME_TASK_PERIOD_MS_DEFAULT;
 
-static uint32_t Test_GetIntervalByScanMode(void);
-static uint32_t Test_ClampLegacyRowIntervalUs(uint32_t intervalUs);
-static void Test_Timer1ApplyRefreshInterval(uint32_t intervalUs);
-static uint32_t Test_Timer1GetTicksPerUsScaled(uint8_t prescale);
-static void Test_KeyTaskProxy(void);
-static void Test_DrawFrameTaskProxy(void);
-static void Test_PrintScanBaseline(void);
-static DrawDrv_Effect_t Test_GetNextOfflineEffect(DrawDrv_ContentType_t contentType, DrawDrv_Effect_t currentEffect);
-static void Test_BuildProfileFromRenderConfig(const DrawDrv_RenderConfig_t xdata *renderCfg,
+static uint32_t APP_GetIntervalByScanMode(void);
+static uint32_t APP_ClampLegacyRowIntervalUs(uint32_t intervalUs);
+static void APP_Timer1ApplyRefreshInterval(uint32_t intervalUs);
+static uint32_t APP_Timer1GetTicksPerUsScaled(uint8_t prescale);
+static void APP_KeyTaskProxy(void);
+static void APP_DrawFrameTaskProxy(void);
+static uint16_t APP_ResolveLocalDrawFramePeriodMs(const DrawDrv_RenderConfig_t *renderCfg);
+static void APP_SyncLocalDrawTaskPeriod(const DrawDrv_RenderConfig_t *renderCfg);
+static void APP_SyncLocalDrawTaskPeriodFromDriver(void);
+static void APP_BuildProfileFromRenderConfig(const DrawDrv_RenderConfig_t xdata *renderCfg,
                                               GpLedDisplayProfile xdata *profile);
-static void Test_ApplyLocalProfileWithSelection(const DrawDrv_RenderConfig_t xdata *renderCfg,
+static void APP_ApplyLocalProfileWithSelection(const DrawDrv_RenderConfig_t xdata *renderCfg,
                                                 uint8_t applyPattern,
                                                 uint8_t patternId,
                                                 uint8_t applyGlyph,
                                                 uint8_t glyphId);
 
-static void Test_PrintScanBaseline(void)
+static uint16_t APP_ResolveLocalDrawFramePeriodMs(const DrawDrv_RenderConfig_t *renderCfg)
 {
-    uint16_t refreshNow;
-    uint16_t triggerNow;
-    uint16_t doneNow;
-    uint16_t timeoutNow;
-    uint16_t oddAddrNow;
-    uint16_t refreshDelta;
-    uint16_t triggerDelta;
-    uint16_t doneDelta;
-    uint16_t timeoutDelta;
-    uint16_t oddAddrDelta;
-    uint16_t lastTxAddr;
-    uint16_t lastTxLen;
-    uint8_t lastRowA;
-    uint8_t lastRowB;
-    uint8_t activeCols;
-    const char *scanModeText;
-
-    refreshNow = WS2812DRV_GetRefreshCounter();
-    triggerNow = WS2812DRV_GetDmaTriggerCounter();
-    doneNow = WS2812DRV_GetDmaDoneCounter();
-    timeoutNow = WS2812DRV_GetDmaTimeoutCounter();
-    oddAddrNow = WS2812DRV_GetDmaOddAddrCounter();
-
-    refreshDelta = (uint16_t)(refreshNow - g_testScanLogLastRefresh);
-    triggerDelta = (uint16_t)(triggerNow - g_testScanLogLastTrigger);
-    doneDelta = (uint16_t)(doneNow - g_testScanLogLastDone);
-    timeoutDelta = (uint16_t)(timeoutNow - g_testScanLogLastTimeout);
-    oddAddrDelta = (uint16_t)(oddAddrNow - g_testScanLogLastOddAddr);
-
-    g_testScanLogLastRefresh = refreshNow;
-    g_testScanLogLastTrigger = triggerNow;
-    g_testScanLogLastDone = doneNow;
-    g_testScanLogLastTimeout = timeoutNow;
-    g_testScanLogLastOddAddr = oddAddrNow;
-
-    lastTxAddr = WS2812DRV_GetLastTxAddr();
-    lastTxLen = WS2812DRV_GetLastScanTxLen();
-    lastRowA = WS2812DRV_GetLastScanRowA();
-    lastRowB = WS2812DRV_GetLastScanRowB();
-    activeCols = WS2812DRV_GetActiveCols();
-    if (WS2812DRV_GetScanMode() == WS2812DRV_SCAN_LEGACY_SHIFT)
+    if (renderCfg == 0)
     {
-        scanModeText = "legacy";
-    }
-    else
-    {
-        scanModeText = "npair";
+        return DRAWDRV_FRAME_INTERVAL_MS_DEFAULT;
     }
 
-    printf("[LED_SCAN] mode=%s cols=%u interval_us=%lu ref_s=%u trig_s=%u done_s=%u odd_s=%u to_s=%u\r\n",
-           scanModeText,
-           (unsigned int)activeCols,
-           (unsigned long)g_testRowIntervalUs,
-           (unsigned int)refreshDelta,
-           (unsigned int)triggerDelta,
-           (unsigned int)doneDelta,
-           (unsigned int)oddAddrDelta,
-           (unsigned int)timeoutDelta);
-    printf("[LED_LAST] rowA=%u rowB=%u tx_len=%u tx_addr=0x%04X cycle=%u/%u\r\n",
-           (unsigned int)lastRowA,
-           (unsigned int)lastRowB,
-           (unsigned int)lastTxLen,
-           (unsigned int)lastTxAddr,
-           (unsigned int)g_testTimer1CycleCount,
-           (unsigned int)g_testTimer1CycleTarget);
+    return DrawDrv_NormalizeFrameIntervalMs(renderCfg->frameIntervalMs);
 }
 
-static void Test_BuildProfileFromRenderConfig(const DrawDrv_RenderConfig_t xdata *renderCfg,
+static void APP_SyncLocalDrawTaskPeriod(const DrawDrv_RenderConfig_t *renderCfg)
+{
+    uint16_t periodMs;
+
+    if (g_appDrawFrameTaskId == MIDTASK_INVALID_ID)
+    {
+        return;
+    }
+
+    periodMs = APP_ResolveLocalDrawFramePeriodMs(renderCfg);
+    if (periodMs == g_appDrawFrameTaskPeriodMs)
+    {
+        return;
+    }
+
+    if (MidTask_SetPeriod(g_appDrawFrameTaskId, periodMs) != 0U)
+    {
+        g_appDrawFrameTaskPeriodMs = periodMs;
+    }
+}
+
+static void APP_SyncLocalDrawTaskPeriodFromDriver(void)
+{
+    const DrawDrv_RenderConfig_t *renderCfg;
+
+    /* Keep the cooperative draw task aligned with the driver's current time base, including remote profile changes. */
+    renderCfg = DrawDrv_GetRenderConfigStorage();
+    APP_SyncLocalDrawTaskPeriod(renderCfg);
+}
+
+void APP_ApplyLocalRenderConfig(const DrawDrv_RenderConfig_t *renderCfg)
+{
+    if (renderCfg == 0)
+    {
+        return;
+    }
+
+    g_appRenderCfg = *renderCfg;
+    DrawDrv_SetRenderConfig(&g_appRenderCfg);
+    APP_SyncLocalDrawTaskPeriod(&g_appRenderCfg);
+}
+
+void APP_ApplyLocalPatternConfig(const DrawDrv_RenderConfig_t *renderCfg, uint8_t patternId)
+{
+    if (renderCfg == 0)
+    {
+        return;
+    }
+
+    g_appRenderCfg = *renderCfg;
+    APP_ApplyLocalProfileWithSelection(&g_appRenderCfg, 1U, patternId, 0U, 0U);
+}
+
+void APP_ApplyLocalGlyphConfig(const DrawDrv_RenderConfig_t *renderCfg, uint8_t glyphId)
+{
+    if (renderCfg == 0)
+    {
+        return;
+    }
+
+    g_appRenderCfg = *renderCfg;
+    APP_ApplyLocalProfileWithSelection(&g_appRenderCfg, 0U, 0U, 1U, glyphId);
+}
+
+void APP_ReleaseRemoteModeForLocalDisplay(void)
+{
+    GpLedAction_ReleaseRemoteMode();
+}
+
+uint8_t APP_RequestRemoteCachedBitmap(void)
+{
+    return GpLedMatrixAi8051u_RequestCachedBitmap();
+}
+
+static void APP_BuildProfileFromRenderConfig(const DrawDrv_RenderConfig_t xdata *renderCfg,
                                               GpLedDisplayProfile xdata *profile)
 {
     profile->version = GP_LED_PROFILE_VERSION_V1;
@@ -174,7 +181,7 @@ static void Test_BuildProfileFromRenderConfig(const DrawDrv_RenderConfig_t xdata
     {
         profile->actionFlags |= GP_MATRIX_ACTION_FLAG_USE_SECONDARY;
     }
-    profile->frameIntervalMs = GP_MATRIX_ANIMATION_DEFAULT_INTERVAL_MS;
+    profile->frameIntervalMs = APP_ResolveLocalDrawFramePeriodMs(renderCfg);
     profile->timelineDurationMs = renderCfg->timelineDurationMs;
     profile->timelineRepeatDelayMs = renderCfg->timelineRepeatDelayMs;
     profile->timelineRepeatCount = renderCfg->timelineRepeatCount;
@@ -183,31 +190,32 @@ static void Test_BuildProfileFromRenderConfig(const DrawDrv_RenderConfig_t xdata
     profile->applyFlags = 0U;
 }
 
-static void Test_ApplyLocalProfileWithSelection(const DrawDrv_RenderConfig_t xdata *renderCfg,
+static void APP_ApplyLocalProfileWithSelection(const DrawDrv_RenderConfig_t xdata *renderCfg,
                                                 uint8_t applyPattern,
                                                 uint8_t patternId,
                                                 uint8_t applyGlyph,
                                                 uint8_t glyphId)
 {
-    Test_BuildProfileFromRenderConfig(renderCfg, &g_testDisplayProfile);
+    APP_BuildProfileFromRenderConfig(renderCfg, &g_appDisplayProfile);
 
     if (applyPattern != 0U)
     {
-        g_testDisplayProfile.applyFlags |= GP_LED_PROFILE_FLAG_APPLY_PATTERN;
-        g_testDisplayProfile.patternId = patternId;
+        g_appDisplayProfile.applyFlags |= GP_LED_PROFILE_FLAG_APPLY_PATTERN;
+        g_appDisplayProfile.patternId = patternId;
     }
     if (applyGlyph != 0U)
     {
-        g_testDisplayProfile.applyFlags |= GP_LED_PROFILE_FLAG_APPLY_GLYPH;
-        g_testDisplayProfile.glyphId = glyphId;
+        g_appDisplayProfile.applyFlags |= GP_LED_PROFILE_FLAG_APPLY_GLYPH;
+        g_appDisplayProfile.glyphId = glyphId;
     }
 
-    if (GpLedAction_ApplyLocalDisplayProfile(&g_testDisplayProfile) == kGpMatrixStatusOk)
+    if (GpLedAction_ApplyLocalDisplayProfile(&g_appDisplayProfile) == kGpMatrixStatusOk)
     {
+        APP_SyncLocalDrawTaskPeriod(renderCfg);
         return;
     }
 
-    DrawDrv_SetRenderConfig(renderCfg);
+    APP_ApplyLocalRenderConfig(renderCfg);
     if (applyPattern != 0U)
     {
         DrawDrv_SetImageIndex(patternId);
@@ -219,7 +227,7 @@ static void Test_ApplyLocalProfileWithSelection(const DrawDrv_RenderConfig_t xda
     DrawDrv_RequestRebuild();
 }
 
-static uint32_t Test_ClampLegacyRowIntervalUs(uint32_t intervalUs)
+static uint32_t APP_ClampLegacyRowIntervalUs(uint32_t intervalUs)
 {
     uint32_t activeCols;
     uint32_t pwmSlotsPerRow;
@@ -227,16 +235,16 @@ static uint32_t Test_ClampLegacyRowIntervalUs(uint32_t intervalUs)
     uint32_t txUs;
     uint32_t minLegacyUs;
 
-    if (intervalUs < TEST_ROW_INTERVAL_US_MIN)
+    if (intervalUs < APP_ROW_INTERVAL_US_MIN)
     {
-        intervalUs = TEST_ROW_INTERVAL_US_MIN;
+        intervalUs = APP_ROW_INTERVAL_US_MIN;
     }
 
     activeCols = (uint32_t)WS2812DRV_GetActiveCols();
     pwmSlotsPerRow = (uint32_t)WS2812DRV_ROW_RESET_PREFIX_SLOTS + activeCols * 24UL + 2UL;
     effectiveCycles = pwmSlotsPerRow + (uint32_t)WS2812DRV_RESET_TAIL_SLOTS + 1UL;
     txUs = (effectiveCycles * 5UL + 3UL) / 4UL;
-    minLegacyUs = txUs + TEST_ROW_INTERVAL_US_SAFETY_MARGIN_LEGACY;
+    minLegacyUs = txUs + APP_ROW_INTERVAL_US_SAFETY_MARGIN_LEGACY;
 
     if (intervalUs < minLegacyUs)
     {
@@ -246,107 +254,72 @@ static uint32_t Test_ClampLegacyRowIntervalUs(uint32_t intervalUs)
     return intervalUs;
 }
 
-static void Test_DrawFrameTaskProxy(void)
+static void APP_DrawFrameTaskProxy(void)
 {
+    APP_SyncLocalDrawTaskPeriodFromDriver();
+
     if (GpLedAction_ShouldBypassDrawScheduler() != 0U)
     {
         return;
     }
 
-    DrawDrv_Task32ms();
+    DrawDrv_Task();
 }
 
-static void Test_KeyTaskProxy(void)
+static void APP_KeyTaskProxy(void)
 {
     GpLedAction_Task10ms();
     KeyCtrl_Task10ms();
+    LocalDisplayScheme_Task10ms();
 }
 
-static DrawDrv_Effect_t Test_GetNextOfflineEffect(DrawDrv_ContentType_t contentType, DrawDrv_Effect_t currentEffect)
+static void APP_ApplyDebugStaticDisplay(void)
 {
-    if (contentType == DRAWDRV_CONTENT_GLYPH)
-    {
-        switch (currentEffect)
-        {
-            case DRAWDRV_EFFECT_TEXT_SCROLL_JLU:
-                return DRAWDRV_EFFECT_STATIC;
-
-            case DRAWDRV_EFFECT_STATIC:
-                return DRAWDRV_EFFECT_BREATH;
-
-            case DRAWDRV_EFFECT_BREATH:
-                return DRAWDRV_EFFECT_COLOR_CYCLE;
-
-            case DRAWDRV_EFFECT_COLOR_CYCLE:
-            default:
-                return DRAWDRV_EFFECT_TEXT_SCROLL_JLU;
-        }
-    }
-
-    switch (currentEffect)
-    {
-        case DRAWDRV_EFFECT_STATIC:
-            return DRAWDRV_EFFECT_BREATH;
-
-        case DRAWDRV_EFFECT_BREATH:
-            return DRAWDRV_EFFECT_GRADIENT;
-
-        case DRAWDRV_EFFECT_GRADIENT:
-            return DRAWDRV_EFFECT_COLOR_CYCLE;
-
-        case DRAWDRV_EFFECT_COLOR_CYCLE:
-        default:
-            return DRAWDRV_EFFECT_STATIC;
-    }
-}
-
-static void Test_ApplyDebugStaticDisplay(void)
-{
-    if (g_testDebugVisualApplied != 0U)
+    if (g_appDebugVisualApplied != 0U)
     {
         return;
     }
 
-    DrawDrv_GetRenderConfig(&g_testDebugSavedCfg);
-    g_testDebugSavedImage = DrawDrv_GetImageIndex();
+    DrawDrv_GetRenderConfig(&g_appDebugSavedCfg);
+    g_appDebugSavedImage = DrawDrv_GetImageIndex();
 
-    g_testRenderCfg = g_testDebugSavedCfg;
+    g_appRenderCfg = g_appDebugSavedCfg;
     /* Keep display content deterministic in debug mode for visual inspection. */
-    g_testRenderCfg.contentType = DRAWDRV_CONTENT_PATTERN;
-    g_testRenderCfg.colorMode = DRAWDRV_COLOR_SOLID;
-    g_testRenderCfg.direction = DRAWDRV_DIR_NORMAL;
-    g_testRenderCfg.useGradient = 0U;
-    g_testRenderCfg.effect = DRAWDRV_EFFECT_STATIC;
-    g_testRenderCfg.scrollStep = 1U;
-    g_testRenderCfg.animStep = 1U;
+    g_appRenderCfg.contentType = DRAWDRV_CONTENT_PATTERN;
+    g_appRenderCfg.colorMode = DRAWDRV_COLOR_SOLID;
+    g_appRenderCfg.direction = DRAWDRV_DIR_NORMAL;
+    g_appRenderCfg.useGradient = 0U;
+    g_appRenderCfg.effect = DRAWDRV_EFFECT_STATIC;
+    g_appRenderCfg.scrollStep = 1U;
+    g_appRenderCfg.animStep = 1U;
 
-    Test_ApplyLocalProfileWithSelection(&g_testRenderCfg, 1U, OFFLINE_PATTERN_IDX_DIAMOND, 0U, 0U);
-    g_testDebugVisualApplied = 1U;
+    APP_ApplyLocalProfileWithSelection(&g_appRenderCfg, 1U, OFFLINE_PATTERN_IDX_DIAMOND, 0U, 0U);
+    g_appDebugVisualApplied = 1U;
 }
 
-static void Test_RestoreDebugDisplay(void)
+static void APP_RestoreDebugDisplay(void)
 {
-    if (g_testDebugVisualApplied == 0U)
+    if (g_appDebugVisualApplied == 0U)
     {
         return;
     }
 
-    g_testRenderCfg = g_testDebugSavedCfg;
-    Test_ApplyLocalProfileWithSelection(&g_testRenderCfg, 1U, g_testDebugSavedImage, 0U, 0U);
-    g_testDebugVisualApplied = 0U;
+    g_appRenderCfg = g_appDebugSavedCfg;
+    APP_ApplyLocalProfileWithSelection(&g_appRenderCfg, 1U, g_appDebugSavedImage, 0U, 0U);
+    g_appDebugVisualApplied = 0U;
 }
 
-static uint8_t Test_Timer1SelectPrescale(uint32_t intervalUs)
+static uint8_t APP_Timer1SelectPrescale(uint32_t intervalUs)
 {
     uint8_t prescale;
     uint32_t maxSingleUs;
     uint32_t ticksPerUsScaled;
 
-    prescale = TEST_TIMER1_PRESCALE_MIN;
-    while (prescale < TEST_TIMER1_PRESCALE_MAX)
+    prescale = APP_TIMER1_PRESCALE_MIN;
+    while (prescale < APP_TIMER1_PRESCALE_MAX)
     {
-        ticksPerUsScaled = Test_Timer1GetTicksPerUsScaled(prescale);
-        maxSingleUs = (TEST_TIMER1_MAX_COUNTER * TEST_TIMER1_TICK_SCALE) / ticksPerUsScaled;
+        ticksPerUsScaled = APP_Timer1GetTicksPerUsScaled(prescale);
+        maxSingleUs = (APP_TIMER1_MAX_COUNTER * APP_TIMER1_TICK_SCALE) / ticksPerUsScaled;
         if (intervalUs <= maxSingleUs)
         {
             break;
@@ -358,13 +331,13 @@ static uint8_t Test_Timer1SelectPrescale(uint32_t intervalUs)
     return prescale;
 }
 
-static uint32_t Test_Timer1GetTicksPerUsScaled(uint8_t prescale)
+static uint32_t APP_Timer1GetTicksPerUsScaled(uint8_t prescale)
 {
     uint32_t clocksPerUsScaled;
     uint32_t divider;
 
     divider = (uint32_t)prescale + 1UL;
-    clocksPerUsScaled = (((MAIN_Fosc / divider) / 1000UL) * TEST_TIMER1_TICK_SCALE + 500UL) / 1000UL;
+    clocksPerUsScaled = (((MAIN_Fosc / divider) / 1000UL) * APP_TIMER1_TICK_SCALE + 500UL) / 1000UL;
     if (clocksPerUsScaled == 0UL)
     {
         clocksPerUsScaled = 1UL;
@@ -373,273 +346,244 @@ static uint32_t Test_Timer1GetTicksPerUsScaled(uint8_t prescale)
     return clocksPerUsScaled;
 }
 
-static void Test_DebugTask1s(void)
+void APP_SetDebugMode(uint8_t enable)
 {
-    GpLedMatrixBtDebug_Task();
+    g_appDebugMode = (uint8_t)(enable != 0U);
 
-    g_testScanLogTickCount = (uint16_t)(g_testScanLogTickCount + TEST_DEBUG_TASK_PERIOD_MS);
-    if (g_testScanLogTickCount < TEST_SCAN_BASELINE_LOG_PERIOD_MS)
+    if (g_appDebugMode != 0U)
     {
-        return;
-    }
-
-    g_testScanLogTickCount = 0U;
-    Test_PrintScanBaseline();
-}
-
-void Test_DebugMarkRowSwitchStart(void)
-{
-    g_testDbgStartUs = 0U;
-    g_testDbgPending = 0U;
-}
-
-void Test_DebugMarkPwmSendDone(void)
-{
-    g_testDbgPending = 0U;
-}
-
-void Test_SetDebugMode(uint8_t enable)
-{
-    g_testDebugMode = (uint8_t)(enable != 0U);
-
-    if (g_testDebugMode != 0U)
-    {
-        Test_ApplyDebugStaticDisplay();
+        APP_ApplyDebugStaticDisplay();
     }
     else
     {
-        Test_RestoreDebugDisplay();
+        APP_RestoreDebugDisplay();
     }
 
-    Test_Timer1ApplyRefreshInterval(Test_GetIntervalByScanMode());
+    APP_Timer1ApplyRefreshInterval(APP_GetIntervalByScanMode());
 
-    if (g_testDebugMode == 0U)
-    {
-        g_testDbgRowSeq = 0U;
-    }
 }
 
-uint8_t Test_GetDebugMode(void)
+uint8_t APP_GetDebugMode(void)
 {
-    return g_testDebugMode;
+    return g_appDebugMode;
 }
 
-static uint32_t Test_GetIntervalByScanMode(void)
+static uint32_t APP_GetIntervalByScanMode(void)
 {
     if (WS2812DRV_GetScanMode() == WS2812DRV_SCAN_LEGACY_SHIFT)
     {
-        return g_testRowIntervalUsLegacy;
+        return g_appRowIntervalUsLegacy;
     }
 
-    return g_testRowIntervalUsNormal;
+    return g_appRowIntervalUsNormal;
 }
 
-static void Test_ApplyPresetMode(uint8_t presetMode)
+static void APP_ApplyPresetMode(uint8_t presetMode)
 {
     uint8_t applyPattern;
     uint8_t applyGlyph;
     uint8_t targetPattern;
 
-    DrawDrv_GetRenderConfig(&g_testRenderCfg);
+    DrawDrv_GetRenderConfig(&g_appRenderCfg);
     applyPattern = 0U;
     applyGlyph = 0U;
     targetPattern = 0U;
 
-    if (presetMode >= TEST_PRESET_MODE_COUNT)
+    if (presetMode >= APP_PRESET_MODE_COUNT)
     {
         presetMode = 0U;
     }
 
-    if (presetMode == TEST_PRESET_DIAMOND_FADE)
+    if (presetMode == APP_PRESET_DIAMOND_FADE)
     {
-        g_testRenderCfg.contentType = DRAWDRV_CONTENT_PATTERN;
-        g_testRenderCfg.colorMode = DRAWDRV_COLOR_SOLID;
-        g_testRenderCfg.direction = DRAWDRV_DIR_NORMAL;
-        g_testRenderCfg.useGradient = 0U;
-        g_testRenderCfg.effect = DRAWDRV_EFFECT_BREATH;
-        g_testRenderCfg.scrollStep = 1U;
-        g_testRenderCfg.animStep = 2U;
-        g_testRenderCfg.fgR = 0xFF;
-        g_testRenderCfg.fgG = 0xC0;
-        g_testRenderCfg.fgB = 0x50;
-        g_testRenderCfg.bgR = 0x00;
-        g_testRenderCfg.bgG = 0x00;
-        g_testRenderCfg.bgB = 0x00;
-        g_testRenderCfg.timelineDurationMs = 0U;
-        g_testRenderCfg.timelineRepeatDelayMs = 0U;
-        g_testRenderCfg.timelineRepeatCount = 0U;
-        g_testRenderCfg.timelinePath = DRAWDRV_TIMELINE_PATH_LINEAR;
+        g_appRenderCfg.contentType = DRAWDRV_CONTENT_PATTERN;
+        g_appRenderCfg.colorMode = DRAWDRV_COLOR_SOLID;
+        g_appRenderCfg.direction = DRAWDRV_DIR_NORMAL;
+        g_appRenderCfg.useGradient = 0U;
+        g_appRenderCfg.effect = DRAWDRV_EFFECT_BREATH;
+        g_appRenderCfg.scrollStep = 1U;
+        g_appRenderCfg.animStep = 2U;
+        g_appRenderCfg.fgR = 0xFF;
+        g_appRenderCfg.fgG = 0xC0;
+        g_appRenderCfg.fgB = 0x50;
+        g_appRenderCfg.bgR = 0x00;
+        g_appRenderCfg.bgG = 0x00;
+        g_appRenderCfg.bgB = 0x00;
+        g_appRenderCfg.timelineDurationMs = 0U;
+        g_appRenderCfg.timelineRepeatDelayMs = 0U;
+        g_appRenderCfg.timelineRepeatCount = 0U;
+        g_appRenderCfg.timelinePath = DRAWDRV_TIMELINE_PATH_LINEAR;
         applyPattern = 1U;
         targetPattern = OFFLINE_PATTERN_IDX_DIAMOND;
     }
-    else if (presetMode == TEST_PRESET_CROSS_GRADIENT)
+    else if (presetMode == APP_PRESET_CROSS_GRADIENT)
     {
-        g_testRenderCfg.contentType = DRAWDRV_CONTENT_PATTERN;
-        g_testRenderCfg.colorMode = DRAWDRV_COLOR_GRADIENT;
-        g_testRenderCfg.direction = DRAWDRV_DIR_NORMAL;
-        g_testRenderCfg.useGradient = 1U;
-        g_testRenderCfg.gradientSpan = 180U;
-        g_testRenderCfg.effect = DRAWDRV_EFFECT_GRADIENT;
-        g_testRenderCfg.scrollStep = 1U;
-        g_testRenderCfg.animStep = 2U;
-        g_testRenderCfg.fgR = 0x70;
-        g_testRenderCfg.fgG = 0xE0;
-        g_testRenderCfg.fgB = 0xFF;
-        g_testRenderCfg.bgR = 0x00;
-        g_testRenderCfg.bgG = 0x00;
-        g_testRenderCfg.bgB = 0x00;
-        g_testRenderCfg.timelineDurationMs = 0U;
-        g_testRenderCfg.timelineRepeatDelayMs = 0U;
-        g_testRenderCfg.timelineRepeatCount = 0U;
-        g_testRenderCfg.timelinePath = DRAWDRV_TIMELINE_PATH_LINEAR;
+        g_appRenderCfg.contentType = DRAWDRV_CONTENT_PATTERN;
+        g_appRenderCfg.colorMode = DRAWDRV_COLOR_GRADIENT;
+        g_appRenderCfg.direction = DRAWDRV_DIR_NORMAL;
+        g_appRenderCfg.useGradient = 1U;
+        g_appRenderCfg.gradientSpan = 180U;
+        g_appRenderCfg.effect = DRAWDRV_EFFECT_GRADIENT;
+        g_appRenderCfg.scrollStep = 1U;
+        g_appRenderCfg.animStep = 2U;
+        g_appRenderCfg.fgR = 0x70;
+        g_appRenderCfg.fgG = 0xE0;
+        g_appRenderCfg.fgB = 0xFF;
+        g_appRenderCfg.bgR = 0x00;
+        g_appRenderCfg.bgG = 0x00;
+        g_appRenderCfg.bgB = 0x00;
+        g_appRenderCfg.timelineDurationMs = 0U;
+        g_appRenderCfg.timelineRepeatDelayMs = 0U;
+        g_appRenderCfg.timelineRepeatCount = 0U;
+        g_appRenderCfg.timelinePath = DRAWDRV_TIMELINE_PATH_LINEAR;
         applyPattern = 1U;
         targetPattern = OFFLINE_PATTERN_IDX_CROSS;
     }
-    else if (presetMode == TEST_PRESET_JLU_EMBLEM_STATIC)
+    else if (presetMode == APP_PRESET_JLU_EMBLEM_STATIC)
     {
-        g_testRenderCfg.contentType = DRAWDRV_CONTENT_PATTERN;
-        g_testRenderCfg.colorMode = DRAWDRV_COLOR_SOLID;
-        g_testRenderCfg.direction = DRAWDRV_DIR_NORMAL;
-        g_testRenderCfg.useGradient = 0U;
-        g_testRenderCfg.effect = DRAWDRV_EFFECT_STATIC;
-        g_testRenderCfg.scrollStep = 1U;
-        g_testRenderCfg.animStep = 1U;
-        g_testRenderCfg.fgR = 0xFF;
-        g_testRenderCfg.fgG = 0xFF;
-        g_testRenderCfg.fgB = 0xFF;
-        g_testRenderCfg.bgR = 0x00;
-        g_testRenderCfg.bgG = 0x00;
-        g_testRenderCfg.bgB = 0x00;
-        g_testRenderCfg.timelineDurationMs = 0U;
-        g_testRenderCfg.timelineRepeatDelayMs = 0U;
-        g_testRenderCfg.timelineRepeatCount = 0U;
-        g_testRenderCfg.timelinePath = DRAWDRV_TIMELINE_PATH_LINEAR;
+        g_appRenderCfg.contentType = DRAWDRV_CONTENT_PATTERN;
+        g_appRenderCfg.colorMode = DRAWDRV_COLOR_SOLID;
+        g_appRenderCfg.direction = DRAWDRV_DIR_NORMAL;
+        g_appRenderCfg.useGradient = 0U;
+        g_appRenderCfg.effect = DRAWDRV_EFFECT_STATIC;
+        g_appRenderCfg.scrollStep = 1U;
+        g_appRenderCfg.animStep = 1U;
+        g_appRenderCfg.fgR = 0xFF;
+        g_appRenderCfg.fgG = 0xFF;
+        g_appRenderCfg.fgB = 0xFF;
+        g_appRenderCfg.bgR = 0x00;
+        g_appRenderCfg.bgG = 0x00;
+        g_appRenderCfg.bgB = 0x00;
+        g_appRenderCfg.timelineDurationMs = 0U;
+        g_appRenderCfg.timelineRepeatDelayMs = 0U;
+        g_appRenderCfg.timelineRepeatCount = 0U;
+        g_appRenderCfg.timelinePath = DRAWDRV_TIMELINE_PATH_LINEAR;
         applyPattern = 1U;
         targetPattern = OFFLINE_PATTERN_IDX_JLU_EMBLEM;
     }
-    else if (presetMode == TEST_PRESET_DIAMOND_TIMELINE)
+    else if (presetMode == APP_PRESET_DIAMOND_TIMELINE)
     {
-        g_testRenderCfg.contentType = DRAWDRV_CONTENT_PATTERN;
-        g_testRenderCfg.colorMode = DRAWDRV_COLOR_SOLID;
-        g_testRenderCfg.direction = DRAWDRV_DIR_NORMAL;
-        g_testRenderCfg.useGradient = 0U;
-        g_testRenderCfg.effect = DRAWDRV_EFFECT_BREATH;
-        g_testRenderCfg.scrollStep = 1U;
-        g_testRenderCfg.animStep = 1U;
-        g_testRenderCfg.fgR = 0xFF;
-        g_testRenderCfg.fgG = 0x90;
-        g_testRenderCfg.fgB = 0x60;
-        g_testRenderCfg.bgR = 0x00;
-        g_testRenderCfg.bgG = 0x00;
-        g_testRenderCfg.bgB = 0x00;
-        g_testRenderCfg.timelineDurationMs = 1600U;
-        g_testRenderCfg.timelineRepeatDelayMs = 240U;
-        g_testRenderCfg.timelineRepeatCount = 0xFFU;
-        g_testRenderCfg.timelinePath = DRAWDRV_TIMELINE_PATH_BREATH_CURVE;
+        g_appRenderCfg.contentType = DRAWDRV_CONTENT_PATTERN;
+        g_appRenderCfg.colorMode = DRAWDRV_COLOR_SOLID;
+        g_appRenderCfg.direction = DRAWDRV_DIR_NORMAL;
+        g_appRenderCfg.useGradient = 0U;
+        g_appRenderCfg.effect = DRAWDRV_EFFECT_BREATH;
+        g_appRenderCfg.scrollStep = 1U;
+        g_appRenderCfg.animStep = 1U;
+        g_appRenderCfg.fgR = 0xFF;
+        g_appRenderCfg.fgG = 0x90;
+        g_appRenderCfg.fgB = 0x60;
+        g_appRenderCfg.bgR = 0x00;
+        g_appRenderCfg.bgG = 0x00;
+        g_appRenderCfg.bgB = 0x00;
+        g_appRenderCfg.timelineDurationMs = 1600U;
+        g_appRenderCfg.timelineRepeatDelayMs = 240U;
+        g_appRenderCfg.timelineRepeatCount = 0xFFU;
+        g_appRenderCfg.timelinePath = DRAWDRV_TIMELINE_PATH_BREATH_CURVE;
         applyPattern = 1U;
         targetPattern = OFFLINE_PATTERN_IDX_DIAMOND;
     }
-    else if (presetMode == TEST_PRESET_BORDER_FADE_IN)
+    else if (presetMode == APP_PRESET_BORDER_FADE_IN)
     {
-        g_testRenderCfg.contentType = DRAWDRV_CONTENT_PATTERN;
-        g_testRenderCfg.colorMode = DRAWDRV_COLOR_SOLID;
-        g_testRenderCfg.direction = DRAWDRV_DIR_NORMAL;
-        g_testRenderCfg.useGradient = 0U;
-        g_testRenderCfg.effect = DRAWDRV_EFFECT_FADE_IN;
-        g_testRenderCfg.scrollStep = 1U;
-        g_testRenderCfg.animStep = 1U;
-        g_testRenderCfg.fgR = 0x40;
-        g_testRenderCfg.fgG = 0xE0;
-        g_testRenderCfg.fgB = 0xFF;
-        g_testRenderCfg.bgR = 0x00;
-        g_testRenderCfg.bgG = 0x00;
-        g_testRenderCfg.bgB = 0x00;
-        g_testRenderCfg.timelineDurationMs = 1200U;
-        g_testRenderCfg.timelineRepeatDelayMs = 200U;
-        g_testRenderCfg.timelineRepeatCount = 0xFFU;
-        g_testRenderCfg.timelinePath = DRAWDRV_TIMELINE_PATH_EASE_IN_OUT;
+        g_appRenderCfg.contentType = DRAWDRV_CONTENT_PATTERN;
+        g_appRenderCfg.colorMode = DRAWDRV_COLOR_SOLID;
+        g_appRenderCfg.direction = DRAWDRV_DIR_NORMAL;
+        g_appRenderCfg.useGradient = 0U;
+        g_appRenderCfg.effect = DRAWDRV_EFFECT_FADE_IN;
+        g_appRenderCfg.scrollStep = 1U;
+        g_appRenderCfg.animStep = 1U;
+        g_appRenderCfg.fgR = 0x40;
+        g_appRenderCfg.fgG = 0xE0;
+        g_appRenderCfg.fgB = 0xFF;
+        g_appRenderCfg.bgR = 0x00;
+        g_appRenderCfg.bgG = 0x00;
+        g_appRenderCfg.bgB = 0x00;
+        g_appRenderCfg.timelineDurationMs = 1200U;
+        g_appRenderCfg.timelineRepeatDelayMs = 200U;
+        g_appRenderCfg.timelineRepeatCount = 0xFFU;
+        g_appRenderCfg.timelinePath = DRAWDRV_TIMELINE_PATH_EASE_IN_OUT;
         applyPattern = 1U;
         targetPattern = OFFLINE_PATTERN_IDX_BORDER;
     }
-    else if (presetMode == TEST_PRESET_CHECKER_FADE_OUT)
+    else if (presetMode == APP_PRESET_CHECKER_FADE_OUT)
     {
-        g_testRenderCfg.contentType = DRAWDRV_CONTENT_PATTERN;
-        g_testRenderCfg.colorMode = DRAWDRV_COLOR_SOLID;
-        g_testRenderCfg.direction = DRAWDRV_DIR_NORMAL;
-        g_testRenderCfg.useGradient = 0U;
-        g_testRenderCfg.effect = DRAWDRV_EFFECT_FADE_OUT;
-        g_testRenderCfg.scrollStep = 1U;
-        g_testRenderCfg.animStep = 1U;
-        g_testRenderCfg.fgR = 0xFF;
-        g_testRenderCfg.fgG = 0xFF;
-        g_testRenderCfg.fgB = 0x70;
-        g_testRenderCfg.bgR = 0x00;
-        g_testRenderCfg.bgG = 0x00;
-        g_testRenderCfg.bgB = 0x00;
-        g_testRenderCfg.timelineDurationMs = 1200U;
-        g_testRenderCfg.timelineRepeatDelayMs = 160U;
-        g_testRenderCfg.timelineRepeatCount = 0xFFU;
-        g_testRenderCfg.timelinePath = DRAWDRV_TIMELINE_PATH_LINEAR;
+        g_appRenderCfg.contentType = DRAWDRV_CONTENT_PATTERN;
+        g_appRenderCfg.colorMode = DRAWDRV_COLOR_SOLID;
+        g_appRenderCfg.direction = DRAWDRV_DIR_NORMAL;
+        g_appRenderCfg.useGradient = 0U;
+        g_appRenderCfg.effect = DRAWDRV_EFFECT_FADE_OUT;
+        g_appRenderCfg.scrollStep = 1U;
+        g_appRenderCfg.animStep = 1U;
+        g_appRenderCfg.fgR = 0xFF;
+        g_appRenderCfg.fgG = 0xFF;
+        g_appRenderCfg.fgB = 0x70;
+        g_appRenderCfg.bgR = 0x00;
+        g_appRenderCfg.bgG = 0x00;
+        g_appRenderCfg.bgB = 0x00;
+        g_appRenderCfg.timelineDurationMs = 1200U;
+        g_appRenderCfg.timelineRepeatDelayMs = 160U;
+        g_appRenderCfg.timelineRepeatCount = 0xFFU;
+        g_appRenderCfg.timelinePath = DRAWDRV_TIMELINE_PATH_LINEAR;
         applyPattern = 1U;
         targetPattern = OFFLINE_PATTERN_IDX_CHECKER;
     }
-    else if (presetMode == TEST_PRESET_DIAGONAL_COLOR_CYCLE)
+    else if (presetMode == APP_PRESET_DIAGONAL_COLOR_CYCLE)
     {
-        g_testRenderCfg.contentType = DRAWDRV_CONTENT_PATTERN;
-        g_testRenderCfg.colorMode = DRAWDRV_COLOR_SOLID;
-        g_testRenderCfg.direction = DRAWDRV_DIR_NORMAL;
-        g_testRenderCfg.useGradient = 0U;
-        g_testRenderCfg.effect = DRAWDRV_EFFECT_COLOR_CYCLE;
-        g_testRenderCfg.scrollStep = 1U;
-        g_testRenderCfg.animStep = 1U;
-        g_testRenderCfg.fgR = 0xFF;
-        g_testRenderCfg.fgG = 0xFF;
-        g_testRenderCfg.fgB = 0xFF;
-        g_testRenderCfg.bgR = 0x00;
-        g_testRenderCfg.bgG = 0x00;
-        g_testRenderCfg.bgB = 0x00;
-        g_testRenderCfg.timelineDurationMs = 0U;
-        g_testRenderCfg.timelineRepeatDelayMs = 0U;
-        g_testRenderCfg.timelineRepeatCount = 0U;
-        g_testRenderCfg.timelinePath = DRAWDRV_TIMELINE_PATH_LINEAR;
+        g_appRenderCfg.contentType = DRAWDRV_CONTENT_PATTERN;
+        g_appRenderCfg.colorMode = DRAWDRV_COLOR_SOLID;
+        g_appRenderCfg.direction = DRAWDRV_DIR_NORMAL;
+        g_appRenderCfg.useGradient = 0U;
+        g_appRenderCfg.effect = DRAWDRV_EFFECT_COLOR_CYCLE;
+        g_appRenderCfg.scrollStep = 1U;
+        g_appRenderCfg.animStep = 1U;
+        g_appRenderCfg.fgR = 0xFF;
+        g_appRenderCfg.fgG = 0xFF;
+        g_appRenderCfg.fgB = 0xFF;
+        g_appRenderCfg.bgR = 0x00;
+        g_appRenderCfg.bgG = 0x00;
+        g_appRenderCfg.bgB = 0x00;
+        g_appRenderCfg.timelineDurationMs = 0U;
+        g_appRenderCfg.timelineRepeatDelayMs = 0U;
+        g_appRenderCfg.timelineRepeatCount = 0U;
+        g_appRenderCfg.timelinePath = DRAWDRV_TIMELINE_PATH_LINEAR;
         applyPattern = 1U;
         targetPattern = OFFLINE_PATTERN_IDX_DIAGONAL_X;
     }
     else
     {
-        g_testRenderCfg.contentType = DRAWDRV_CONTENT_GLYPH;
-        g_testRenderCfg.colorMode = DRAWDRV_COLOR_SOLID;
-        g_testRenderCfg.direction = DRAWDRV_DIR_NORMAL;
-        g_testRenderCfg.useGradient = 0U;
-        g_testRenderCfg.effect = DRAWDRV_EFFECT_TEXT_SCROLL_JLU;
-        g_testRenderCfg.scrollStep = 1U;
-        g_testRenderCfg.animStep = 1U;
-        g_testRenderCfg.fgR = 0xFF;
-        g_testRenderCfg.fgG = 0xFF;
-        g_testRenderCfg.fgB = 0xFF;
-        g_testRenderCfg.bgR = 0x00;
-        g_testRenderCfg.bgG = 0x00;
-        g_testRenderCfg.bgB = 0x00;
-        g_testRenderCfg.timelineDurationMs = 0U;
-        g_testRenderCfg.timelineRepeatDelayMs = 0U;
-        g_testRenderCfg.timelineRepeatCount = 0U;
-        g_testRenderCfg.timelinePath = DRAWDRV_TIMELINE_PATH_LINEAR;
+        g_appRenderCfg.contentType = DRAWDRV_CONTENT_GLYPH;
+        g_appRenderCfg.colorMode = DRAWDRV_COLOR_SOLID;
+        g_appRenderCfg.direction = DRAWDRV_DIR_NORMAL;
+        g_appRenderCfg.useGradient = 0U;
+        g_appRenderCfg.effect = DRAWDRV_EFFECT_TEXT_SCROLL_JLU;
+        g_appRenderCfg.scrollStep = 1U;
+        g_appRenderCfg.animStep = 1U;
+        g_appRenderCfg.fgR = 0xFF;
+        g_appRenderCfg.fgG = 0xFF;
+        g_appRenderCfg.fgB = 0xFF;
+        g_appRenderCfg.bgR = 0x00;
+        g_appRenderCfg.bgG = 0x00;
+        g_appRenderCfg.bgB = 0x00;
+        g_appRenderCfg.timelineDurationMs = 0U;
+        g_appRenderCfg.timelineRepeatDelayMs = 0U;
+        g_appRenderCfg.timelineRepeatCount = 0U;
+        g_appRenderCfg.timelinePath = DRAWDRV_TIMELINE_PATH_LINEAR;
         applyGlyph = 1U;
     }
 
-    g_testPresetMode = presetMode;
-    Test_ApplyLocalProfileWithSelection(&g_testRenderCfg, applyPattern, targetPattern, applyGlyph, 0U);
+    g_appPresetMode = presetMode;
+    APP_ApplyLocalProfileWithSelection(&g_appRenderCfg, applyPattern, targetPattern, applyGlyph, 0U);
 }
 
-static void Test_OnSchedTickExpired(void)
+static void APP_OnSchedTickExpired(void)
 {
     MidTask_Tick1ms();
     /* Animation playback needs the raw 1 ms cadence instead of the 10 ms cooperative task slot. */
     GpLedAction_Tick1ms();
-    TIMER0_StartOneShotUs(TEST_SCHED_TICK_US);
+    TIMER0_StartOneShotUs(APP_SCHED_TICK_US);
 }
 
-static void Test_Timer1ApplyRefreshInterval(uint32_t intervalUs)
+static void APP_Timer1ApplyRefreshInterval(uint32_t intervalUs)
 {
     uint32_t ticksPerUsScaled;
     uint32_t totalTimerTicks;
@@ -648,34 +592,34 @@ static void Test_Timer1ApplyRefreshInterval(uint32_t intervalUs)
     uint8_t prescale;
     uint16_t reload;
 
-    if (intervalUs < TEST_ROW_INTERVAL_US_MIN)
+    if (intervalUs < APP_ROW_INTERVAL_US_MIN)
     {
-        intervalUs = TEST_ROW_INTERVAL_US_MIN;
+        intervalUs = APP_ROW_INTERVAL_US_MIN;
     }
 
     if (WS2812DRV_GetScanMode() == WS2812DRV_SCAN_LEGACY_SHIFT)
     {
-        intervalUs = Test_ClampLegacyRowIntervalUs(intervalUs);
+        intervalUs = APP_ClampLegacyRowIntervalUs(intervalUs);
     }
 
-    if (g_testDebugMode != 0U)
+    if (g_appDebugMode != 0U)
     {
-        prescale = Test_Timer1SelectPrescale(intervalUs);
+        prescale = APP_Timer1SelectPrescale(intervalUs);
     }
     else
     {
-        prescale = TEST_TIMER1_US_PRESCALE_DEFAULT;
+        prescale = APP_TIMER1_US_PRESCALE_DEFAULT;
     }
 
-    ticksPerUsScaled = Test_Timer1GetTicksPerUsScaled(prescale);
-    totalTimerTicks = (intervalUs * ticksPerUsScaled + (TEST_TIMER1_TICK_SCALE / 2UL)) / TEST_TIMER1_TICK_SCALE;
+    ticksPerUsScaled = APP_Timer1GetTicksPerUsScaled(prescale);
+    totalTimerTicks = (intervalUs * ticksPerUsScaled + (APP_TIMER1_TICK_SCALE / 2UL)) / APP_TIMER1_TICK_SCALE;
     if (totalTimerTicks == 0UL)
     {
         totalTimerTicks = 1UL;
     }
 
     /* Split very long intervals into multiple Timer1 overflows to avoid 16-bit overflow. */
-    cycleTarget = (totalTimerTicks + TEST_TIMER1_MAX_COUNTER - 1UL) / TEST_TIMER1_MAX_COUNTER;
+    cycleTarget = (totalTimerTicks + APP_TIMER1_MAX_COUNTER - 1UL) / APP_TIMER1_MAX_COUNTER;
     if (cycleTarget == 0UL)
     {
         cycleTarget = 1UL;
@@ -690,15 +634,15 @@ static void Test_Timer1ApplyRefreshInterval(uint32_t intervalUs)
     {
         ticksPerCycle = 1UL;
     }
-    if (ticksPerCycle > TEST_TIMER1_MAX_COUNTER)
+    if (ticksPerCycle > APP_TIMER1_MAX_COUNTER)
     {
-        ticksPerCycle = TEST_TIMER1_MAX_COUNTER;
+        ticksPerCycle = APP_TIMER1_MAX_COUNTER;
     }
 
     DisableGlobalInt();
 
-    g_testTimer1CycleCount = 0U;
-    g_testTimer1CycleTarget = (uint16_t)cycleTarget;
+    g_appTimer1CycleCount = 0U;
+    g_appTimer1CycleTarget = (uint16_t)cycleTarget;
 
     TIMER1_Stop();
     TIMER1_DisableInt();
@@ -715,147 +659,132 @@ static void Test_Timer1ApplyRefreshInterval(uint32_t intervalUs)
 
     EnableGlobalInt();
 
-    g_testRowIntervalUs = intervalUs;
+    g_appRowIntervalUs = intervalUs;
     if (intervalUs > 65535UL)
     {
-        g_testLastPwmUs = 65535U;
+        g_appLastPwmUs = 65535U;
     }
     else
     {
-        g_testLastPwmUs = (uint16_t)intervalUs;
+        g_appLastPwmUs = (uint16_t)intervalUs;
     }
 }
 
-static void Test_LoadDefaultRenderConfig(void)
+static void APP_LoadDefaultRenderConfig(void)
 {
-    g_testRenderCfg.fgR = 0xFF;
-    g_testRenderCfg.fgG = 0xFF;
-    g_testRenderCfg.fgB = 0xFF;
-    g_testRenderCfg.bgR = 0x00;
-    g_testRenderCfg.bgG = 0x00;
-    g_testRenderCfg.bgB = 0x00;
-    g_testRenderCfg.brightness = 200U;
-    g_testRenderCfg.contentType = DRAWDRV_CONTENT_GLYPH;
-    g_testRenderCfg.colorMode = DRAWDRV_COLOR_SOLID;
-    g_testRenderCfg.direction = DRAWDRV_DIR_NORMAL;
-    g_testRenderCfg.useGradient = 0;
-    g_testRenderCfg.gradientSpan = 96U;
-    g_testRenderCfg.scrollStep = 1U;
-    g_testRenderCfg.animStep = 1U;
-    g_testRenderCfg.effect = DRAWDRV_EFFECT_TEXT_SCROLL_JLU;
-    DrawDrv_SetRenderConfig(&g_testRenderCfg);
-    Test_ApplyPresetMode(g_testPresetMode);
+    /* The dedicated local scheme module owns the startup carousel and offline key-driven presentation flow. */
+    LocalDisplayScheme_Init();
 }
 
-void Test_Init(void)
+void APP_Init(void)
 {
     /* PWM/DMA and frame pipeline are delegated to ws2812 and draw drivers. */
     WS2812DRV_Init();
     (void)WS2812DRV_SetDisplayMode(WS2812DRV_MODE_16X16);
     DrawDrv_Init();
     GpLedAction_Init();
-    GpLedMatrixAi8051u_Init(&g_testAiMatrixCtx, GP_MATRIX_TRANSPORT_ENDPOINT_ID);
-    Test_LoadDefaultRenderConfig();
+    GpLedMatrixAi8051u_Init(&g_appAiMatrixCtx, GP_MATRIX_TRANSPORT_ENDPOINT_ID);
+    APP_LoadDefaultRenderConfig();
 
     MidTask_Init();
     KeyCtrl_Init();
     /* Keep key scan ahead of frame rebuild so local input is reflected in the next draw step. */
-    (void)MidTask_RegisterWithId(TEST_KEY_TASK_PERIOD_MS, Test_KeyTaskProxy);
-    (void)MidTask_RegisterWithId(TEST_DRAW_FRAME_TASK32MS_PERIOD_MS, Test_DrawFrameTaskProxy);
-    (void)MidTask_RegisterWithId(TEST_DEBUG_TASK_PERIOD_MS, Test_DebugTask1s);
+    (void)MidTask_RegisterWithId(APP_KEY_TASK_PERIOD_MS, APP_KeyTaskProxy);
+    g_appDrawFrameTaskId = MidTask_RegisterWithId(APP_DRAW_FRAME_TASK_PERIOD_MS_DEFAULT, APP_DrawFrameTaskProxy);
+    g_appDrawFrameTaskPeriodMs = APP_ResolveLocalDrawFramePeriodMs(&g_appRenderCfg);
+    APP_SyncLocalDrawTaskPeriod(&g_appRenderCfg);
 
-    Test_Timer1ApplyRefreshInterval(Test_GetIntervalByScanMode());
-    printf("[LED_SCAN] usb_baseline=on period_ms=%u\r\n", (unsigned int)TEST_SCAN_BASELINE_LOG_PERIOD_MS);
+    APP_Timer1ApplyRefreshInterval(APP_GetIntervalByScanMode());
 
     /* Timer0 provides 1ms scheduler tick. */
-    TIMER0_RegisterUsHook(Test_OnSchedTickExpired);
-    TIMER0_StartOneShotUs(TEST_SCHED_TICK_US);
+    TIMER0_RegisterUsHook(APP_OnSchedTickExpired);
+    TIMER0_StartOneShotUs(APP_SCHED_TICK_US);
 }
 
-void Test_TaskLoop(void)
+void APP_TaskLoop(void)
 {
-    GpLedMatrixAi8051u_Poll(&g_testAiMatrixCtx);
+    GpLedMatrixAi8051u_Poll(&g_appAiMatrixCtx);
     /* Process deferred animation frame rendering so heavy encoding stays out of ISR. */
     GpLedAction_RenderPendingAnimationFrame();
     MidTask_Process();
 }
 
-void Test_SetRowIntervalUs(uint32_t intervalUs)
+void APP_SetRowIntervalUs(uint32_t intervalUs)
 {
     if (WS2812DRV_GetScanMode() == WS2812DRV_SCAN_LEGACY_SHIFT)
     {
-        g_testRowIntervalUsLegacy = intervalUs;
+        g_appRowIntervalUsLegacy = intervalUs;
     }
     else
     {
-        g_testRowIntervalUsNormal = intervalUs;
+        g_appRowIntervalUsNormal = intervalUs;
     }
 
-    Test_Timer1ApplyRefreshInterval(intervalUs);
+    APP_Timer1ApplyRefreshInterval(intervalUs);
 }
 
-void Test_SetNormalRowIntervalUs(uint32_t intervalUs)
+void APP_SetNormalRowIntervalUs(uint32_t intervalUs)
 {
-    g_testRowIntervalUsNormal = intervalUs;
+    g_appRowIntervalUsNormal = intervalUs;
     if (WS2812DRV_GetScanMode() == WS2812DRV_SCAN_NORMAL_PAIR)
     {
-        Test_Timer1ApplyRefreshInterval(intervalUs);
+        APP_Timer1ApplyRefreshInterval(intervalUs);
     }
 }
 
-void Test_SetLegacyRowIntervalUs(uint32_t intervalUs)
+void APP_SetLegacyRowIntervalUs(uint32_t intervalUs)
 {
-    intervalUs = Test_ClampLegacyRowIntervalUs(intervalUs);
-    g_testRowIntervalUsLegacy = intervalUs;
+    intervalUs = APP_ClampLegacyRowIntervalUs(intervalUs);
+    g_appRowIntervalUsLegacy = intervalUs;
     if (WS2812DRV_GetScanMode() == WS2812DRV_SCAN_LEGACY_SHIFT)
     {
-        Test_Timer1ApplyRefreshInterval(intervalUs);
+        APP_Timer1ApplyRefreshInterval(intervalUs);
     }
 }
 
-void Test_SetNormalRowIntervalMs(uint16_t intervalMs)
+void APP_SetNormalRowIntervalMs(uint16_t intervalMs)
 {
     uint32_t intervalUs;
 
-    if (intervalMs < TEST_ROW_INTERVAL_MS_MIN)
+    if (intervalMs < APP_ROW_INTERVAL_MS_MIN)
     {
-        intervalMs = TEST_ROW_INTERVAL_MS_MIN;
+        intervalMs = APP_ROW_INTERVAL_MS_MIN;
     }
-    if ((g_testDebugMode != 0U) && (intervalMs > TEST_ROW_INTERVAL_MS_MAX))
+    if ((g_appDebugMode != 0U) && (intervalMs > APP_ROW_INTERVAL_MS_MAX))
     {
-        intervalMs = TEST_ROW_INTERVAL_MS_MAX;
+        intervalMs = APP_ROW_INTERVAL_MS_MAX;
     }
     intervalUs = (uint32_t)intervalMs * 1000UL;
-    Test_SetNormalRowIntervalUs(intervalUs);
+    APP_SetNormalRowIntervalUs(intervalUs);
 }
 
-void Test_SetLegacyRowIntervalMs(uint16_t intervalMs)
+void APP_SetLegacyRowIntervalMs(uint16_t intervalMs)
 {
     uint32_t intervalUs;
 
-    if (intervalMs < TEST_ROW_INTERVAL_MS_MIN)
+    if (intervalMs < APP_ROW_INTERVAL_MS_MIN)
     {
-        intervalMs = TEST_ROW_INTERVAL_MS_MIN;
+        intervalMs = APP_ROW_INTERVAL_MS_MIN;
     }
-    if ((g_testDebugMode != 0U) && (intervalMs > TEST_ROW_INTERVAL_MS_MAX))
+    if ((g_appDebugMode != 0U) && (intervalMs > APP_ROW_INTERVAL_MS_MAX))
     {
-        intervalMs = TEST_ROW_INTERVAL_MS_MAX;
+        intervalMs = APP_ROW_INTERVAL_MS_MAX;
     }
     intervalUs = (uint32_t)intervalMs * 1000UL;
-    Test_SetLegacyRowIntervalUs(intervalUs);
+    APP_SetLegacyRowIntervalUs(intervalUs);
 }
 
-uint32_t Test_GetRowIntervalUs(void)
+uint32_t APP_GetRowIntervalUs(void)
 {
-    return g_testRowIntervalUs;
+    return g_appRowIntervalUs;
 }
 
-uint16_t Test_GetLastPwmUs(void)
+uint16_t APP_GetLastPwmUs(void)
 {
-    return g_testLastPwmUs;
+    return g_appLastPwmUs;
 }
 
-uint8_t Test_SetDisplayMode(uint8_t mode16x)
+uint8_t APP_SetDisplayMode(uint8_t mode16x)
 {
     WS2812DRV_DisplayMode_t mode;
 
@@ -882,7 +811,7 @@ uint8_t Test_SetDisplayMode(uint8_t mode16x)
     return 1;
 }
 
-uint8_t Test_GetDisplayMode(void)
+uint8_t APP_GetDisplayMode(void)
 {
     if (WS2812DRV_GetDisplayMode() == WS2812DRV_MODE_16X16)
     {
@@ -892,226 +821,229 @@ uint8_t Test_GetDisplayMode(void)
     return 8U;
 }
 
-uint8_t Test_SetImageIndex(uint8_t imageIndex)
+uint8_t APP_SetImageIndex(uint8_t imageIndex)
 {
     DrawDrv_SetImageIndex(imageIndex);
 
     return 1;
 }
 
-uint8_t Test_GetImageIndex(void)
+uint8_t APP_GetImageIndex(void)
 {
     return DrawDrv_GetImageIndex();
 }
 
-void Test_NextImage(void)
+void APP_NextImage(void)
 {
     DrawDrv_NextImage();
 }
 
-uint8_t Test_SetRenderEffect(uint8_t effectId)
+uint8_t APP_SetRenderEffect(uint8_t effectId)
 {
-    DrawDrv_GetRenderConfig(&g_testRenderCfg);
+    DrawDrv_GetRenderConfig(&g_appRenderCfg);
 
-    if (effectId > (uint8_t)DRAWDRV_EFFECT_COLOR_CYCLE)
+    if (effectId > (uint8_t)DRAWDRV_EFFECT_GRADIENT_REVEAL)
     {
         return 0;
     }
 
-    g_testRenderCfg.effect = (DrawDrv_Effect_t)effectId;
-    DrawDrv_SetRenderConfig(&g_testRenderCfg);
+    g_appRenderCfg.effect = (DrawDrv_Effect_t)effectId;
+    APP_ApplyLocalRenderConfig(&g_appRenderCfg);
 
     return 1;
 }
 
-uint8_t Test_SetContentType(uint8_t contentType)
+uint8_t APP_SetContentType(uint8_t contentType)
 {
-    DrawDrv_GetRenderConfig(&g_testRenderCfg);
-    if (contentType > (uint8_t)DRAWDRV_CONTENT_GLYPH)
+    DrawDrv_GetRenderConfig(&g_appRenderCfg);
+    if (contentType > (uint8_t)DRAWDRV_CONTENT_CLOCK)
     {
         return 0;
     }
 
-    g_testRenderCfg.contentType = (DrawDrv_ContentType_t)contentType;
-    DrawDrv_SetRenderConfig(&g_testRenderCfg);
+    g_appRenderCfg.contentType = (DrawDrv_ContentType_t)contentType;
+    APP_ApplyLocalRenderConfig(&g_appRenderCfg);
 
     return 1;
 }
 
-uint8_t Test_SetDirection(uint8_t direction)
+uint8_t APP_SetDirection(uint8_t direction)
 {
-    DrawDrv_GetRenderConfig(&g_testRenderCfg);
+    DrawDrv_GetRenderConfig(&g_appRenderCfg);
     if (direction > (uint8_t)DRAWDRV_DIR_ROTATE_CCW_90)
     {
         return 0;
     }
 
-    g_testRenderCfg.direction = (DrawDrv_Direction_t)direction;
-    DrawDrv_SetRenderConfig(&g_testRenderCfg);
+    g_appRenderCfg.direction = (DrawDrv_Direction_t)direction;
+    APP_ApplyLocalRenderConfig(&g_appRenderCfg);
 
     return 1;
 }
 
-uint8_t Test_SetColorMode(uint8_t colorMode)
+uint8_t APP_SetColorMode(uint8_t colorMode)
 {
-    DrawDrv_GetRenderConfig(&g_testRenderCfg);
+    DrawDrv_GetRenderConfig(&g_appRenderCfg);
     if (colorMode > (uint8_t)DRAWDRV_COLOR_GRADIENT)
     {
         return 0;
     }
 
-    g_testRenderCfg.colorMode = (DrawDrv_ColorMode_t)colorMode;
-    DrawDrv_SetRenderConfig(&g_testRenderCfg);
+    g_appRenderCfg.colorMode = (DrawDrv_ColorMode_t)colorMode;
+    APP_ApplyLocalRenderConfig(&g_appRenderCfg);
 
     return 1;
 }
 
-void Test_SetScrollStep(uint8_t step)
+void APP_SetScrollStep(uint8_t step)
 {
-    DrawDrv_GetRenderConfig(&g_testRenderCfg);
+    DrawDrv_GetRenderConfig(&g_appRenderCfg);
     if (step == 0U)
     {
         step = 1U;
     }
-    g_testRenderCfg.scrollStep = step;
-    DrawDrv_SetRenderConfig(&g_testRenderCfg);
+    g_appRenderCfg.scrollStep = step;
+    APP_ApplyLocalRenderConfig(&g_appRenderCfg);
 }
 
-void Test_SetAnimStep(uint8_t step)
+void APP_SetAnimStep(uint8_t step)
 {
-    DrawDrv_GetRenderConfig(&g_testRenderCfg);
-    g_testRenderCfg.animStep = step;
-    DrawDrv_SetRenderConfig(&g_testRenderCfg);
+    DrawDrv_GetRenderConfig(&g_appRenderCfg);
+    g_appRenderCfg.animStep = step;
+    APP_ApplyLocalRenderConfig(&g_appRenderCfg);
 }
 
-void Test_SetGradientSpan(uint8_t span)
+void APP_SetFrameIntervalMs(uint16_t intervalMs)
 {
-    DrawDrv_GetRenderConfig(&g_testRenderCfg);
-    g_testRenderCfg.gradientSpan = span;
-    DrawDrv_SetRenderConfig(&g_testRenderCfg);
+    DrawDrv_GetRenderConfig(&g_appRenderCfg);
+    g_appRenderCfg.frameIntervalMs = DrawDrv_NormalizeFrameIntervalMs(intervalMs);
+    APP_ApplyLocalRenderConfig(&g_appRenderCfg);
 }
 
-void Test_SetBrightness(uint8_t brightness)
+void APP_SetGradientSpan(uint8_t span)
 {
-    DrawDrv_GetRenderConfig(&g_testRenderCfg);
-    g_testRenderCfg.brightness = brightness;
-    DrawDrv_SetRenderConfig(&g_testRenderCfg);
+    DrawDrv_GetRenderConfig(&g_appRenderCfg);
+    g_appRenderCfg.gradientSpan = span;
+    APP_ApplyLocalRenderConfig(&g_appRenderCfg);
 }
 
-void Test_SetRenderUseGradient(uint8_t enable)
+void APP_SetBrightness(uint8_t brightness)
 {
-    DrawDrv_GetRenderConfig(&g_testRenderCfg);
-    g_testRenderCfg.useGradient = (uint8_t)(enable != 0U);
-    DrawDrv_SetRenderConfig(&g_testRenderCfg);
+    DrawDrv_GetRenderConfig(&g_appRenderCfg);
+    g_appRenderCfg.brightness = brightness;
+    APP_ApplyLocalRenderConfig(&g_appRenderCfg);
 }
 
-void Test_SetForegroundColor(uint8_t r, uint8_t g, uint8_t b)
+void APP_SetRenderUseGradient(uint8_t enable)
 {
-    DrawDrv_GetRenderConfig(&g_testRenderCfg);
-    g_testRenderCfg.fgR = r;
-    g_testRenderCfg.fgG = g;
-    g_testRenderCfg.fgB = b;
-    DrawDrv_SetRenderConfig(&g_testRenderCfg);
+    DrawDrv_GetRenderConfig(&g_appRenderCfg);
+    g_appRenderCfg.useGradient = (uint8_t)(enable != 0U);
+    APP_ApplyLocalRenderConfig(&g_appRenderCfg);
 }
 
-void Test_SetBackgroundColor(uint8_t r, uint8_t g, uint8_t b)
+void APP_SetForegroundColor(uint8_t r, uint8_t g, uint8_t b)
 {
-    DrawDrv_GetRenderConfig(&g_testRenderCfg);
-    g_testRenderCfg.bgR = r;
-    g_testRenderCfg.bgG = g;
-    g_testRenderCfg.bgB = b;
-    DrawDrv_SetRenderConfig(&g_testRenderCfg);
+    DrawDrv_GetRenderConfig(&g_appRenderCfg);
+    g_appRenderCfg.fgR = r;
+    g_appRenderCfg.fgG = g;
+    g_appRenderCfg.fgB = b;
+    APP_ApplyLocalRenderConfig(&g_appRenderCfg);
 }
 
-uint8_t Test_SetGlyphDisplayIndex(uint8_t glyphIndex)
+void APP_SetBackgroundColor(uint8_t r, uint8_t g, uint8_t b)
+{
+    DrawDrv_GetRenderConfig(&g_appRenderCfg);
+    g_appRenderCfg.bgR = r;
+    g_appRenderCfg.bgG = g;
+    g_appRenderCfg.bgB = b;
+    APP_ApplyLocalRenderConfig(&g_appRenderCfg);
+}
+
+uint8_t APP_SetGlyphDisplayIndex(uint8_t glyphIndex)
 {
     return DrawDrv_SetTextDisplayGlyph(glyphIndex);
 }
 
-uint8_t Test_SetScrollGlyphSequence(const uint8_t *glyphList, uint8_t count)
+uint8_t APP_SetScrollGlyphSequence(const uint8_t *glyphList, uint8_t count)
 {
     return DrawDrv_SetTextScrollSequence(glyphList, count);
 }
 
-void Test_NextPresetMode(void)
+void APP_NextPresetMode(void)
 {
     uint8_t nextMode;
 
-    nextMode = (uint8_t)(g_testPresetMode + 1U);
-    if (nextMode >= TEST_PRESET_MODE_COUNT)
+    nextMode = (uint8_t)(g_appPresetMode + 1U);
+    if (nextMode >= APP_PRESET_MODE_COUNT)
     {
         nextMode = 0U;
     }
 
-    Test_ApplyPresetMode(nextMode);
+    APP_ApplyPresetMode(nextMode);
 }
 
-void Test_NextOfflinePattern(void)
+void APP_NextOfflinePattern(void)
 {
-    uint8_t nextPattern;
-
-    /* Heartbeats can keep the link online; only block the key while remote display content is actively driving. */
-    if (GpLedAction_IsRemoteModeActive() != 0U)
-    {
-        return;
-    }
-
-    DrawDrv_GetRenderConfig(&g_testRenderCfg);
-    if (g_testRenderCfg.contentType != DRAWDRV_CONTENT_PATTERN)
-    {
-        g_testRenderCfg.contentType = DRAWDRV_CONTENT_PATTERN;
-    }
-
-    Test_NextImage();
-    nextPattern = DrawDrv_GetImageIndex();
-    Test_ApplyLocalProfileWithSelection(&g_testRenderCfg, 1U, nextPattern, 0U, 0U);
+    LocalDisplayScheme_NextPattern();
 }
 
-void Test_NextOfflineEffect(void)
+void APP_ShowOfflineScrollText(void)
 {
-    if (GpLedAction_IsRemoteModeActive() != 0U)
-    {
-        return;
-    }
-
-    DrawDrv_GetRenderConfig(&g_testRenderCfg);
-    g_testRenderCfg.effect = Test_GetNextOfflineEffect(g_testRenderCfg.contentType, g_testRenderCfg.effect);
-    DrawDrv_SetRenderConfig(&g_testRenderCfg);
-    DrawDrv_RequestRebuild();
+    LocalDisplayScheme_ShowTextScroll();
 }
 
-void Test_ToggleControlMode(void)
+void APP_ShowOfflineClock(void)
+{
+    LocalDisplayScheme_ShowClock();
+}
+
+void APP_ToggleOfflineTextClock(void)
+{
+    LocalDisplayScheme_ToggleTextClock();
+}
+
+void APP_NextOfflineEffect(void)
+{
+    LocalDisplayScheme_NextEffect();
+}
+
+void APP_NextOfflineColor(void)
+{
+    LocalDisplayScheme_NextColor();
+}
+
+void APP_ToggleControlMode(void)
 {
     GpLedAction_ToggleModeOverride();
 }
 
-uint8_t Test_GetControlMode(void)
+uint8_t APP_GetControlMode(void)
 {
     return (uint8_t)GpLedAction_GetControlMode();
 }
 
-uint8_t Test_GetPresetMode(void)
+uint8_t APP_GetPresetMode(void)
 {
-    return g_testPresetMode;
+    return g_appPresetMode;
 }
 
-uint8_t Test_ToggleScanMode(void)
+uint8_t APP_ToggleScanMode(void)
 {
     WS2812DRV_ScanMode_t mode;
 
     mode = WS2812DRV_ToggleScanMode();
     if (mode == WS2812DRV_SCAN_LEGACY_SHIFT)
     {
-        Test_Timer1ApplyRefreshInterval(g_testRowIntervalUsLegacy);
+        APP_Timer1ApplyRefreshInterval(g_appRowIntervalUsLegacy);
         return 1U;
     }
 
-    Test_Timer1ApplyRefreshInterval(g_testRowIntervalUsNormal);
+    APP_Timer1ApplyRefreshInterval(g_appRowIntervalUsNormal);
 
     return 0U;
 }
 
-uint8_t Test_GetScanMode(void)
+uint8_t APP_GetScanMode(void)
 {
     if (WS2812DRV_GetScanMode() == WS2812DRV_SCAN_LEGACY_SHIFT)
     {
@@ -1131,12 +1063,12 @@ void TIMER1_ISR(void) interrupt 3
 {
     TIMER1_ClearFlag();
 
-    g_testTimer1CycleCount++;
-    if (g_testTimer1CycleCount < g_testTimer1CycleTarget)
+    g_appTimer1CycleCount++;
+    if (g_appTimer1CycleCount < g_appTimer1CycleTarget)
     {
         return;
     }
 
-    g_testTimer1CycleCount = 0U;
+    g_appTimer1CycleCount = 0U;
     WS2812DRV_RefreshStep();
 }

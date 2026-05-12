@@ -30,6 +30,7 @@ GpMatrixStatusCode GpLedAction_SetDebugLedFlow(uint8_t enable);
 GpMatrixStatusCode GpLedAction_ApplyDisplayProfile(const GpLedDisplayProfile xdata *profile);
 GpMatrixStatusCode GpLedAction_ApplyLocalDisplayProfile(const GpLedDisplayProfile xdata *profile);
 GpMatrixStatusCode GpLedAction_ApplyAction(const GpMatrixActionPayload xdata *payload);
+GpMatrixStatusCode GpLedAction_SyncClockTime(const GpMatrixTimeSyncPayload xdata *payload);
 GpMatrixStatusCode GpLedAction_BeginAnimationUpload(uint8_t frameFormat,
                                                     uint8_t frameCount,
                                                     uint16_t frameIntervalMs,

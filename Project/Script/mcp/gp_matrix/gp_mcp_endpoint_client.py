@@ -92,6 +92,14 @@ BITMAP_LAYER_COLOR_BYTES = RGB888_BYTES           # 3
 BITMAP_LAYER_TOTAL_BYTES = BITMAP_LAYER_HEADER_BYTES + BITMAP_LAYER_BITMAP_BYTES + BITMAP_LAYER_COLOR_BYTES  # 36
 BITMAP_LAYERED_MAX_COLORS = 16
 ANIMATION_MAX_LAYERS = 4
+MATRIX_MAX_GLYPH_TRANSFER_BYTES = 256
+MATRIX_GLYPH_ROWS_BYTES_PER_GLYPH = MATRIX_HEIGHT * 2
+MATRIX_MAX_DIRECT_GLYPH_COUNT = MATRIX_MAX_GLYPH_TRANSFER_BYTES // MATRIX_GLYPH_ROWS_BYTES_PER_GLYPH
+MATRIX_DEFAULT_BRIGHTNESS = 200
+MATRIX_DEFAULT_GRADIENT_SPAN = 160
+MATRIX_DEFAULT_ANIM_INTERVAL_MS = 64
+MATRIX_DEFAULT_SCROLL_INTERVAL_MS = 96
+MATRIX_DEFAULT_COLOR_INTERVAL_MS = 80
 
 MAX_DRAWING_SOURCE_CHARS = 4000
 MAX_DRAWING_AST_NODES = 512
@@ -108,10 +116,205 @@ PROMPT_RENDER_TOOL_NAMES = frozenset({"self.screen.matrix_16x16.render_prompt"})
 PYTHON_DRAW_TOOL_NAMES = frozenset({"self.screen.matrix_16x16.draw_python"})
 TEXT_SEQUENCE_TOOL_NAMES = frozenset({"self.screen.matrix_16x16.show_text"})
 ANIMATION_SEQUENCE_TOOL_NAMES = frozenset({"self.screen.matrix_16x16.draw_animation"})
+EFFECT_COMMAND_TOOL_NAMES = frozenset({"self.screen.matrix_16x16.show_effect"})
 DEBUG_WS_DELIVERY_TOOL_NAMES = (
     DRAW_FRAME_TOOL_NAMES | PYTHON_DRAW_TOOL_NAMES | TEXT_SEQUENCE_TOOL_NAMES | ANIMATION_SEQUENCE_TOOL_NAMES
+    | EFFECT_COMMAND_TOOL_NAMES
 )
 HTTP_PREVIEW_FALLBACK_TOOL_NAMES = DRAW_FRAME_TOOL_NAMES | PYTHON_DRAW_TOOL_NAMES
+
+MATRIX_ACTION_FLAG_USE_SECONDARY = 0x01
+MATRIX_ACTION_FLAG_REMOTE_ENABLE = 0x02
+MATRIX_ACTION_FLAG_REMOTE_RELEASE = 0x04
+MATRIX_ACTION_FLAG_USE_UPLOADED_GLYPHS = 0x08
+
+MATRIX_APPLY_FLAG_PATTERN = 0x01
+MATRIX_APPLY_FLAG_GLYPH = 0x02
+
+MATRIX_CONTENT_IDS: dict[str, int] = {
+    "solid": 0,
+    "pattern": 1,
+    "glyph": 2,
+}
+
+MATRIX_EFFECT_IDS: dict[str, int] = {
+    "static": 0,
+    "breath": 1,
+    "gradient": 2,
+    "scroll_left": 3,
+    "scroll_right": 4,
+    "text_scroll": 5,
+    "fade_in": 6,
+    "fade_out": 7,
+    "color_cycle": 8,
+    "row_reveal": 9,
+    "row_hide": 10,
+    "gradient_reveal": 11,
+}
+
+MATRIX_DIRECTION_IDS: dict[str, int] = {
+    "normal": 0,
+    "rotate_180": 1,
+    "rotate_cw_90": 2,
+    "rotate_ccw_90": 3,
+}
+
+MATRIX_COLOR_MODE_IDS: dict[str, int] = {
+    "solid": 0,
+    "gradient": 1,
+}
+
+MATRIX_TIMELINE_PATH_IDS: dict[str, int] = {
+    "linear": 0,
+    "ease_in_out": 1,
+    "breath_curve": 2,
+}
+
+MATRIX_PATTERN_IDS: dict[str, int] = {
+    "diamond": 0,
+    "cross": 1,
+    "jlu_emblem": 2,
+    "checker": 3,
+    "border": 4,
+    "diagonal_x": 5,
+}
+
+MATRIX_SCROLL_EFFECT_NAMES = frozenset({"text_scroll", "scroll_left", "scroll_right"})
+
+MATRIX_NATIVE_EFFECT_DEFAULTS: dict[str, dict[str, Any]] = {
+    "static": {
+        "frame_interval_ms": 32,
+        "scroll_step": 1,
+        "anim_step": 1,
+        "gradient_span": MATRIX_DEFAULT_GRADIENT_SPAN,
+        "timeline_duration_ms": 0,
+        "timeline_repeat_delay_ms": 0,
+        "timeline_repeat_count": 0,
+        "timeline_path": "linear",
+        "color_mode": "solid",
+    },
+    "breath": {
+        "frame_interval_ms": MATRIX_DEFAULT_ANIM_INTERVAL_MS,
+        "scroll_step": 1,
+        "anim_step": 2,
+        "gradient_span": MATRIX_DEFAULT_GRADIENT_SPAN,
+        "timeline_duration_ms": 1600,
+        "timeline_repeat_delay_ms": 240,
+        "timeline_repeat_count": 255,
+        "timeline_path": "breath_curve",
+        "color_mode": "solid",
+    },
+    "gradient": {
+        "frame_interval_ms": MATRIX_DEFAULT_ANIM_INTERVAL_MS,
+        "scroll_step": 1,
+        "anim_step": 2,
+        "gradient_span": 180,
+        "timeline_duration_ms": 0,
+        "timeline_repeat_delay_ms": 0,
+        "timeline_repeat_count": 0,
+        "timeline_path": "linear",
+        "color_mode": "gradient",
+    },
+    "scroll_left": {
+        "frame_interval_ms": MATRIX_DEFAULT_SCROLL_INTERVAL_MS,
+        "scroll_step": 1,
+        "anim_step": 1,
+        "gradient_span": MATRIX_DEFAULT_GRADIENT_SPAN,
+        "timeline_duration_ms": 0,
+        "timeline_repeat_delay_ms": 0,
+        "timeline_repeat_count": 0,
+        "timeline_path": "linear",
+        "color_mode": "solid",
+    },
+    "scroll_right": {
+        "frame_interval_ms": MATRIX_DEFAULT_SCROLL_INTERVAL_MS,
+        "scroll_step": 1,
+        "anim_step": 1,
+        "gradient_span": MATRIX_DEFAULT_GRADIENT_SPAN,
+        "timeline_duration_ms": 0,
+        "timeline_repeat_delay_ms": 0,
+        "timeline_repeat_count": 0,
+        "timeline_path": "linear",
+        "color_mode": "solid",
+    },
+    "text_scroll": {
+        "frame_interval_ms": MATRIX_DEFAULT_SCROLL_INTERVAL_MS,
+        "scroll_step": 1,
+        "anim_step": 1,
+        "gradient_span": MATRIX_DEFAULT_GRADIENT_SPAN,
+        "timeline_duration_ms": 0,
+        "timeline_repeat_delay_ms": 0,
+        "timeline_repeat_count": 0,
+        "timeline_path": "linear",
+        "color_mode": "solid",
+    },
+    "fade_in": {
+        "frame_interval_ms": MATRIX_DEFAULT_ANIM_INTERVAL_MS,
+        "scroll_step": 1,
+        "anim_step": 1,
+        "gradient_span": MATRIX_DEFAULT_GRADIENT_SPAN,
+        "timeline_duration_ms": 1200,
+        "timeline_repeat_delay_ms": 200,
+        "timeline_repeat_count": 255,
+        "timeline_path": "ease_in_out",
+        "color_mode": "solid",
+    },
+    "fade_out": {
+        "frame_interval_ms": MATRIX_DEFAULT_ANIM_INTERVAL_MS,
+        "scroll_step": 1,
+        "anim_step": 1,
+        "gradient_span": MATRIX_DEFAULT_GRADIENT_SPAN,
+        "timeline_duration_ms": 1200,
+        "timeline_repeat_delay_ms": 200,
+        "timeline_repeat_count": 255,
+        "timeline_path": "ease_in_out",
+        "color_mode": "solid",
+    },
+    "color_cycle": {
+        "frame_interval_ms": MATRIX_DEFAULT_COLOR_INTERVAL_MS,
+        "scroll_step": 1,
+        "anim_step": 1,
+        "gradient_span": MATRIX_DEFAULT_GRADIENT_SPAN,
+        "timeline_duration_ms": 0,
+        "timeline_repeat_delay_ms": 0,
+        "timeline_repeat_count": 0,
+        "timeline_path": "linear",
+        "color_mode": "solid",
+    },
+    "row_reveal": {
+        "frame_interval_ms": MATRIX_DEFAULT_ANIM_INTERVAL_MS,
+        "scroll_step": 1,
+        "anim_step": 1,
+        "gradient_span": MATRIX_DEFAULT_GRADIENT_SPAN,
+        "timeline_duration_ms": 960,
+        "timeline_repeat_delay_ms": 120,
+        "timeline_repeat_count": 255,
+        "timeline_path": "linear",
+        "color_mode": "solid",
+    },
+    "row_hide": {
+        "frame_interval_ms": MATRIX_DEFAULT_ANIM_INTERVAL_MS,
+        "scroll_step": 1,
+        "anim_step": 1,
+        "gradient_span": MATRIX_DEFAULT_GRADIENT_SPAN,
+        "timeline_duration_ms": 960,
+        "timeline_repeat_delay_ms": 120,
+        "timeline_repeat_count": 255,
+        "timeline_path": "linear",
+        "color_mode": "solid",
+    },
+    "gradient_reveal": {
+        "frame_interval_ms": MATRIX_DEFAULT_ANIM_INTERVAL_MS,
+        "scroll_step": 1,
+        "anim_step": 1,
+        "gradient_span": 180,
+        "timeline_duration_ms": 960,
+        "timeline_repeat_delay_ms": 120,
+        "timeline_repeat_count": 255,
+        "timeline_path": "linear",
+        "color_mode": "gradient",
+    },
+}
 
 ALLOWED_DRAW_HELPER_NAMES = frozenset({
     "range",
@@ -517,6 +720,33 @@ def summarize_status_payload(payload: Any) -> str:
 
 
 def summarize_matrix_payload(payload: Dict[str, Any]) -> str:
+    if str(payload.get("data_format", "")).strip().lower() == "matrix_action_v2":
+        parts: list[str] = ["target=led_16x16", "action"]
+        content_type = str(payload.get("content_type", "")).strip()
+        effect_name = str(payload.get("effect_name", "")).strip()
+        primary_rgb888 = str(payload.get("primary_rgb888", "")).strip()
+        secondary_rgb888 = str(payload.get("secondary_rgb888", "")).strip()
+        transcript = str(payload.get("transcript", "")).strip()
+        pattern_id = payload.get("pattern_id")
+        glyph_count = payload.get("glyph_count")
+
+        if content_type:
+            parts.append(f"content={content_type}")
+        if effect_name:
+            parts.append(f"effect={effect_name}")
+        if isinstance(pattern_id, int) and content_type == "pattern":
+            parts.append(f"pattern_id={pattern_id}")
+        if isinstance(glyph_count, int) and glyph_count > 0:
+            parts.append(f"glyph_count={glyph_count}")
+        if primary_rgb888:
+            parts.append(f"primary_rgb888={primary_rgb888}")
+        if secondary_rgb888:
+            parts.append(f"secondary_rgb888={secondary_rgb888}")
+        if transcript:
+            parts.append(f"transcript={transcript}")
+
+        return summarize_status_payload(" ".join(parts))
+
     frame_hex = str(payload.get("frame_rgb332_hex", ""))
     bitmap_rows_hex = str(payload.get("bitmap_rows_hex", ""))
     primary_rgb888 = str(payload.get("primary_rgb888", ""))
@@ -1775,6 +2005,253 @@ def render_text_to_matrix_frame_sequence(
     }
 
 
+def normalize_native_effect_name(effect_name: Any) -> str:
+    normalized = str(effect_name).strip().lower()
+    alias_map = {
+        "scroll": "text_scroll",
+        "scroll_text": "text_scroll",
+        "scroll_subtitle": "text_scroll",
+        "text_scroll_jlu": "text_scroll",
+        "loop_scroll": "scroll_left",
+        "loop_scroll_left": "scroll_left",
+        "loop_scroll_right": "scroll_right",
+        "marquee_left": "scroll_left",
+        "marquee_right": "scroll_right",
+    }
+    return alias_map.get(normalized, normalized)
+
+
+def build_text_glyph_rows_hex(text: str) -> str:
+    glyph_rows_hex_parts: list[str] = []
+
+    for glyph in text:
+        glyph_mask_image = render_text_glyph_to_mask_image(glyph)
+        glyph_rows_hex_parts.append(bitmap_rows_to_hex(build_bitmap_rows_from_mask_image(glyph_mask_image)))
+
+    return "".join(glyph_rows_hex_parts)
+
+
+def build_matrix_action_payload(
+    *,
+    content_type: str,
+    effect_name: str,
+    primary_rgb888: str,
+    secondary_rgb888: str,
+    brightness: int,
+    direction: str,
+    color_mode: str,
+    pattern_id: int,
+    glyph_id: int,
+    scroll_step: int,
+    anim_step: int,
+    gradient_span: int,
+    frame_interval_ms: int,
+    timeline_duration_ms: int,
+    timeline_repeat_delay_ms: int,
+    timeline_repeat_count: int,
+    timeline_path: str,
+    flags: int,
+    animation_flags: int,
+    apply_flags: int,
+    source: str,
+    transcript: str,
+    glyph_rows_hex: str = "",
+    glyph_count: int = 0,
+    glyph_width: int = MATRIX_WIDTH,
+    glyph_spacing: int = 1,
+) -> Dict[str, Any]:
+    resolved_primary_rgb = parse_rgb888(primary_rgb888)
+    resolved_secondary_rgb = parse_rgb888(secondary_rgb888) if secondary_rgb888 else 0
+    normalized_effect_name = normalize_native_effect_name(effect_name)
+    normalized_content_type = str(content_type).strip().lower()
+    normalized_direction = str(direction).strip().lower() or "normal"
+    normalized_color_mode = str(color_mode).strip().lower() or "solid"
+    normalized_timeline_path = str(timeline_path).strip().lower() or "linear"
+    action_flags = int(flags)
+
+    if normalized_content_type not in MATRIX_CONTENT_IDS:
+        raise ValueError(f"Unsupported content_type: {normalized_content_type}")
+    if normalized_effect_name not in MATRIX_EFFECT_IDS:
+        raise ValueError(f"Unsupported effect: {normalized_effect_name}")
+    if normalized_direction not in MATRIX_DIRECTION_IDS:
+        raise ValueError(f"Unsupported direction: {normalized_direction}")
+    if normalized_color_mode not in MATRIX_COLOR_MODE_IDS:
+        raise ValueError(f"Unsupported color_mode: {normalized_color_mode}")
+    if normalized_timeline_path not in MATRIX_TIMELINE_PATH_IDS:
+        raise ValueError(f"Unsupported timeline_path: {normalized_timeline_path}")
+
+    if secondary_rgb888:
+        action_flags |= MATRIX_ACTION_FLAG_USE_SECONDARY
+    if glyph_rows_hex:
+        action_flags |= MATRIX_ACTION_FLAG_USE_UPLOADED_GLYPHS
+
+    return {
+        "data_format": "matrix_action_v2",
+        "content_type": normalized_content_type,
+        "content_id": MATRIX_CONTENT_IDS[normalized_content_type],
+        "effect_name": normalized_effect_name,
+        "effect_id": MATRIX_EFFECT_IDS[normalized_effect_name],
+        "direction": normalized_direction,
+        "direction_id": MATRIX_DIRECTION_IDS[normalized_direction],
+        "color_mode": normalized_color_mode,
+        "color_mode_id": MATRIX_COLOR_MODE_IDS[normalized_color_mode],
+        "brightness": max(0, min(255, int(brightness))),
+        "primary_rgb888": format_rgb888(resolved_primary_rgb),
+        "secondary_rgb888": format_rgb888(resolved_secondary_rgb) if secondary_rgb888 else "",
+        "pattern_id": max(0, int(pattern_id)),
+        "glyph_id": max(0, int(glyph_id)),
+        "scroll_step": max(1, int(scroll_step)),
+        "anim_step": max(1, int(anim_step)),
+        "gradient_span": max(0, min(255, int(gradient_span))),
+        "flags": action_flags,
+        "frame_interval_ms": max(0, int(frame_interval_ms)),
+        "timeline_duration_ms": max(0, int(timeline_duration_ms)),
+        "timeline_repeat_delay_ms": max(0, int(timeline_repeat_delay_ms)),
+        "timeline_repeat_count": max(0, min(255, int(timeline_repeat_count))),
+        "timeline_path": normalized_timeline_path,
+        "timeline_path_id": MATRIX_TIMELINE_PATH_IDS[normalized_timeline_path],
+        "animation_flags": max(0, min(255, int(animation_flags))),
+        "apply_flags": max(0, min(255, int(apply_flags))),
+        "glyph_rows_hex": glyph_rows_hex.lower(),
+        "glyph_count": max(0, int(glyph_count)),
+        "glyph_width": max(0, min(MATRIX_WIDTH, int(glyph_width))),
+        "glyph_spacing": max(0, min(MATRIX_WIDTH, int(glyph_spacing))),
+        "source": source,
+        "transcript": transcript,
+        "applied": True,
+        "tool_name": "self.screen.matrix_16x16.show_effect",
+    }
+
+
+def render_matrix_effect_command(
+    *,
+    effect: str,
+    text: str = "",
+    pattern_name: str = "",
+    pattern_id: Optional[int] = None,
+    primary_rgb888: str = "",
+    secondary_rgb888: str = "",
+    background_rgb888: str = "",
+    brightness: int = MATRIX_DEFAULT_BRIGHTNESS,
+    direction: str = "normal",
+    color_mode: str = "",
+    scroll_step: int = 0,
+    anim_step: int = 0,
+    gradient_span: int = 0,
+    frame_interval_ms: int = 0,
+    timeline_duration_ms: int = 0,
+    timeline_repeat_delay_ms: int = 0,
+    timeline_repeat_count: Optional[int] = None,
+    timeline_path: str = "",
+    flags: int = 0,
+    animation_flags: int = 0,
+    apply_flags: int = 0,
+    source: str = "mcp_effect",
+    transcript: str = "",
+) -> Dict[str, Any]:
+    normalized_effect_name = normalize_native_effect_name(effect)
+    effect_defaults = MATRIX_NATIVE_EFFECT_DEFAULTS.get(normalized_effect_name)
+    normalized_text = str(text)
+    normalized_pattern_name = str(pattern_name).strip().lower()
+    resolved_primary_rgb888 = primary_rgb888 or "#F5F5F5"
+    resolved_secondary_rgb888 = secondary_rgb888 or background_rgb888
+    transcript_text = transcript or normalized_text or normalized_pattern_name or normalized_effect_name
+    resolved_pattern_id = 0
+    content_type = "solid"
+    glyph_rows_hex = ""
+    glyph_count = 0
+
+    if effect_defaults is None:
+        raise ValueError(f"Unsupported effect: {normalized_effect_name}")
+
+    if normalized_text and normalized_pattern_name:
+        raise ValueError("Provide either text or pattern_name/pattern_id, not both")
+
+    if normalized_pattern_name or (pattern_id is not None):
+        content_type = "pattern"
+        if pattern_id is not None:
+            resolved_pattern_id = int(pattern_id)
+        else:
+            if normalized_pattern_name not in MATRIX_PATTERN_IDS:
+                raise ValueError(f"Unsupported pattern_name: {normalized_pattern_name}")
+            resolved_pattern_id = MATRIX_PATTERN_IDS[normalized_pattern_name]
+        if normalized_effect_name == "text_scroll":
+            raise ValueError("text_scroll is only valid for text/glyph content")
+    elif normalized_text:
+        content_type = "glyph"
+        if len(normalized_text) > MATRIX_MAX_DIRECT_GLYPH_COUNT:
+            raise ValueError(
+                f"text is too long for direct LED glyph upload; keep it under {MATRIX_MAX_DIRECT_GLYPH_COUNT} characters "
+                "or use draw_animation"
+            )
+        if (len(normalized_text) > 1) and (normalized_effect_name not in MATRIX_SCROLL_EFFECT_NAMES):
+            raise ValueError(
+                "Direct LED text effects support multi-glyph text only for text_scroll, scroll_left, and scroll_right"
+            )
+        glyph_rows_hex = build_text_glyph_rows_hex(normalized_text)
+        glyph_count = len(normalized_text)
+
+    resolved_color_mode = color_mode or str(effect_defaults["color_mode"])
+    resolved_scroll_step = scroll_step if scroll_step > 0 else int(effect_defaults["scroll_step"])
+    resolved_anim_step = anim_step if anim_step > 0 else int(effect_defaults["anim_step"])
+    resolved_gradient_span = gradient_span if gradient_span > 0 else int(effect_defaults["gradient_span"])
+    resolved_frame_interval_ms = frame_interval_ms if frame_interval_ms > 0 else int(effect_defaults["frame_interval_ms"])
+    resolved_timeline_duration_ms = (
+        timeline_duration_ms if timeline_duration_ms > 0 else int(effect_defaults["timeline_duration_ms"])
+    )
+    resolved_timeline_repeat_delay_ms = (
+        timeline_repeat_delay_ms
+        if timeline_repeat_delay_ms > 0
+        else int(effect_defaults["timeline_repeat_delay_ms"])
+    )
+    resolved_timeline_repeat_count = (
+        int(timeline_repeat_count)
+        if timeline_repeat_count is not None
+        else int(effect_defaults["timeline_repeat_count"])
+    )
+    resolved_timeline_path = timeline_path or str(effect_defaults["timeline_path"])
+
+    if resolved_color_mode == "gradient" and not resolved_secondary_rgb888:
+        resolved_secondary_rgb888 = "#000000"
+
+    if apply_flags == 0:
+        if content_type == "pattern":
+            apply_flags = MATRIX_APPLY_FLAG_PATTERN
+        elif content_type == "glyph":
+            apply_flags = MATRIX_APPLY_FLAG_GLYPH
+        else:
+            apply_flags = MATRIX_APPLY_FLAG_PATTERN | MATRIX_APPLY_FLAG_GLYPH
+
+    return build_matrix_action_payload(
+        content_type=content_type,
+        effect_name=normalized_effect_name,
+        primary_rgb888=resolved_primary_rgb888,
+        secondary_rgb888=resolved_secondary_rgb888,
+        brightness=brightness,
+        direction=direction,
+        color_mode=resolved_color_mode,
+        pattern_id=resolved_pattern_id,
+        glyph_id=0,
+        scroll_step=resolved_scroll_step,
+        anim_step=resolved_anim_step,
+        gradient_span=resolved_gradient_span,
+        frame_interval_ms=resolved_frame_interval_ms,
+        timeline_duration_ms=resolved_timeline_duration_ms,
+        timeline_repeat_delay_ms=resolved_timeline_repeat_delay_ms,
+        timeline_repeat_count=resolved_timeline_repeat_count,
+        timeline_path=resolved_timeline_path,
+        flags=flags,
+        animation_flags=animation_flags,
+        apply_flags=apply_flags,
+        source=source,
+        transcript=transcript_text,
+        glyph_rows_hex=glyph_rows_hex,
+        glyph_count=glyph_count,
+        glyph_width=MATRIX_WIDTH,
+        glyph_spacing=1,
+    )
+
+
 def build_png_chunk(chunk_type: bytes, chunk_data: bytes) -> bytes:
     return (
         struct.pack(">I", len(chunk_data))
@@ -2188,6 +2665,48 @@ def _strip_frame_payload_for_transport(frame_payload: Dict[str, Any]) -> Dict[st
     }
 
 
+def _strip_action_payload_for_transport(action_payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Strip a native matrix action payload down to the fields needed by the AI-side debug websocket."""
+    return {
+        k: v for k, v in action_payload.items()
+        if k in (
+            "data_format",
+            "content_type",
+            "content_id",
+            "effect_name",
+            "effect_id",
+            "direction",
+            "direction_id",
+            "color_mode",
+            "color_mode_id",
+            "brightness",
+            "primary_rgb888",
+            "secondary_rgb888",
+            "pattern_id",
+            "glyph_id",
+            "scroll_step",
+            "anim_step",
+            "gradient_span",
+            "flags",
+            "frame_interval_ms",
+            "timeline_duration_ms",
+            "timeline_repeat_delay_ms",
+            "timeline_repeat_count",
+            "timeline_path",
+            "timeline_path_id",
+            "animation_flags",
+            "apply_flags",
+            "glyph_rows_hex",
+            "glyph_count",
+            "glyph_width",
+            "glyph_spacing",
+            "source",
+            "transcript",
+            "tool_name",
+        )
+    }
+
+
 def build_jlu_scroll_animation(
     primary_rgb888: str = "#F5F5F5",
     background_rgb888: str = "#000000",
@@ -2382,8 +2901,55 @@ def build_tool_list() -> list[Dict[str, Any]]:
             },
         },
         {
+            "name": "self.screen.matrix_16x16.show_effect",
+            "description": "Send one native LED-side effect command instead of redrawing frames. Supports solid color, built-in local patterns, and direct text scroll/glyph effects through uploaded glyph rows.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "effect": {
+                        "type": "string",
+                        "description": "Required native effect name. Supported values: static, breath, gradient, scroll_left, scroll_right, text_scroll, fade_in, fade_out, color_cycle, row_reveal, row_hide, gradient_reveal. Aliases marquee_left/right and loop_scroll_left/right are also accepted.",
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Optional text source for glyph-based native effects. Multi-character direct mode is supported for text_scroll/scroll_left/scroll_right only.",
+                    },
+                    "pattern_name": {
+                        "type": "string",
+                        "description": "Optional built-in LED-side pattern name: diamond, cross, jlu_emblem, checker, border, diagonal_x.",
+                    },
+                    "pattern_id": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 15,
+                        "description": "Optional raw built-in pattern id. Use pattern_name unless you already know the numeric id.",
+                    },
+                    "primary_rgb888": {"type": "string"},
+                    "secondary_rgb888": {"type": "string"},
+                    "background_rgb888": {"type": "string"},
+                    "brightness": {"type": "integer", "minimum": 0, "maximum": 255},
+                    "direction": {"type": "string", "enum": ["normal", "rotate_180", "rotate_cw_90", "rotate_ccw_90"]},
+                    "color_mode": {"type": "string", "enum": ["solid", "gradient"]},
+                    "scroll_step": {"type": "integer", "minimum": 1, "maximum": 32},
+                    "anim_step": {"type": "integer", "minimum": 1, "maximum": 32},
+                    "gradient_span": {"type": "integer", "minimum": 0, "maximum": 255},
+                    "frame_interval_ms": {"type": "integer", "minimum": 0, "maximum": 65535},
+                    "timeline_duration_ms": {"type": "integer", "minimum": 0, "maximum": 65535},
+                    "timeline_repeat_delay_ms": {"type": "integer", "minimum": 0, "maximum": 65535},
+                    "timeline_repeat_count": {"type": "integer", "minimum": 0, "maximum": 255},
+                    "timeline_path": {"type": "string", "enum": ["linear", "ease_in_out", "breath_curve"]},
+                    "flags": {"type": "integer", "minimum": 0, "maximum": 255},
+                    "animation_flags": {"type": "integer", "minimum": 0, "maximum": 255},
+                    "apply_flags": {"type": "integer", "minimum": 0, "maximum": 255},
+                    "source": {"type": "string"},
+                    "transcript": {"type": "string"},
+                },
+                "required": ["effect"],
+            },
+        },
+        {
             "name": "self.screen.matrix_16x16.draw_animation",
-            "description": "Transmit a compact 16x16 bitmap animation sequence for LED-side buffered playback. Each frame is a 32-byte 1-bit bitmap plus foreground/background RGB888, for a total compact frame size of 38 bytes. The LED side buffers 32 frames; if more frames are supplied, the bridge resamples them to 32 and scales frame_interval_ms to preserve the overall duration. Do not implement timing in python_source with sleep/yield style logic; animation timing is controlled only by frame_interval_ms.",
+            "description": "Transmit a compact 16x16 bitmap animation sequence for LED-side buffered playback. Each frame is a 32-byte 1-bit bitmap plus foreground/background RGB888, for a total compact frame size of 38 bytes. The LED side buffers 32 frames; if more frames are supplied, the bridge resamples them to 32 and scales frame_interval_ms to preserve the overall duration. Do not implement timing in python_source with sleep/yield style logic; animation timing is controlled only by frame_interval_ms. For native LED-side effects on solid/pattern/text content, prefer self.screen.matrix_16x16.show_effect.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -2985,6 +3551,33 @@ def handle_local_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Dict[st
 
         return animation_result
 
+    if tool_name in EFFECT_COMMAND_TOOL_NAMES:
+        return render_matrix_effect_command(
+            effect=str(arguments.get("effect", "")),
+            text=str(arguments.get("text", "")),
+            pattern_name=str(arguments.get("pattern_name", arguments.get("pattern", ""))),
+            pattern_id=arguments.get("pattern_id"),
+            primary_rgb888=str(arguments.get("primary_rgb888", "#F5F5F5")),
+            secondary_rgb888=str(arguments.get("secondary_rgb888", "")),
+            background_rgb888=str(arguments.get("background_rgb888", "")),
+            brightness=int(arguments.get("brightness", MATRIX_DEFAULT_BRIGHTNESS)),
+            direction=str(arguments.get("direction", "normal")),
+            color_mode=str(arguments.get("color_mode", "")),
+            scroll_step=int(arguments.get("scroll_step", 0)),
+            anim_step=int(arguments.get("anim_step", 0)),
+            gradient_span=int(arguments.get("gradient_span", 0)),
+            frame_interval_ms=int(arguments.get("frame_interval_ms", 0)),
+            timeline_duration_ms=int(arguments.get("timeline_duration_ms", 0)),
+            timeline_repeat_delay_ms=int(arguments.get("timeline_repeat_delay_ms", 0)),
+            timeline_repeat_count=arguments.get("timeline_repeat_count"),
+            timeline_path=str(arguments.get("timeline_path", "")),
+            flags=int(arguments.get("flags", 0)),
+            animation_flags=int(arguments.get("animation_flags", 0)),
+            apply_flags=int(arguments.get("apply_flags", 0)),
+            source=str(arguments.get("source", "mcp_effect")),
+            transcript=str(arguments.get("transcript", "")),
+        )
+
     if tool_name in PROMPT_RENDER_TOOL_NAMES:
         return render_prompt_to_matrix_frame(
             prompt=str(arguments.get("prompt", "")),
@@ -3005,6 +3598,12 @@ async def send_payload_via_ws(send_fn, payload, default_interval_ms, status):
     ESP32 receives all frames at once and can pipeline them to the LED without
     per-frame WebSocket round-trip delays.  This eliminates the 'dead air' gap
     between the old animation stopping and the new one starting."""
+    if str(payload.get("data_format", "")).strip().lower() == "matrix_action_v2":
+        stripped_action = _strip_action_payload_for_transport(payload)
+        await send_fn({"type": "matrix_action_result", **stripped_action})
+        update_matrix_status(status, stripped_action, "debug_ws_sent")
+        return {"requested": True, "transport": "debug_ws", "sent": True, "action": True}
+
     frames = payload.get("frames")
     if isinstance(frames, list) and frames:
         interval_ms = max(1, int(payload.get("frame_interval_ms", default_interval_ms)))

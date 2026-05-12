@@ -390,6 +390,16 @@
               <FileType>1</FileType>
               <FilePath>.\Sources\mid\gp_led_action.c</FilePath>
             </File>
+            <File>
+              <FileName>local_display_scheme.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Sources\mid\local_display_scheme.c</FilePath>
+            </File>
+            <File>
+              <FileName>rtc_clock.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Sources\mid\rtc_clock.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

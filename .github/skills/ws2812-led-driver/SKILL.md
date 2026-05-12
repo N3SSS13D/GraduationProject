@@ -35,9 +35,16 @@ Use this skill for LED-side tasks under `Project/STC51/`, especially:
 - `Sources/mid/mid_task.c`
   - 1 ms cooperative scheduler used by the app task graph.
 - `Sources/mid/gp_led_action.c`
-  - Decision layer between local draw content and remotely controlled action/frame/animation execution.
+  - Decision layer between local draw content and remotely controlled action/frame/animation execution; buffered
+    playback is canonically stored as `32 x 36B` single-layer bitmap frames.
 - `Sources/mid/draw_drv.c`
-  - Local/offline rendering for solid, glyph, pattern, and animation updates.
+  - Local/offline rendering for solid, glyph, pattern, and animation updates; owns the live render-config storage used
+    by refresh and config updates.
+- `Sources/mid/local_display_scheme.c`
+  - Owns the local startup carousel plus offline P32/P33 short/long press behavior; local autoplay now uses numbered
+    local images plus explicit effect-command descriptors instead of parallel pattern/effect/color tables.
+  - The effect-command descriptor currently carries `effectId`, timing steps, gradient flags/span, and timeline
+    profile selection; new local-only effects should reuse this format before widening protocol scope.
 - `Sources/drv/gp_led_matrix_ai8051u.c`
   - UART2 byte-stream assembly, packet parsing, command dispatch, and ACK/reply generation.
 - `Sources/drv/ws2812_drv.c`
@@ -45,10 +52,14 @@ Use this skill for LED-side tasks under `Project/STC51/`, especially:
 
 ## Common execution flow
 
-- Boot path: `main.c -> Test_Init() -> app.c init`
+- Boot path: `main.c -> APP_Init() -> app.c init`
 - Runtime loop: `GpLedMatrixAi8051u_Poll() -> MidTask_Process()`
 - Remote frame path: `gp_led_matrix_ai8051u.c -> gp_led_action.c -> ws2812 / draw layers`
 - Offline animation path: `mid_task tick -> draw_drv.c` updates when direct remote frame mode is not active
+- Keep `Timer1 -> WS2812DRV_RefreshStep()` scan timing separate from local `DrawDrv` cadence; use `frameIntervalMs`
+  for effect speed and row interval only for physical scan behavior
+- If you add a local display effect that is only used by offline startup/key flows, keep it local to `DrawDrv` /
+  `local_display_scheme.c`; only extend `Project/Protocols/gp_led_matrix_protocol.h` when the AI side must trigger it
 
 ## Common read bundles
 

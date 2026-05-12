@@ -39,7 +39,7 @@
   - 当前已完成的低风险优化包括：去掉重复清屏、统一本地动画 32 ms 时基、删除空转 500 ms 绘图任务、把 `MidTask` 升级为 pending 计数。
   - `normal pair` 预构建双行 DMA 缓冲实验已回退；当前稳定方案重新使用刷新步内现组包，并在 DMA 入口增加了偶地址对齐保护，避免再次把奇地址源缓冲直接送入 PWMAT DMA。
   - 当前剩余的主要性能热点重新包括 `normal pair` 与 `legacy shift` 两条路径里的双行组包，以及每次刷新都要执行的行切换与 DMA 启动开销。
-  - 当前板级观测基线通过 USB `printf` 输出 `[LED_SCAN]` 与 `[LED_LAST]`，后续刷新优化应先基于这两类日志确认频率、长度、地址和异常计数，再决定是否继续缓存化。
+  - 常驻播放路径里的 USB `printf` 基线日志和 BT sniff 调试任务已移除；后续刷新优化若需要观测扫描计数，应采用按需、短时启用的诊断方式，避免把日志本身重新带入卡顿路径。
 - `AI端`
   - 蓝牙接收保持后台任务组包模型，避免回退成调用时轮询。
   - 预览、触摸和主机绘图转发主要在 `lichuang_dev_board.cc` 串起来，问题常常不只在 `gp_led_matrix_esp32.cc`。
@@ -48,6 +48,8 @@
   - 若命令语义变化，必须同步更新协议说明和脚本契约说明。
 - `脚本`
   - MCP/绘图脚本的目标是 `AI端` 预览与转发接口，不应直接假定 `LED端` 原始串口发包细节。
+  - 当前已启用原生效果命令链路：`self.screen.matrix_16x16.show_effect` -> debug websocket `matrix_action_result` -> `AI端` 字模上传/动作转发 -> `LED端` `SetAction`。
+  - 多字文本的原生直连当前仅适用于 `text_scroll`、`scroll_left`、`scroll_right`；若是多字渐显、逐行显隐等效果，仍应使用 `draw_animation`。
 
 ### 5. Prompt / Skill 结构待解决问题
 

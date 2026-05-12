@@ -40,15 +40,17 @@ For script, MCP, or tooling tasks:
 3. Keep host flow bounded to AI-side preview/upload interfaces.
 4. Do not introduce assumptions that bypass AI-side orchestration and directly depend on LED-side raw serial details.
 5. If script workflow changes, sync `Project/Script/README.md` and `Doc/Instructions/problem_tracking.md`.
-6. Treat `Project/Script/tools/ws2812_auto_debug.py` as the default automation entry.
-7. For the auto-debug chain, enforce this order by default:
+6. When the requested display maps cleanly to an LED-side native effect on solid color, built-in pattern, or direct text,
+   prefer `self.screen.matrix_16x16.show_effect` and `matrix_action_result` over synthesizing animation frames.
+7. Treat `Project/Script/tools/ws2812_auto_debug.py` as the default automation entry.
+8. For the auto-debug chain, enforce this order by default:
    - Keil rebuild for `Project/STC51/ws2812_driver/ws2812_driver.uvproj` only
    - wait `20s` and open AI8051U serial monitor (`COM15` default, adjustable)
    - run ESP-IDF `build flash monitor` for `Project/xiaozhi-esp32`
-8. Keep tool roots configurable and validated before execution:
+9. Keep tool roots configurable and validated before execution:
    - Keil root: `S:\Embedded\Keil`
    - ESP-IDF root: `S:\Embedded\ESP\v5.4.3\esp-idf`
-9. Remove or update stale references when the automation entry changes; do not keep dead links to legacy scripts.
+10. Remove or update stale references when the automation entry changes; do not keep dead links to legacy scripts.
 
 ## Output format
 

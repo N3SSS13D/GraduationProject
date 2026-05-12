@@ -45,7 +45,7 @@ python Project/Script/mcp/gp_matrix/gp_display_mcp_bridge.py
   - In each row, high bit (`bit15`) is the leftmost LED.
 - Do not pass `0/1` arrays, ASCII art, spaced binary strings, or `256-byte frame_rgb332_hex` into `bitmap_rows_hex` fields.
 - Include `source` and `transcript` whenever possible for traceability.
-- **Only bitmap format is supported.** Preset, frame_rgb332_hex, and glyph methods are disabled.
+- `draw_frame` / `draw_animation` / `draw_python` 仍以 bitmap 为主格式；若任务可直接映射为 `LED端` 原生效果命令，则使用 `show_effect` 生成 `matrix_action_v2`，并可附带 `glyph_rows_hex` 做字幕字模上传。
 - `draw_frame` requires `bitmap_rows_hex` + `primary_rgb888` (+ optional `background_rgb888`).
 - Buffered animation playback uses one shared `frame_interval_ms` per batch.
 - If animation input has more than `32` frames, host bridge resamples to `32` and scales interval to preserve total duration.
@@ -54,15 +54,17 @@ python Project/Script/mcp/gp_matrix/gp_display_mcp_bridge.py
 
 1. Need one custom pattern from code-like instructions:
    - Use `self.screen.matrix_16x16.draw_python`.
-2. Need scrolling or per-character text sequence:
+2. Need one LED-side native effect on solid color, built-in pattern, or direct subtitle text:
+  - Use `self.screen.matrix_16x16.show_effect`.
+3. Need scrolling or per-character text sequence as frame playback:
    - Use `self.screen.matrix_16x16.show_text`.
-3. Need buffered LED-side animation sequence:
+4. Need buffered LED-side animation sequence:
    - Use `self.screen.matrix_16x16.draw_animation`.
    - For per-frame drawing control, use `ops_sequence` mode.
    - For simple effect from one base image, use `image + effect` mode.
-4. Already have one final bitmap or full RGB332 frame:
+5. Already have one final bitmap or full RGB332 frame:
    - Use `self.screen.matrix_16x16.draw_frame`.
-5. Only have vague natural language prompt and no explicit draw plan:
+6. Only have vague natural language prompt and no explicit draw plan:
    - Use `self.screen.matrix_16x16.render_prompt`.
 
 ## 3. 工具详细约定
@@ -161,9 +163,62 @@ Use when each character should become one frame.
 - One character -> one `16x16` frame.
 - `frame_interval_ms` controls sequence playback interval.
 
+### 3.2.1 `self.screen.matrix_16x16.show_effect` — LED 端原生效果命令
+
+Use when the task can be represented by one LED-side native action instead of a pre-rendered frame sequence.
+
+#### Input
+
+```json
+{
+  "effect": "scroll_left",
+  "text": "吉林大学",
+  "primary_rgb888": "#00FFAA",
+  "frame_interval_ms": 96,
+  "source": "mcp_effect",
+  "transcript": "scroll 吉林大学 from right to left"
+}
+```
+
+#### Supported content sources
+
+- `solid`: omit `text` and `pattern_name`.
+- `pattern`: provide `pattern_name` or `pattern_id`.
+- `glyph`: provide `text`; bridge converts each character to one uploaded `16x16` glyph.
+
+#### Supported effects
+
+- `static`
+- `breath`
+- `gradient`
+- `scroll_left`
+- `scroll_right`
+- `text_scroll`
+- `fade_in`
+- `fade_out`
+- `color_cycle`
+- `row_reveal`
+- `row_hide`
+- `gradient_reveal`
+
+#### Rules
+
+- Multi-character direct text is currently supported only for `text_scroll`, `scroll_left`, and `scroll_right`.
+- Single-character text can use any supported native effect.
+- Built-in pattern names: `diamond`, `cross`, `jlu_emblem`, `checker`, `border`, `diagonal_x`.
+- If the effect uses gradient color mode and `secondary_rgb888` is omitted, the bridge falls back to black.
+- Default timing values are aligned with the LED-side local defaults:
+  - `scroll_*` / `text_scroll`: `frame_interval_ms = 96`
+  - `breath`: `frame_interval_ms = 64`, `timeline = 1600 / 240 / breath_curve`
+  - `fade_*`: `frame_interval_ms = 64`, `timeline = 1200 / 200 / ease_in_out`
+  - `row_reveal` / `row_hide` / `gradient_reveal`: `frame_interval_ms = 64`, `timeline = 960 / 120 / linear`
+  - `color_cycle`: `frame_interval_ms = 80`
+- Transport shape: the bridge emits `matrix_action_result`; if `text` is present, it also includes `glyph_rows_hex` for AI-side glyph upload before `SetAction`.
+- If the desired text effect cannot be expressed by the native sequence path, fall back to `draw_animation`.
+
 ### 3.3 `self.screen.matrix_16x16.draw_animation` — 多帧动画
 
-Use for multi-frame buffered animation.
+Use for multi-frame buffered animation when native `show_effect` cannot express the required result.
 
 #### Input mode A: `bitmap_rows_hex_list`
 

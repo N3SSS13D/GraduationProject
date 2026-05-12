@@ -20,9 +20,11 @@ static uint16_t xdata g_gpMatrixPacketLength = 0U;
 static uint8_t xdata g_gpMatrixChunkSize = 0U;
 static uint8_t xdata g_gpMatrixCopyLength = 0U;
 static uint8_t xdata g_gpMatrixFlags = 0U;
+static uint8_t xdata g_gpMatrixTxSequence = 0U;
 static uint8_t xdata g_gpMatrixReplyPayload[GP_MATRIX_REPLY_PAYLOAD_BYTES];
 static uint8_t xdata g_gpMatrixReplyDetail = (uint8_t)kGpMatrixReplyDetailNone;
 static GpMatrixActionPayload xdata g_gpMatrixAction;
+static GpMatrixTimeSyncPayload xdata g_gpMatrixTimeSync;
 static uint16_t xdata g_gpMatrixStreamLength = 0U;
 static uint16_t xdata g_gpMatrixExpectedPacketLength = 0U;
 static uint8_t xdata g_gpMatrixStreamIdleTicks = 0U;
@@ -138,6 +140,12 @@ static const char *GpLedMatrixAi8051u_CommandName(uint8_t command)
         case kGpMatrixCommandSetDebugLedFlow:
             return "dflw";
 
+        case kGpMatrixCommandSetTime:
+            return "time";
+
+        case kGpMatrixCommandRequestCachedBitmap:
+            return "rcbm";
+
         case kGpMatrixCommandFrameStart:
             return "fstr";
 
@@ -238,6 +246,7 @@ static void GpLedMatrixAi8051u_ResetContext(GpLedMatrixAi8051uContext xdata *con
     context->packetReplyPrepared = 0U;
     context->txLength = 0U;
     context->txPending = 0U;
+    g_gpMatrixTxSequence = 0U;
     GpLedMatrixAi8051u_ResetFrameTransfer(context);
     GpLedMatrixAi8051u_ResetGlyphTransfer(context);
 }
@@ -398,6 +407,57 @@ static void GpLedMatrixAi8051u_BuildReply(GpMatrixStatusCode status)
     GpLedMatrixAi8051u_LogReply(g_gpMatrixSequence, status, g_gpMatrixCommand, g_gpMatrixReplyDetail);
 }
 
+static uint8_t GpLedMatrixAi8051u_QueueTxPacket(uint8_t command,
+                                                const uint8_t xdata *payload,
+                                                uint8_t payloadLength,
+                                                uint8_t flags)
+{
+    GpMatrixPacketHeader xdata *header;
+    uint16_t packetCrc;
+    uint16_t packetLength;
+
+    if (g_gpMatrixCtx == 0)
+    {
+        return 0U;
+    }
+
+    if (g_gpMatrixCtx->txPending != 0U)
+    {
+        return 0U;
+    }
+
+    packetLength = (uint16_t)(GP_MATRIX_PACKET_HEADER_SIZE + payloadLength + GP_MATRIX_PACKET_TRAILER_SIZE);
+    if (packetLength > GP_MATRIX_AI8051U_TX_BUFFER_SIZE)
+    {
+        return 0U;
+    }
+
+    header = (GpMatrixPacketHeader xdata *)g_gpMatrixCtx->txBuffer;
+    header->magic = GP_MATRIX_PROTOCOL_MAGIC;
+    header->flags = flags;
+    header->sequence = g_gpMatrixTxSequence++;
+    header->command = command;
+    header->payload_length = payloadLength;
+    header->header_crc8 = GpMatrixComputeHeaderCrc8(g_gpMatrixCtx->txBuffer, GP_MATRIX_PACKET_HEADER_CRC_BYTES);
+
+    if ((payloadLength != 0U) && (payload != 0))
+    {
+        GpLedMatrixAi8051u_CopyBytes(&g_gpMatrixCtx->txBuffer[GP_MATRIX_PACKET_HEADER_SIZE], payload, payloadLength);
+    }
+
+    packetCrc = GpMatrixComputePacketCrc16(g_gpMatrixCtx->txBuffer,
+                                           (uint16_t)(packetLength - GP_MATRIX_PACKET_TRAILER_SIZE));
+    GpLedMatrixAi8051u_WriteLe16(&g_gpMatrixCtx->txBuffer[packetLength - GP_MATRIX_PACKET_TRAILER_SIZE], packetCrc);
+    g_gpMatrixCtx->txLength = packetLength;
+    g_gpMatrixCtx->txPending = 1U;
+
+    printf("[GP_TX] cmd=%s seq=%u len=%u\r\n",
+           GpLedMatrixAi8051u_CommandName(command),
+           (unsigned int)header->sequence,
+           (unsigned int)payloadLength);
+    return 1U;
+}
+
 static GpMatrixStatusCode GpLedMatrixAi8051u_HandleSetBrightness(void)
 {
     if (g_gpMatrixPayloadLength != 1U)
@@ -446,7 +506,33 @@ static GpMatrixStatusCode GpLedMatrixAi8051u_HandleSetAction(void)
     g_gpMatrixAction.anim_step = g_gpMatrixPayload[15];
     g_gpMatrixAction.gradient_span = g_gpMatrixPayload[16];
     g_gpMatrixAction.flags = g_gpMatrixPayload[17];
+    g_gpMatrixAction.frame_interval_ms_lo = g_gpMatrixPayload[18];
+    g_gpMatrixAction.frame_interval_ms_hi = g_gpMatrixPayload[19];
+    g_gpMatrixAction.timeline_duration_ms_lo = g_gpMatrixPayload[20];
+    g_gpMatrixAction.timeline_duration_ms_hi = g_gpMatrixPayload[21];
+    g_gpMatrixAction.timeline_repeat_delay_ms_lo = g_gpMatrixPayload[22];
+    g_gpMatrixAction.timeline_repeat_delay_ms_hi = g_gpMatrixPayload[23];
+    g_gpMatrixAction.timeline_repeat_count = g_gpMatrixPayload[24];
+    g_gpMatrixAction.timeline_path = g_gpMatrixPayload[25];
+    g_gpMatrixAction.animation_flags = g_gpMatrixPayload[26];
+    g_gpMatrixAction.apply_flags = g_gpMatrixPayload[27];
     return GpLedAction_ApplyAction(&g_gpMatrixAction);
+}
+
+static GpMatrixStatusCode GpLedMatrixAi8051u_HandleSetTime(void)
+{
+    if (g_gpMatrixPayloadLength != GP_MATRIX_TIME_SYNC_PAYLOAD_BYTES)
+    {
+        return kGpMatrixStatusBadLength;
+    }
+
+    g_gpMatrixTimeSync.year = g_gpMatrixPayload[0];
+    g_gpMatrixTimeSync.month = g_gpMatrixPayload[1];
+    g_gpMatrixTimeSync.day = g_gpMatrixPayload[2];
+    g_gpMatrixTimeSync.hour = g_gpMatrixPayload[3];
+    g_gpMatrixTimeSync.minute = g_gpMatrixPayload[4];
+    g_gpMatrixTimeSync.second = g_gpMatrixPayload[5];
+    return GpLedAction_SyncClockTime(&g_gpMatrixTimeSync);
 }
 
 static GpMatrixStatusCode GpLedMatrixAi8051u_HandleSetDebugLed(void)
@@ -858,6 +944,10 @@ static GpMatrixStatusCode GpLedMatrixAi8051u_ProcessPacket(GpLedMatrixAi8051uCon
             status = GpLedMatrixAi8051u_HandleSetAction();
             break;
 
+        case kGpMatrixCommandSetTime:
+            status = GpLedMatrixAi8051u_HandleSetTime();
+            break;
+
         case kGpMatrixCommandSetDebugLed:
             status = GpLedMatrixAi8051u_HandleSetDebugLed();
             break;
@@ -1027,6 +1117,8 @@ void GpLedMatrixAi8051u_Poll(GpLedMatrixAi8051uContext xdata *context)
         return;
     }
 
+    /* Flush any queued local-originated request before new RX work can overwrite the shared TX buffer. */
+    GpLedMatrixAi8051u_FlushReply(context);
     UART2_ServiceRx();
 
     if (UART2_TakeRxOverflow() != 0U)
@@ -1054,6 +1146,11 @@ void GpLedMatrixAi8051u_Poll(GpLedMatrixAi8051uContext xdata *context)
     }
 
     GpLedMatrixAi8051u_ProcessPendingPacket(context);
+}
+
+uint8_t GpLedMatrixAi8051u_RequestCachedBitmap(void)
+{
+    return GpLedMatrixAi8051u_QueueTxPacket((uint8_t)kGpMatrixCommandRequestCachedBitmap, 0, 0U, 0U);
 }
 
 void GpLedMatrixAi8051u_RenderFrame(GpLedMatrixAi8051uContext xdata *context)

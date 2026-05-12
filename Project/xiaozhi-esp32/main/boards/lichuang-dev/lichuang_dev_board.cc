@@ -4,6 +4,7 @@
 #include "display/emote_display.h"
 #include "ui/gp_debug_display.h"
 #include "gp_led_matrix_esp32.h"
+#include "gp_matrix_local_tools.h"
 #include "transport/gp_led_matrix_transport.h"
 #include "application.h"
 #include "button.h"
@@ -401,6 +402,39 @@ std::optional<std::array<uint16_t, GP_MATRIX_HEIGHT>> ParseMatrixBitmapRowsHex(c
     return rows;
 }
 
+std::optional<std::vector<uint16_t>> ParseMatrixGlyphRowsHex(const std::string& text, size_t glyph_count) {
+    std::vector<uint16_t> rows;
+    std::string hex_digits;
+
+    if (glyph_count == 0U) {
+        return std::nullopt;
+    }
+
+    hex_digits.reserve(text.size());
+    for (char ch : text) {
+        if (std::isxdigit(static_cast<unsigned char>(ch)) != 0) {
+            hex_digits.push_back(ch);
+        }
+    }
+
+    if (hex_digits.size() != (glyph_count * GP_MATRIX_GLYPH_ROWS_SIZE * 2U)) {
+        return std::nullopt;
+    }
+
+    rows.resize(glyph_count * GP_MATRIX_HEIGHT);
+    for (size_t index = 0; index < rows.size(); ++index) {
+        unsigned int value = 0U;
+
+        if (std::sscanf(hex_digits.substr(index * 4U, 4U).c_str(), "%4x", &value) != 1) {
+            return std::nullopt;
+        }
+        rows[index] = static_cast<uint16_t>(value & 0xFFFFU);
+    }
+
+    return rows;
+}
+
+
 GpColorDebugAnimation ParseAnimationName(const std::string& text) {
     const std::string lowered = ToAsciiLower(text);
     if (lowered == "gradient") {
@@ -486,27 +520,6 @@ cJSON* BuildDotResultJson(const GpColorDebugState& state) {
     cJSON_AddStringToObject(json, "source", state.source.c_str());
     cJSON_AddStringToObject(json, "transcript", state.transcript.c_str());
     cJSON_AddBoolToObject(json, "applied", true);
-    return json;
-}
-
-cJSON* BuildMatrixFrameResultJson(const char* preset,
-                                  const char* frame_hex,
-                                  const char* bitmap_rows_hex,
-                                  const char* primary_rgb888,
-                                  bool applied,
-                                  const char* source,
-                                  const char* transcript) {
-    cJSON* json = cJSON_CreateObject();
-
-    cJSON_AddStringToObject(json, "preset", preset != nullptr ? preset : "");
-    cJSON_AddStringToObject(json, "frame_rgb332_hex", frame_hex != nullptr ? frame_hex : "");
-    cJSON_AddStringToObject(json, "bitmap_rows_hex", bitmap_rows_hex != nullptr ? bitmap_rows_hex : "");
-    cJSON_AddStringToObject(json, "primary_rgb888", primary_rgb888 != nullptr ? primary_rgb888 : "");
-    cJSON_AddNumberToObject(json, "width", GP_MATRIX_WIDTH);
-    cJSON_AddNumberToObject(json, "height", GP_MATRIX_HEIGHT);
-    cJSON_AddBoolToObject(json, "applied", applied);
-    cJSON_AddStringToObject(json, "source", source != nullptr ? source : "mcp");
-    cJSON_AddStringToObject(json, "transcript", transcript != nullptr ? transcript : "");
     return json;
 }
 
@@ -609,7 +622,9 @@ private:
     static constexpr uint32_t kBtBridgeTaskStackWords = 4096;
     static constexpr UBaseType_t kBtBridgeTaskPriority = 1;
     static constexpr uint32_t kBtBridgeStartDelayMs = 1200;
-    static constexpr uint32_t kBtBridgeTickMs = 1000;
+    static constexpr uint32_t kBtBridgeTickMs = 100;
+    static constexpr uint32_t kBtBridgePollTimeoutMs = 5;
+    static constexpr uint32_t kBtBridgeDebugLedIntervalMs = 1000;
     static constexpr uint32_t kBtBridgeQuietWindowMs = 1500;
 
     struct DebugCommand {
@@ -1154,6 +1169,189 @@ private:
             return;
         }
 
+        if (std::strcmp(type->valuestring, "matrix_action_result") == 0) {
+            const auto* source_id = cJSON_GetObjectItem(root, "source_id");
+            const auto* content_id = cJSON_GetObjectItem(root, "content_id");
+            const auto* effect_id = cJSON_GetObjectItem(root, "effect_id");
+            const auto* direction_id = cJSON_GetObjectItem(root, "direction_id");
+            const auto* color_mode_id = cJSON_GetObjectItem(root, "color_mode_id");
+            const auto* brightness = cJSON_GetObjectItem(root, "brightness");
+            const auto* primary_rgb888 = cJSON_GetObjectItem(root, "primary_rgb888");
+            const auto* secondary_rgb888 = cJSON_GetObjectItem(root, "secondary_rgb888");
+            const auto* pattern_id = cJSON_GetObjectItem(root, "pattern_id");
+            const auto* glyph_id = cJSON_GetObjectItem(root, "glyph_id");
+            const auto* scroll_step = cJSON_GetObjectItem(root, "scroll_step");
+            const auto* anim_step = cJSON_GetObjectItem(root, "anim_step");
+            const auto* gradient_span = cJSON_GetObjectItem(root, "gradient_span");
+            const auto* flags = cJSON_GetObjectItem(root, "flags");
+            const auto* frame_interval_ms = cJSON_GetObjectItem(root, "frame_interval_ms");
+            const auto* timeline_duration_ms = cJSON_GetObjectItem(root, "timeline_duration_ms");
+            const auto* timeline_repeat_delay_ms = cJSON_GetObjectItem(root, "timeline_repeat_delay_ms");
+            const auto* timeline_repeat_count = cJSON_GetObjectItem(root, "timeline_repeat_count");
+            const auto* timeline_path_id = cJSON_GetObjectItem(root, "timeline_path_id");
+            const auto* animation_flags = cJSON_GetObjectItem(root, "animation_flags");
+            const auto* apply_flags = cJSON_GetObjectItem(root, "apply_flags");
+            const auto* glyph_rows_hex = cJSON_GetObjectItem(root, "glyph_rows_hex");
+            const auto* glyph_count = cJSON_GetObjectItem(root, "glyph_count");
+            const auto* glyph_width = cJSON_GetObjectItem(root, "glyph_width");
+            const auto* glyph_spacing = cJSON_GetObjectItem(root, "glyph_spacing");
+            const auto* transcript = cJSON_GetObjectItem(root, "transcript");
+            GpMatrixActionPayload scheduled_action = {};
+            std::vector<uint16_t> scheduled_glyph_rows;
+            std::optional<uint32_t> parsed_primary_rgb;
+            std::optional<uint32_t> parsed_secondary_rgb;
+            uint16_t interval_ms = 0U;
+            uint16_t timeline_duration_value = 0U;
+            uint16_t timeline_delay_value = 0U;
+            uint8_t scheduled_glyph_count = 0U;
+            uint8_t scheduled_glyph_width = GP_MATRIX_WIDTH;
+            uint8_t scheduled_glyph_spacing = 0U;
+
+            if (!cJSON_IsNumber(content_id) || !cJSON_IsNumber(effect_id) || !cJSON_IsString(primary_rgb888)) {
+                ESP_LOGW(TAG, "[DBG_WS] matrix_action_result missing action fields");
+                cJSON_Delete(root);
+                return;
+            }
+
+            parsed_primary_rgb = ParseRgb888(primary_rgb888->valuestring);
+            if (!parsed_primary_rgb.has_value()) {
+                ESP_LOGW(TAG, "[DBG_WS] invalid matrix_action_result primary color");
+                cJSON_Delete(root);
+                return;
+            }
+
+            if (cJSON_IsString(secondary_rgb888)) {
+                parsed_secondary_rgb = ParseRgb888(secondary_rgb888->valuestring);
+                if (!parsed_secondary_rgb.has_value()) {
+                    ESP_LOGW(TAG, "[DBG_WS] invalid matrix_action_result secondary color");
+                    cJSON_Delete(root);
+                    return;
+                }
+            }
+
+            if (cJSON_IsString(glyph_rows_hex)) {
+                if (!cJSON_IsNumber(glyph_count) || (glyph_count->valueint <= 0)) {
+                    ESP_LOGW(TAG, "[DBG_WS] matrix_action_result missing glyph_count");
+                    cJSON_Delete(root);
+                    return;
+                }
+
+                scheduled_glyph_count = static_cast<uint8_t>(glyph_count->valueint);
+                if (cJSON_IsNumber(glyph_width) && (glyph_width->valueint > 0)) {
+                    scheduled_glyph_width = static_cast<uint8_t>(glyph_width->valueint);
+                }
+                if (cJSON_IsNumber(glyph_spacing) && (glyph_spacing->valueint >= 0)) {
+                    scheduled_glyph_spacing = static_cast<uint8_t>(glyph_spacing->valueint);
+                }
+
+                auto parsed_glyph_rows = ParseMatrixGlyphRowsHex(glyph_rows_hex->valuestring, scheduled_glyph_count);
+                if (!parsed_glyph_rows.has_value()) {
+                    ESP_LOGW(TAG, "[DBG_WS] invalid matrix_action_result glyph data");
+                    cJSON_Delete(root);
+                    return;
+                }
+                scheduled_glyph_rows = std::move(*parsed_glyph_rows);
+            }
+
+            scheduled_action.source = static_cast<uint8_t>(cJSON_IsNumber(source_id)
+                ? source_id->valueint
+                : kGpMatrixActionSourceMcp);
+            scheduled_action.content = static_cast<uint8_t>(content_id->valueint);
+            scheduled_action.effect = static_cast<uint8_t>(effect_id->valueint);
+            scheduled_action.direction = static_cast<uint8_t>(cJSON_IsNumber(direction_id) ? direction_id->valueint : 0);
+            scheduled_action.color_mode = static_cast<uint8_t>(cJSON_IsNumber(color_mode_id) ? color_mode_id->valueint : 0);
+            scheduled_action.brightness = static_cast<uint8_t>(cJSON_IsNumber(brightness) ? brightness->valueint : 200);
+            scheduled_action.primary_r = static_cast<uint8_t>((*parsed_primary_rgb >> 16) & 0xFFU);
+            scheduled_action.primary_g = static_cast<uint8_t>((*parsed_primary_rgb >> 8) & 0xFFU);
+            scheduled_action.primary_b = static_cast<uint8_t>(*parsed_primary_rgb & 0xFFU);
+            if (parsed_secondary_rgb.has_value()) {
+                scheduled_action.secondary_r = static_cast<uint8_t>((*parsed_secondary_rgb >> 16) & 0xFFU);
+                scheduled_action.secondary_g = static_cast<uint8_t>((*parsed_secondary_rgb >> 8) & 0xFFU);
+                scheduled_action.secondary_b = static_cast<uint8_t>(*parsed_secondary_rgb & 0xFFU);
+                scheduled_action.flags |= GP_MATRIX_ACTION_FLAG_USE_SECONDARY;
+            }
+            scheduled_action.pattern_id = static_cast<uint8_t>(cJSON_IsNumber(pattern_id) ? pattern_id->valueint : 0);
+            scheduled_action.glyph_id = static_cast<uint8_t>(cJSON_IsNumber(glyph_id) ? glyph_id->valueint : 0);
+            scheduled_action.scroll_step = static_cast<uint8_t>(cJSON_IsNumber(scroll_step) ? scroll_step->valueint : 1);
+            scheduled_action.anim_step = static_cast<uint8_t>(cJSON_IsNumber(anim_step) ? anim_step->valueint : 1);
+            scheduled_action.gradient_span = static_cast<uint8_t>(cJSON_IsNumber(gradient_span) ? gradient_span->valueint : 96);
+            scheduled_action.flags |= static_cast<uint8_t>(cJSON_IsNumber(flags) ? flags->valueint : 0);
+            if (!scheduled_glyph_rows.empty()) {
+                scheduled_action.flags |= GP_MATRIX_ACTION_FLAG_USE_UPLOADED_GLYPHS;
+            }
+
+            interval_ms = static_cast<uint16_t>(cJSON_IsNumber(frame_interval_ms) && (frame_interval_ms->valueint > 0)
+                ? frame_interval_ms->valueint
+                : 0U);
+            timeline_duration_value = static_cast<uint16_t>(cJSON_IsNumber(timeline_duration_ms) && (timeline_duration_ms->valueint > 0)
+                ? timeline_duration_ms->valueint
+                : 0U);
+            timeline_delay_value = static_cast<uint16_t>(cJSON_IsNumber(timeline_repeat_delay_ms) && (timeline_repeat_delay_ms->valueint > 0)
+                ? timeline_repeat_delay_ms->valueint
+                : 0U);
+            GP_MATRIX_WRITE_LE16(&scheduled_action.frame_interval_ms_lo, interval_ms);
+            GP_MATRIX_WRITE_LE16(&scheduled_action.timeline_duration_ms_lo, timeline_duration_value);
+            GP_MATRIX_WRITE_LE16(&scheduled_action.timeline_repeat_delay_ms_lo, timeline_delay_value);
+            scheduled_action.timeline_repeat_count = static_cast<uint8_t>(cJSON_IsNumber(timeline_repeat_count)
+                ? timeline_repeat_count->valueint
+                : 0U);
+            scheduled_action.timeline_path = static_cast<uint8_t>(cJSON_IsNumber(timeline_path_id)
+                ? timeline_path_id->valueint
+                : kGpMatrixTimelinePathLinear);
+            scheduled_action.animation_flags = static_cast<uint8_t>(cJSON_IsNumber(animation_flags)
+                ? animation_flags->valueint
+                : 0U);
+            scheduled_action.apply_flags = static_cast<uint8_t>(cJSON_IsNumber(apply_flags)
+                ? apply_flags->valueint
+                : (GP_MATRIX_APPLY_FLAG_PATTERN | GP_MATRIX_APPLY_FLAG_GLYPH));
+
+            const std::string transcript_text = cJSON_IsString(transcript) ? transcript->valuestring : "";
+            cJSON_Delete(root);
+
+            Application::GetInstance().Schedule([this,
+                                                 scheduled_action,
+                                                 scheduled_glyph_rows,
+                                                 scheduled_glyph_count,
+                                                 scheduled_glyph_width,
+                                                 scheduled_glyph_spacing,
+                                                 transcript_text]() {
+                auto* matrix_led = led_matrix_.get();
+                bool led_forwarded = false;
+                bool glyph_forwarded = true;
+
+                ResetPendingMatrixAnimation();
+
+                if (matrix_led != nullptr) {
+                    if (!scheduled_glyph_rows.empty()) {
+                        glyph_forwarded = matrix_led->ShowGlyphRows(scheduled_glyph_rows.data(),
+                                                                    scheduled_glyph_rows.size(),
+                                                                    scheduled_glyph_count,
+                                                                    scheduled_glyph_width,
+                                                                    scheduled_glyph_spacing);
+                        if (!glyph_forwarded) {
+                            ESP_LOGW(TAG, "[DBG_WS] failed to relay glyph rows before matrix action");
+                        }
+                    }
+
+                    if (glyph_forwarded) {
+                        led_forwarded = matrix_led->ShowAction(scheduled_action);
+                    }
+                    if (!led_forwarded) {
+                        ESP_LOGW(TAG, "[DBG_WS] failed to relay matrix action to LED side over Bluetooth");
+                    }
+                }
+
+                if (display_ != nullptr) {
+                    display_->ShowNotification(led_forwarded ? "WS action relayed" : "WS action send failed", 1500);
+                    if (!transcript_text.empty()) {
+                        display_->SetChatMessage("system", transcript_text.c_str());
+                    }
+                }
+            });
+            UpdateDebugWebsocketStatus(true, "Debug WS action received");
+            return;
+        }
+
         if (std::strcmp(type->valuestring, "matrix_animation_start") == 0) {
             const auto* frame_count = cJSON_GetObjectItem(root, "frame_count");
             const auto* frame_interval_ms = cJSON_GetObjectItem(root, "frame_interval_ms");
@@ -1216,20 +1414,23 @@ private:
             const size_t scheduled_frame_count = static_cast<size_t>(frame_count->valueint);
             const int array_size = cJSON_GetArraySize(frames_array);
 
-            /* Pre-extract all frame data on the WebSocket thread so the main-thread
-               lambda only does lightweight copies. */
+            /* Decode frames on the WebSocket thread so the scheduled task only keeps
+               one compact copy per frame instead of duplicating JSON strings. */
             struct BatchedFrame {
-                std::string bitmap_rows_hex;
-                std::string primary_rgb;
-                std::string background_rgb;
-                int frame_index;
+                std::array<uint16_t, GP_MATRIX_HEIGHT> bitmap_rows = {};
+                uint32_t primary_rgb888 = 0xF5F5F5U;
+                uint32_t background_rgb888 = 0x000000U;
+                size_t frame_index = 0U;
+                bool valid = false;
             };
             auto batched_frames = std::make_shared<std::vector<BatchedFrame>>();
             batched_frames->reserve(static_cast<size_t>(array_size));
 
             for (int idx = 0; idx < array_size; ++idx) {
                 const auto* frame_obj = cJSON_GetArrayItem(frames_array, idx);
-                if (!cJSON_IsObject(frame_obj)) continue;
+                if (!cJSON_IsObject(frame_obj)) {
+                    continue;
+                }
 
                 BatchedFrame bf;
                 const auto* bm_hex = cJSON_GetObjectItem(frame_obj, "bitmap_rows_hex");
@@ -1237,10 +1438,38 @@ private:
                 const auto* bg = cJSON_GetObjectItem(frame_obj, "background_rgb888");
                 const auto* fi = cJSON_GetObjectItem(frame_obj, "frame_index");
 
-                bf.bitmap_rows_hex = cJSON_IsString(bm_hex) ? bm_hex->valuestring : "";
-                bf.primary_rgb = cJSON_IsString(fg) ? fg->valuestring : primary_color;
-                bf.background_rgb = cJSON_IsString(bg) ? bg->valuestring : background_color;
-                bf.frame_index = cJSON_IsNumber(fi) ? fi->valueint : idx;
+                const char* bitmap_rows_hex_text = cJSON_IsString(bm_hex) ? bm_hex->valuestring : nullptr;
+                const char* primary_rgb_text = cJSON_IsString(fg) ? fg->valuestring : primary_color.c_str();
+                const char* background_rgb_text = cJSON_IsString(bg) ? bg->valuestring : background_color.c_str();
+                std::optional<std::array<uint16_t, GP_MATRIX_HEIGHT>> parsed_bitmap_rows;
+                std::optional<uint32_t> parsed_primary_rgb;
+                std::optional<uint32_t> parsed_background_rgb;
+
+                if (bitmap_rows_hex_text != nullptr) {
+                    parsed_bitmap_rows = ParseMatrixBitmapRowsHex(bitmap_rows_hex_text);
+                }
+                if (primary_rgb_text != nullptr) {
+                    parsed_primary_rgb = ParseRgb888(primary_rgb_text);
+                }
+                if (background_rgb_text != nullptr) {
+                    parsed_background_rgb = ParseRgb888(background_rgb_text);
+                }
+
+                if (!parsed_bitmap_rows.has_value() || !parsed_primary_rgb.has_value()) {
+                    continue;
+                }
+
+                if (cJSON_IsNumber(fi) && (fi->valueint >= 0)) {
+                    bf.frame_index = static_cast<size_t>(fi->valueint);
+                } else {
+                    bf.frame_index = static_cast<size_t>(idx);
+                }
+                bf.bitmap_rows = *parsed_bitmap_rows;
+                bf.primary_rgb888 = *parsed_primary_rgb;
+                if (parsed_background_rgb.has_value()) {
+                    bf.background_rgb888 = *parsed_background_rgb;
+                }
+                bf.valid = true;
                 batched_frames->push_back(std::move(bf));
             }
 
@@ -1253,45 +1482,73 @@ private:
                                                  transcript_text]() {
                 auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display_);
                 auto* matrix_led = led_matrix_.get();
+                std::vector<GpLedMatrixEsp32::BitmapAnimationFrame> relay_frames;
+                std::vector<uint8_t> relay_frame_valid;
 
                 BeginPendingMatrixAnimation(scheduled_frame_count, scheduled_interval_ms, transcript_text);
                 if (debug_display != nullptr) {
                     debug_display->BeginMatrixAnimationPreview(scheduled_frame_count, scheduled_interval_ms);
                 }
 
-                for (const auto& bf : *batched_frames) {
-                    if (bf.bitmap_rows_hex.empty()) continue;
-                    const auto bitmap_rows = ParseMatrixBitmapRowsHex(bf.bitmap_rows_hex.c_str());
-                    const auto primary_rgb = ParseRgb888(bf.primary_rgb.c_str());
-                    uint32_t background_rgb = 0x000000U;
-                    const auto parsed_bg = ParseRgb888(bf.background_rgb.c_str());
-                    if (parsed_bg.has_value()) {
-                        background_rgb = *parsed_bg;
-                    }
-                    if (!bitmap_rows.has_value() || !primary_rgb.has_value()) continue;
+                relay_frames.resize(pending_matrix_animation_frame_count_);
+                relay_frame_valid.resize(pending_matrix_animation_frame_count_, 0U);
 
-                    StorePendingMatrixAnimationFrame(static_cast<size_t>(bf.frame_index),
-                                                    *bitmap_rows,
-                                                    *primary_rgb,
-                                                    background_rgb,
+                for (const auto& bf : *batched_frames) {
+                    if (!bf.valid) {
+                        continue;
+                    }
+                    if (bf.frame_index >= pending_matrix_animation_frame_count_) {
+                        ESP_LOGW(TAG,
+                                 "[DBG_WS] drop batch frame out of range: idx=%u frame_count=%u",
+                                 static_cast<unsigned int>(bf.frame_index),
+                                 static_cast<unsigned int>(pending_matrix_animation_frame_count_));
+                        continue;
+                    }
+
+                    StorePendingMatrixAnimationFrame(bf.frame_index,
+                                                    bf.bitmap_rows,
+                                                    bf.primary_rgb888,
+                                                    bf.background_rgb888,
                                                     transcript_text);
+                    relay_frames[bf.frame_index].bitmap_rows = bf.bitmap_rows;
+                    relay_frames[bf.frame_index].primary_rgb888 = bf.primary_rgb888;
+                    relay_frames[bf.frame_index].background_rgb888 = bf.background_rgb888;
+                    relay_frame_valid[bf.frame_index] = 1U;
                     if (debug_display != nullptr) {
                         debug_display->ApplyMatrixAnimationPreviewFrame(
-                            static_cast<size_t>(bf.frame_index),
-                            *bitmap_rows,
-                            *primary_rgb,
-                            background_rgb);
+                            bf.frame_index,
+                            bf.bitmap_rows,
+                            bf.primary_rgb888,
+                            bf.background_rgb888);
                     }
                 }
 
                 bool led_forwarded = false;
-                if (IsPendingMatrixAnimationComplete(scheduled_frame_count) && (matrix_led != nullptr)) {
+                if (matrix_led != nullptr) {
                     std::vector<GpLedMatrixEsp32::BitmapAnimationFrame> frames;
-                    frames.reserve(pending_matrix_animation_frame_count_);
-                    for (size_t fi = 0U; fi < pending_matrix_animation_frame_count_; ++fi) {
-                        frames.push_back(pending_matrix_animation_frames_[fi].frame);
+                    const bool complete = IsPendingMatrixAnimationComplete(scheduled_frame_count);
+
+                    if (complete) {
+                        frames.reserve(pending_matrix_animation_frame_count_);
+                        for (size_t fi = 0U; fi < pending_matrix_animation_frame_count_; ++fi) {
+                            frames.push_back(pending_matrix_animation_frames_[fi].frame);
+                        }
+                    } else {
+                        /* Do not drop the whole draw when one frame is malformed. */
+                        for (size_t fi = 0U; fi < relay_frames.size(); ++fi) {
+                            if (relay_frame_valid[fi] != 0U) {
+                                frames.push_back(relay_frames[fi]);
+                            }
+                        }
+                        ESP_LOGW(TAG,
+                                 "[DBG_WS] incomplete batch; fallback frames=%u expected=%u",
+                                 static_cast<unsigned int>(frames.size()),
+                                 static_cast<unsigned int>(pending_matrix_animation_frame_count_));
                     }
-                    led_forwarded = matrix_led->ShowBitmapAnimation(frames, scheduled_interval_ms);
+
+                    if (!frames.empty()) {
+                        led_forwarded = matrix_led->ShowBitmapAnimation(frames, scheduled_interval_ms);
+                    }
                     if (!led_forwarded) {
                         ESP_LOGW(TAG, "[DBG_WS] failed to relay batched animation to LED over Bluetooth");
                     }
@@ -2033,6 +2290,7 @@ cleanup:
     static void RunBluetoothBridgeTask(void* task_parameter) {
         auto* self = static_cast<LichuangDevBoard*>(task_parameter);
         uint8_t led_index = 0U;
+        uint32_t debug_led_elapsed_ms = 0U;
 
         if ((self == nullptr) || (self->led_matrix_ == nullptr)) {
             vTaskDelete(nullptr);
@@ -2041,11 +2299,20 @@ cleanup:
 
         vTaskDelay(pdMS_TO_TICKS(kBtBridgeStartDelayMs));
         self->led_matrix_->RunStartupLinkTest();
+        (void)self->led_matrix_->SyncClockTime(true);
 
         while (true) {
-            /* Keep the periodic P2 LED test out of the way while real matrix traffic is active. */
-            if (self->led_matrix_->TrySendBackgroundDebugLedCommand(led_index, kBtBridgeQuietWindowMs)) {
-                led_index = static_cast<uint8_t>((led_index + 1U) % (GP_MATRIX_DEBUG_LED_MAX_INDEX + 1U));
+            (void)self->led_matrix_->PollIncomingRequest(kBtBridgePollTimeoutMs);
+            (void)self->led_matrix_->SyncClockTime();
+
+            debug_led_elapsed_ms += kBtBridgeTickMs;
+            if (debug_led_elapsed_ms >= kBtBridgeDebugLedIntervalMs) {
+                debug_led_elapsed_ms = 0U;
+
+                /* Keep the periodic P2 LED test out of the way while real matrix traffic is active. */
+                if (self->led_matrix_->TrySendBackgroundDebugLedCommand(led_index, kBtBridgeQuietWindowMs)) {
+                    led_index = static_cast<uint8_t>((led_index + 1U) % (GP_MATRIX_DEBUG_LED_MAX_INDEX + 1U));
+                }
             }
             vTaskDelay(pdMS_TO_TICKS(kBtBridgeTickMs));
         }
@@ -2362,73 +2629,7 @@ cleanup:
                 return BuildDotResultJson(state);
             });
 
-        auto register_matrix_frame_tool = [this, &mcp_server](const char* tool_name) {
-            mcp_server.AddTool(tool_name,
-                "Draw one 16x16 matrix frame on the LED side via layered bitmap format. "
-                "Requires bitmap_rows_hex (64 hex chars, 16x16 bitmap) plus primary_rgb888 and optional background_rgb888.",
-                PropertyList({
-                    Property("bitmap_rows_hex", kPropertyTypeString, std::string("")),
-                    Property("primary_rgb888", kPropertyTypeString, std::string("")),
-                    Property("background_rgb888", kPropertyTypeString, std::string("#000000")),
-                    Property("source", kPropertyTypeString, std::string("mcp")),
-                    Property("transcript", kPropertyTypeString, std::string(""))
-                }),
-                [this](const PropertyList& properties) -> ReturnValue {
-                    auto* matrix_led = led_matrix_.get();
-                    auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display_);
-                    const std::string bitmap_rows_hex = properties["bitmap_rows_hex"].value<std::string>();
-                    const std::string primary_text = properties["primary_rgb888"].value<std::string>();
-                    const std::string background_text = properties["background_rgb888"].value<std::string>();
-                    const std::string source = properties["source"].value<std::string>();
-                    const std::string transcript = properties["transcript"].value<std::string>();
-                    bool applied = false;
-
-                    if (matrix_led == nullptr) {
-                        throw std::runtime_error("LED matrix transport is not initialized");
-                    }
-
-                    if (bitmap_rows_hex.empty()) {
-                        throw std::runtime_error("bitmap_rows_hex is required");
-                    }
-
-                    const auto bitmap_rows = ParseMatrixBitmapRowsHex(bitmap_rows_hex);
-                    const auto primary_rgb = ParseRgb888(primary_text);
-                    const auto background_rgb = ParseRgb888(background_text);
-
-                    if (!bitmap_rows.has_value()) {
-                        throw std::runtime_error("bitmap_rows_hex must contain exactly 16 rows encoded as 64 hex characters");
-                    }
-                    if (!primary_rgb.has_value()) {
-                        throw std::runtime_error("primary_rgb888 must be a RGB888 string like #RRGGBB");
-                    }
-
-                    if (debug_display != nullptr) {
-                        debug_display->ApplyMatrixBitmapPreview(*bitmap_rows, *primary_rgb, background_rgb.value_or(0x000000U));
-                    }
-                    applied = matrix_led->ShowBitmapFrame(bitmap_rows->data(),
-                                                          bitmap_rows->size(),
-                                                          *primary_rgb,
-                                                          background_rgb.value_or(0x000000U),
-                                                          kGpMatrixModeSolidFrame);
-
-                    if (!applied) {
-                        throw std::runtime_error("16x16 frame draw failed");
-                    }
-
-                    char rgb_text[16] = {0};
-                    std::snprintf(rgb_text, sizeof(rgb_text), "#%06X", static_cast<unsigned int>(*primary_rgb & 0xFFFFFFU));
-                    return BuildMatrixFrameResultJson("",
-                                                      "",
-                                                      bitmap_rows_hex.c_str(),
-                                                      rgb_text,
-                                                      applied,
-                                                      source.c_str(),
-                                                      transcript.c_str());
-                });
-        };
-
-        register_matrix_frame_tool("self.screen.matrix_16x16.draw_frame");
-        register_matrix_frame_tool("self.screen.matrix_16x16.draw");
+        RegisterGpMatrixLocalMcpTools(mcp_server, led_matrix_.get(), display_);
 
         mcp_server.AddTool("self.screen.preview_image.fetch_http",
             "Fetch one PNG or JPEG from a host HTTP URL and show it in the debug preview area.",

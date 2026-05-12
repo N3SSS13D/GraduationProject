@@ -32,6 +32,10 @@
 #define GP_MATRIX_ACTION_FLAG_USE_SECONDARY 0x01U
 #define GP_MATRIX_ACTION_FLAG_REMOTE_ENABLE 0x02U
 #define GP_MATRIX_ACTION_FLAG_REMOTE_RELEASE 0x04U
+#define GP_MATRIX_ACTION_FLAG_USE_UPLOADED_GLYPHS 0x08U
+
+#define GP_MATRIX_APPLY_FLAG_PATTERN 0x01U
+#define GP_MATRIX_APPLY_FLAG_GLYPH 0x02U
 
 #define GP_MATRIX_PAYLOAD_FORMAT_RGB332 0x01U
 #define GP_MATRIX_PAYLOAD_FORMAT_GLYPH_ROWS 0x02U
@@ -70,7 +74,7 @@
 #define GP_MATRIX_MAX_CHUNK_DATA 160U
 /* Max layered frame bytes that fit in one LayeredFrame command packet (4 layers). */
 #define GP_MATRIX_LAYERED_FRAME_MAX_PAYLOAD (GP_MATRIX_BITMAP_LAYER_TOTAL_BYTES * GP_MATRIX_ANIMATION_MAX_LAYERS)
-#define GP_MATRIX_MAX_GLYPH_TRANSFER_BYTES 128U
+#define GP_MATRIX_MAX_GLYPH_TRANSFER_BYTES 256U
 #define GP_MATRIX_PACKET_TRAILER_SIZE 2U
 #define GP_MATRIX_PACKET_OVERHEAD_SIZE (GP_MATRIX_PACKET_HEADER_SIZE + GP_MATRIX_PACKET_TRAILER_SIZE)
 #define GP_MATRIX_FRAME_START_PAYLOAD_BYTES 5U
@@ -79,7 +83,8 @@
 #define GP_MATRIX_ANIMATION_FRAME_PREFIX_BYTES 1U
 #define GP_MATRIX_ANIMATION_END_PAYLOAD_BYTES 1U
 #define GP_MATRIX_SCROLL_START_PAYLOAD_BYTES 5U
-#define GP_MATRIX_ACTION_PAYLOAD_BYTES 18U
+#define GP_MATRIX_ACTION_PAYLOAD_BYTES 28U
+#define GP_MATRIX_TIME_SYNC_PAYLOAD_BYTES 6U
 #define GP_MATRIX_REPLY_PAYLOAD_BYTES 3U
 #define GP_MATRIX_DEBUG_LED_PAYLOAD_BYTES 1U
 #define GP_MATRIX_DEBUG_LED_FLOW_PAYLOAD_BYTES 1U
@@ -98,6 +103,8 @@ typedef enum GpMatrixCommand {
     kGpMatrixCommandSetAction = 0x05,
     kGpMatrixCommandSetDebugLed = 0x06,
     kGpMatrixCommandSetDebugLedFlow = 0x07,
+    kGpMatrixCommandSetTime = 0x08,
+    kGpMatrixCommandRequestCachedBitmap = 0x09,
     kGpMatrixCommandFrameStart = 0x10,
     kGpMatrixCommandFrameChunk = 0x11,
     kGpMatrixCommandFrameCommit = 0x12,
@@ -146,7 +153,16 @@ typedef enum GpMatrixEffect {
     kGpMatrixEffectFadeIn = 0x06,
     kGpMatrixEffectFadeOut = 0x07,
     kGpMatrixEffectColorCycle = 0x08,
+    kGpMatrixEffectRowReveal = 0x09,
+    kGpMatrixEffectRowHide = 0x0A,
+    kGpMatrixEffectGradientReveal = 0x0B,
 } GpMatrixEffect;
+
+typedef enum GpMatrixTimelinePath {
+    kGpMatrixTimelinePathLinear = 0x00,
+    kGpMatrixTimelinePathEaseInOut = 0x01,
+    kGpMatrixTimelinePathBreathCurve = 0x02,
+} GpMatrixTimelinePath;
 
 typedef enum GpMatrixDirection {
     kGpMatrixDirectionNormal = 0x00,
@@ -236,6 +252,15 @@ typedef struct GpMatrixReplyPayload {
     uint8_t current_mode;
 } GpMatrixReplyPayload;
 
+typedef struct GpMatrixTimeSyncPayload {
+    uint8_t year;
+    uint8_t month;
+    uint8_t day;
+    uint8_t hour;
+    uint8_t minute;
+    uint8_t second;
+} GpMatrixTimeSyncPayload;
+
 typedef struct GpMatrixActionPayload {
     uint8_t source;
     uint8_t content;
@@ -255,6 +280,16 @@ typedef struct GpMatrixActionPayload {
     uint8_t anim_step;
     uint8_t gradient_span;
     uint8_t flags;
+    uint8_t frame_interval_ms_lo;
+    uint8_t frame_interval_ms_hi;
+    uint8_t timeline_duration_ms_lo;
+    uint8_t timeline_duration_ms_hi;
+    uint8_t timeline_repeat_delay_ms_lo;
+    uint8_t timeline_repeat_delay_ms_hi;
+    uint8_t timeline_repeat_count;
+    uint8_t timeline_path;
+    uint8_t animation_flags;
+    uint8_t apply_flags;
 } GpMatrixActionPayload;
 
 #ifdef __cplusplus

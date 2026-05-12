@@ -33,15 +33,15 @@
 - `ui/gp_debug_display.h/.cc`
   - 本地调试界面、触摸输入和预览缓冲。
 - `Project/xiaozhi-esp32/main/boards/lichuang-dev/lichuang_dev_board.cc`
-  - 板级接入层，把 UI、传输、矩阵控制、websocket/MCP 转发和启动检查串起来。
+  - 板级接入层，把 UI、传输、矩阵控制、`matrix_pattern_result` / `matrix_action_result` websocket 转发和启动检查串起来。
 
 ## Current execution flow
 
 1. 板级初始化创建 `transport + GpLedMatrixEsp32`
-2. `UI` 或主机绘图结果进入板级回调
+2. `UI` 或主机绘图 / 原生动作结果进入板级回调
 3. `gp_led_matrix_esp32.cc` 生成共享协议包
 4. `transport` 负责发包和后台接收 ACK/状态
-5. 主机绘图结果先本地预览，再按协议转发到 `LED端`
+5. 主机结果可走单帧、动画批次或 `matrix_action_result`，先本地预览/缓存，再按协议转发到 `LED端`
 
 ## Common read bundles
 

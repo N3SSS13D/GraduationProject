@@ -41,7 +41,7 @@ Use this skill for script-side and MCP tasks under `Project/Script/`:
 ## Common host flow
 
 - LLM / tool request -> `gp_display_mcp_bridge.py`
-- bridge output -> AI-side preview/upload interfaces
+- bridge output -> AI-side preview/upload interfaces (`matrix_pattern_result`, animation batches, or `matrix_action_result`)
 - AI-side board/orchestrator -> Bluetooth upload
 - LED-side render is downstream; scripts should not assume direct LED-side packet injection
 
@@ -74,11 +74,13 @@ For script, MCP, and tooling tasks:
 3. Do not move script-specific rules into the top-level prompt; keep them in this category or the matching script docs.
 4. If script workflow changes affect current usage guidance, update `Project/Script/README.md` and the nearest script
    doc.
-5. Keep the default auto-debug chain strictly ordered as:
+5. When a requested display can be represented by an LED-side native solid/pattern/text effect, prefer the dedicated
+   `show_effect` / `matrix_action_result` path over synthesizing a bitmap animation.
+6. Keep the default auto-debug chain strictly ordered as:
   - Keil rebuild only for `Project/STC51/ws2812_driver/ws2812_driver.uvproj`
   - delay `20s`, then open AI8051U serial monitor (`COM15` default)
   - ESP-IDF `build flash monitor` for `Project/xiaozhi-esp32`
-6. Validate tool roots before execution and expose configurable overrides:
+7. Validate tool roots before execution and expose configurable overrides:
   - `S:\Embedded\Keil`
   - `S:\Embedded\ESP\v5.4.3\esp-idf`
-7. Remove legacy script references whenever automation entry changes to avoid dead docs and stale task bindings.
+8. Remove legacy script references whenever automation entry changes to avoid dead docs and stale task bindings.

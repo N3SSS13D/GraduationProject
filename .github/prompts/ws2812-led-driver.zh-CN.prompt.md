@@ -27,6 +27,8 @@ model: "GPT-5 (copilot)"
   - 启动初始化与运行主循环（`GpLedMatrixAi8051u_Poll -> MidTask_Process`）。
 - `Sources/mid/gp_led_action.c`
   - 远程动作/帧/动画执行，以及本地/远程控制切换。
+- `Sources/mid/local_display_scheme.c`
+  - 离线启动/按键编排；本地自动播放项现统一存成“图像编号 + 效果命令描述符”。
 - `Sources/drv/gp_led_matrix_ai8051u.c`
   - `UART2` 组包、命令分发与 ACK/回包处理。
 - `Sources/drv/ws2812_drv.c`
@@ -51,6 +53,8 @@ model: "GPT-5 (copilot)"
 4. 改动要最小化，并能直接映射到需求。
 5. 修改源码后执行 `Project/STC51/ws2812_driver/ws2812_driver.uvproj` 的 Keil rebuild。
 6. 若改动影响时序或输出规则，同步更新 `Doc/Instructions/` 与 `Project/STC51/README.md`。
+7. 若新增效果只服务离线启动或本地按键流程，默认保持为 LED 端本地效果，不要自动扩展到
+  `Project/Protocols/gp_led_matrix_protocol.h`。
 
 ## 输出格式
 
