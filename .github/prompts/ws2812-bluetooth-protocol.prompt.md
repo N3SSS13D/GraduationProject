@@ -39,9 +39,11 @@ For protocol change or protocol bug tasks:
 2. If packet layout or semantics change, update both protocol docs in the same task.
 3. Keep AI-side and LED-side consumption aligned with the same fields and limits.
 4. If script payload formats are affected, sync the corresponding script docs.
-5. Keep backward compatibility impact explicit and testable.
-6. Prioritize these protocol design goals: unambiguous framing, integrity checking, extensibility, parsing efficiency, and reliable interaction.
-7. For active V2 work, prefer packet layouts that validate `header_size` and header CRC before trusting `payload_length`, use packet-type replies matched by `reply_to_sequence`, and use explicit byte offsets for staged chunks.
+5. If host-side payloads now include native action objects such as `matrix_action_result`, make the `SetAction` /
+   glyph-upload contract explicit in both protocol docs and consumer verification.
+6. Keep backward compatibility impact explicit and testable.
+7. Prioritize these protocol design goals: unambiguous framing, integrity checking, extensibility, parsing efficiency, and reliable interaction.
+8. For active V2 work, prefer packet layouts that validate `header_size` and header CRC before trusting `payload_length`, use packet-type replies matched by `reply_to_sequence`, and use explicit byte offsets for staged chunks.
 
 ## Output format
 

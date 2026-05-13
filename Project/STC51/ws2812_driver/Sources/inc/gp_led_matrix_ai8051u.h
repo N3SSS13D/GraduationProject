@@ -57,6 +57,9 @@ void GpLedMatrixAi8051u_Poll(GpLedMatrixAi8051uContext xdata *context);
 /* Re-render the currently buffered RGB332 frame through the LED action layer. */
 void GpLedMatrixAi8051u_RenderFrame(GpLedMatrixAi8051uContext xdata *context);
 
+/* Ask the ESP32 side to replay the most recently forwarded AI bitmap frame. */
+uint8_t GpLedMatrixAi8051u_RequestCachedBitmap(void);
+
 /* Load glyph-row data into the local context for later scroll-glyph execution. */
 void GpLedMatrixAi8051u_LoadGlyphRows(GpLedMatrixAi8051uContext xdata *context,
                                       const uint16_t *rows,

@@ -119,6 +119,10 @@ public:
     void SendCustomMessage(const std::string& payload);
     void SendColorDebugAnalyze(const std::string& transcript, const std::string& source = "stt");
     void SendMatrixPatternRequest(const std::string& transcript, const std::string& source = "touch");
+    void MarkPendingMatrixCommand(uint32_t timeout_ms = 15000U);
+    void CompletePendingMatrixCommand();
+    void ClearPendingMatrixCommand();
+    bool HasPendingMatrixCommand();
     void SetAecMode(AecMode mode);
     AecMode GetAecMode() const { return aec_mode_; }
     void PlaySound(const std::string_view& sound);
@@ -151,6 +155,8 @@ private:
     bool aborted_ = false;
     bool assets_version_checked_ = false;
     bool play_popup_on_listening_ = false;  // Flag to play popup sound after state changes to listening
+    std::atomic<uint64_t> pending_matrix_command_deadline_us_{0U};
+    std::atomic<bool> pending_matrix_command_result_ready_{false};
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;
 

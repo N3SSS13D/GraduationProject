@@ -6,6 +6,7 @@
 #include "mcp_server.h"
 #include <esp_log.h>
 #include <esp_app_desc.h>
+#include <esp_heap_caps.h>
 #include <algorithm>
 #include <cstring>
 #include <esp_pthread.h>
@@ -19,6 +20,32 @@
 #include "lvgl_display.h"
 
 #define TAG "MCP"
+
+namespace {
+bool IsPriorityToolName(const std::string& name) {
+    return name.rfind("self.screen.matrix_16x16.", 0) == 0;
+}
+
+bool IsLowMemoryOptionalToolName(const std::string& name) {
+    if (name.rfind("self.screen.matrix_16x16.local.", 0) == 0) {
+        return true;
+    }
+
+    if (name == "self.screen.preview_image.fetch_http") {
+        return true;
+    }
+
+    return name.rfind("self.screen.debug_snapshot.", 0) == 0;
+}
+
+void ReorderPriorityToolsToFront(std::vector<McpTool*>& tools) {
+    std::stable_partition(tools.begin(),
+                          tools.end(),
+                          [](const McpTool* tool) {
+                              return (tool != nullptr) && IsPriorityToolName(tool->name());
+                          });
+}
+}
 
 McpServer::McpServer() {
 }
@@ -123,6 +150,9 @@ void McpServer::AddCommonTools() {
 
     // Restore the original tools list to the end of the tools list
     tools_.insert(tools_.end(), original_tools.begin(), original_tools.end());
+
+    /* Keep matrix drawing tools visible in early tools/list pages. */
+    ReorderPriorityToolsToFront(tools_);
 }
 
 void McpServer::AddUserOnlyTools() {
@@ -308,6 +338,11 @@ void McpServer::AddTool(McpTool* tool) {
     }
 
     ESP_LOGI(TAG, "Add tool: %s%s", tool->name().c_str(), tool->user_only() ? " [user]" : "");
+    if (IsPriorityToolName(tool->name())) {
+        tools_.insert(tools_.begin(), tool);
+        return;
+    }
+
     tools_.push_back(tool);
 }
 
@@ -453,13 +488,38 @@ void McpServer::ReplyError(int id, const std::string& message) {
 }
 
 void McpServer::GetToolsList(int id, const std::string& cursor, bool list_user_only_tools) {
-    const int max_payload_size = 8000;
+    const size_t free_sram_bytes = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    const size_t largest_internal_block_bytes = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+    size_t max_payload_size = 1200U;
+    size_t max_tools_per_page = 2U;
     std::string json = "{\"tools\":[";
-    
+
     bool found_cursor = cursor.empty();
     auto it = tools_.begin();
     std::string next_cursor = "";
-    
+    bool has_matrix_tool_in_page = false;
+    bool suppress_optional_tools = false;
+    bool hit_payload_limit = false;
+
+    if ((free_sram_bytes < 12000U) || (largest_internal_block_bytes < 6000U)) {
+        max_payload_size = 700U;
+        max_tools_per_page = 1U;
+        suppress_optional_tools = true;
+    } else if ((free_sram_bytes < 20000U) || (largest_internal_block_bytes < 12000U)) {
+        max_payload_size = 900U;
+        max_tools_per_page = 1U;
+    }
+
+    ESP_LOGI(TAG,
+             "tools/list budget=%u max_tools=%u free_sram=%u largest_internal=%u suppress_optional=%s",
+             static_cast<unsigned int>(max_payload_size),
+             static_cast<unsigned int>(max_tools_per_page),
+             static_cast<unsigned int>(free_sram_bytes),
+             static_cast<unsigned int>(largest_internal_block_bytes),
+             suppress_optional_tools ? "true" : "false");
+
+    size_t tools_in_page = 0U;
+
     while (it != tools_.end()) {
         // 如果我们还没有找到起始位置，继续搜索
         if (!found_cursor) {
@@ -475,16 +535,27 @@ void McpServer::GetToolsList(int id, const std::string& cursor, bool list_user_o
             ++it;
             continue;
         }
+
+        if (suppress_optional_tools && IsLowMemoryOptionalToolName((*it)->name())) {
+            ++it;
+            continue;
+        }
         
         // 添加tool前检查大小
         std::string tool_json = (*it)->to_json() + ",";
-        if (json.length() + tool_json.length() + 30 > max_payload_size) {
+        if ((tools_in_page >= max_tools_per_page)
+            || ((tools_in_page > 0U) && (json.length() + tool_json.length() + 30U > max_payload_size))) {
             // 如果添加这个tool会超出大小限制，设置next_cursor并退出循环
             next_cursor = (*it)->name();
+            hit_payload_limit = true;
             break;
         }
-        
+
         json += tool_json;
+        if (IsPriorityToolName((*it)->name())) {
+            has_matrix_tool_in_page = true;
+        }
+        ++tools_in_page;
         ++it;
     }
     
@@ -492,7 +563,7 @@ void McpServer::GetToolsList(int id, const std::string& cursor, bool list_user_o
         json.pop_back();
     }
     
-    if (json.back() == '[' && !tools_.empty()) {
+    if ((json.back() == '[') && hit_payload_limit) {
         // 如果没有添加任何tool，返回错误
         ESP_LOGE(TAG, "tools/list: Failed to add tool %s because of payload size limit", next_cursor.c_str());
         ReplyError(id, "Failed to add tool " + next_cursor + " because of payload size limit");
@@ -500,10 +571,16 @@ void McpServer::GetToolsList(int id, const std::string& cursor, bool list_user_o
     }
 
     if (next_cursor.empty()) {
-        json += "]}";
+        json += "]";
     } else {
-        json += "],\"nextCursor\":\"" + next_cursor + "\"}";
+        json += "],\"nextCursor\":\"" + next_cursor + "\"";
     }
+
+    if (cursor.empty() && has_matrix_tool_in_page) {
+        json += ",\"drawing_hint\":\"Prefer self.screen.matrix_16x16.draw_frame with bitmap_rows_hex + primary_rgb888.\"";
+    }
+
+    json += "}";
     
     ReplyResult(id, json);
 }

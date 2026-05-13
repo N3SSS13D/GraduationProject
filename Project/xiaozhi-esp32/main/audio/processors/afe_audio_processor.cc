@@ -1,13 +1,38 @@
 #include "afe_audio_processor.h"
+
+#include <esp_heap_caps.h>
 #include <esp_log.h>
 
 #define PROCESSOR_RUNNING 0x01
 
 #define TAG "AfeAudioProcessor"
 
+namespace {
+constexpr int kAfeFetchTaskStackSize = 4096;
+constexpr int kAfeWorkerCore = 1;
+constexpr int kAfeWorkerPriority = 5;
+constexpr int kAfeRingBufferFrames = 50;
+}
+
 AfeAudioProcessor::AfeAudioProcessor()
     : afe_data_(nullptr) {
     event_group_ = xEventGroupCreate();
+}
+
+AfeAudioProcessor::~AfeAudioProcessor() {
+    if (afe_data_ != nullptr) {
+        afe_iface_->destroy(afe_data_);
+    }
+
+    if (audio_processor_task_buffer_ != nullptr) {
+        heap_caps_free(audio_processor_task_buffer_);
+    }
+
+    if (audio_processor_task_stack_ != nullptr) {
+        heap_caps_free(audio_processor_task_stack_);
+    }
+
+    vEventGroupDelete(event_group_);
 }
 
 void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms, srmodel_list_t* models_list) {
@@ -54,6 +79,9 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms, srm
     }
 
     afe_config->agc_init = false;
+    afe_config->afe_perferred_core = kAfeWorkerCore;
+    afe_config->afe_perferred_priority = kAfeWorkerPriority;
+    afe_config->afe_ringbuf_size = kAfeRingBufferFrames;
     afe_config->memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM;
 
 #ifdef CONFIG_USE_DEVICE_AEC
@@ -66,19 +94,76 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms, srm
 
     afe_iface_ = esp_afe_handle_from_config(afe_config);
     afe_data_ = afe_iface_->create_from_config(afe_config);
-    
-    xTaskCreate([](void* arg) {
+    afe_config_free(afe_config);
+
+    if ((afe_iface_ == nullptr) || (afe_data_ == nullptr)) {
+        ESP_LOGE(TAG, "Failed to create AFE audio processor instance");
+        afe_iface_ = nullptr;
+        afe_data_ = nullptr;
+        return;
+    }
+
+    if (audio_processor_task_stack_ == nullptr) {
+        audio_processor_task_stack_ = static_cast<StackType_t*>(
+            heap_caps_malloc(kAfeFetchTaskStackSize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    }
+
+    if (audio_processor_task_buffer_ == nullptr) {
+        audio_processor_task_buffer_ = static_cast<StaticTask_t*>(
+            heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    }
+
+    if ((audio_processor_task_stack_ == nullptr) || (audio_processor_task_buffer_ == nullptr)) {
+        ESP_LOGE(TAG,
+                 "Failed to allocate AFE fetch task stack/buffer (free_sram=%u largest_internal=%u)",
+                 static_cast<unsigned int>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                 static_cast<unsigned int>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
+        if (audio_processor_task_buffer_ != nullptr) {
+            heap_caps_free(audio_processor_task_buffer_);
+            audio_processor_task_buffer_ = nullptr;
+        }
+        if (audio_processor_task_stack_ != nullptr) {
+            heap_caps_free(audio_processor_task_stack_);
+            audio_processor_task_stack_ = nullptr;
+        }
+        afe_iface_->destroy(afe_data_);
+        afe_data_ = nullptr;
+        afe_iface_ = nullptr;
+        return;
+    }
+
+#if CONFIG_FREERTOS_NUMBER_OF_CORES > 1
+    audio_processor_task_ = xTaskCreateStaticPinnedToCore([](void* arg) {
         auto this_ = (AfeAudioProcessor*)arg;
         this_->AudioProcessorTask();
         vTaskDelete(NULL);
-    }, "audio_communication", 4096, this, 3, NULL);
-}
+    }, "audio_communication", kAfeFetchTaskStackSize, this, kAfeWorkerPriority,
+       audio_processor_task_stack_, audio_processor_task_buffer_, kAfeWorkerCore);
+#else
+    audio_processor_task_ = xTaskCreateStatic([](void* arg) {
+        auto this_ = (AfeAudioProcessor*)arg;
+        this_->AudioProcessorTask();
+        vTaskDelete(NULL);
+    }, "audio_communication", kAfeFetchTaskStackSize, this, kAfeWorkerPriority,
+       audio_processor_task_stack_, audio_processor_task_buffer_);
+#endif
 
-AfeAudioProcessor::~AfeAudioProcessor() {
-    if (afe_data_ != nullptr) {
+    if (audio_processor_task_ == nullptr) {
+        ESP_LOGE(TAG,
+                 "Failed to create AFE fetch task (free_sram=%u largest_internal=%u)",
+                 static_cast<unsigned int>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                 static_cast<unsigned int>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
+        heap_caps_free(audio_processor_task_buffer_);
+        heap_caps_free(audio_processor_task_stack_);
+        audio_processor_task_buffer_ = nullptr;
+        audio_processor_task_stack_ = nullptr;
         afe_iface_->destroy(afe_data_);
+        afe_data_ = nullptr;
+        afe_iface_ = nullptr;
+        return;
     }
-    vEventGroupDelete(event_group_);
+
+    ESP_LOGI(TAG, "AFE fetch task created with PSRAM stack, size=%d", kAfeFetchTaskStackSize);
 }
 
 size_t AfeAudioProcessor::GetFeedSize() {
@@ -92,6 +177,13 @@ void AfeAudioProcessor::Feed(std::vector<int16_t>&& data) {
     if (afe_data_ == nullptr) {
         return;
     }
+
+    /* Ignore late feed blocks after Stop() so the fetch task does not wake up to a refilled
+     * FEED ringbuffer from the previous voice-processing session. */
+    if (!IsRunning()) {
+        return;
+    }
+
     afe_iface_->feed(afe_data_, data.data());
 }
 
@@ -101,7 +193,11 @@ void AfeAudioProcessor::Start() {
 
 void AfeAudioProcessor::Stop() {
     xEventGroupClearBits(event_group_, PROCESSOR_RUNNING);
+    output_buffer_.clear();
+    is_speaking_ = false;
+
     if (afe_data_ != nullptr) {
+        /* Drop any buffered PCM immediately so the next session does not inherit stale AFE data. */
         afe_iface_->reset_buffer(afe_data_);
     }
 }

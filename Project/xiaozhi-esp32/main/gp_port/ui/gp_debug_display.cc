@@ -35,8 +35,12 @@ constexpr int kDebugPreviewTopInset = 8;
 constexpr int kDebugPreviewImageTop = 28;
 constexpr int kDebugSnapshotButtonSize = 24;
 constexpr int kTouchControlRowHeight = 40;
+constexpr int kColorSliderRowHeight = 28;
+constexpr int kLocalActionButtonHeight = 28;
+constexpr int kLocalActionButtonGap = 8;
+constexpr int kLocalActionPanelHeight = 104;
 constexpr int kDebugCardGap = 8;
-constexpr int kTouchPanelHeight = 236;
+constexpr int kTouchPanelHeight = 432;
 constexpr int kPreviewPanelHeight = 96;
 constexpr int kLinkPanelMinHeight = 92;
 constexpr int kInfoPanelMinHeight = 116;
@@ -148,10 +152,14 @@ const char* GetPresetName(GpColorDebugPreset preset) {
         return "diamond";
     case GpColorDebugPreset::kCross:
         return "cross";
+    case GpColorDebugPreset::kChecker:
+        return "checker";
+    case GpColorDebugPreset::kBorder:
+        return "border";
+    case GpColorDebugPreset::kDiagonalX:
+        return "diagonal_x";
     case GpColorDebugPreset::kJluEmblem:
         return "JLU_emblem";
-    case GpColorDebugPreset::kPythonDemo:
-        return "python_demo";
     case GpColorDebugPreset::kScrollSubtitle:
         return "scroll";
     case GpColorDebugPreset::kSolid:
@@ -166,19 +174,64 @@ const char* GetAnimationName(GpColorDebugAnimation animation) {
         return "gradient";
     case GpColorDebugAnimation::kPulse:
         return "pulse";
+    case GpColorDebugAnimation::kScrollLeft:
+        return "scroll_left";
+    case GpColorDebugAnimation::kScrollRight:
+        return "scroll_right";
+    case GpColorDebugAnimation::kFadeIn:
+        return "fade_in";
+    case GpColorDebugAnimation::kFadeOut:
+        return "fade_out";
+    case GpColorDebugAnimation::kColorCycle:
+        return "color_cycle";
+    case GpColorDebugAnimation::kRowReveal:
+        return "row_reveal";
+    case GpColorDebugAnimation::kRowHide:
+        return "row_hide";
+    case GpColorDebugAnimation::kGradientReveal:
+        return "gradient_reveal";
     case GpColorDebugAnimation::kSolid:
     default:
         return "solid";
     }
 }
 
+uint8_t ExtractRgb888Channel(uint32_t rgb, uint8_t shift) {
+    return static_cast<uint8_t>((rgb >> shift) & 0xFFU);
+}
+
+uint32_t BuildRgb888(uint8_t red, uint8_t green, uint8_t blue) {
+    return (static_cast<uint32_t>(red) << 16)
+        | (static_cast<uint32_t>(green) << 8)
+        | static_cast<uint32_t>(blue);
+}
+
+std::string FormatRgb888(uint32_t rgb) {
+    char rgb_text[16] = {0};
+
+    std::snprintf(rgb_text, sizeof(rgb_text), "#%06X", static_cast<unsigned int>(rgb & 0xFFFFFFU));
+    return rgb_text;
+}
+
+void AppendTouchStateSummary(std::string& transcript, const GpColorDebugState& state) {
+    transcript += "当前要求显示 ";
+    transcript += GetPresetName(state.preset);
+    transcript += "，效果为 ";
+    transcript += GetAnimationName(state.animation);
+    transcript += "，主颜色为 ";
+    transcript += state.rgb888_text.empty() ? FormatRgb888(state.primary_rgb888) : state.rgb888_text;
+    transcript += "。";
+}
+
 GpColorDebugPreset CyclePreset(GpColorDebugPreset preset, int delta) {
-    static constexpr std::array<GpColorDebugPreset, 5> kPresets = {
+    static constexpr std::array<GpColorDebugPreset, 7> kPresets = {
         GpColorDebugPreset::kSolid,
         GpColorDebugPreset::kDiamond,
         GpColorDebugPreset::kCross,
+        GpColorDebugPreset::kChecker,
+        GpColorDebugPreset::kBorder,
+        GpColorDebugPreset::kDiagonalX,
         GpColorDebugPreset::kJluEmblem,
-        GpColorDebugPreset::kPythonDemo,
     };
 
     size_t index = 0;
@@ -195,10 +248,18 @@ GpColorDebugPreset CyclePreset(GpColorDebugPreset preset, int delta) {
 }
 
 GpColorDebugAnimation CycleAnimation(GpColorDebugAnimation animation, int delta) {
-    static constexpr std::array<GpColorDebugAnimation, 3> kAnimations = {
+    static constexpr std::array<GpColorDebugAnimation, 11> kAnimations = {
         GpColorDebugAnimation::kSolid,
-        GpColorDebugAnimation::kGradient,
         GpColorDebugAnimation::kPulse,
+        GpColorDebugAnimation::kGradient,
+        GpColorDebugAnimation::kScrollLeft,
+        GpColorDebugAnimation::kScrollRight,
+        GpColorDebugAnimation::kFadeIn,
+        GpColorDebugAnimation::kFadeOut,
+        GpColorDebugAnimation::kColorCycle,
+        GpColorDebugAnimation::kRowReveal,
+        GpColorDebugAnimation::kRowHide,
+        GpColorDebugAnimation::kGradientReveal,
     };
 
     size_t index = 0;
@@ -274,6 +335,7 @@ GpDebugLcdDisplay::GpDebugLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd
     current_state_.dot_size_px = kDebugDotDefaultSize;
     current_state_.label = "touch";
     current_state_.source = "touch";
+    current_state_.rgb888_text = FormatRgb888(current_state_.primary_rgb888);
     ai_link_status_text_ = "AI link init";
     menu_button_contexts_[0] = {this, MenuAction::kOpenDebug};
     menu_button_contexts_[1] = {this, MenuAction::kCloseDebug};
@@ -283,6 +345,15 @@ GpDebugLcdDisplay::GpDebugLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd
     touch_button_contexts_[3] = {this, TouchAdjust::kNextEffect};
     touch_button_contexts_[4] = {this, TouchAdjust::kCaptureSnapshot};
     touch_button_contexts_[5] = {this, TouchAdjust::kRequestPatternDraw};
+    touch_button_contexts_[6] = {this, TouchAdjust::kLocalNextPattern};
+    touch_button_contexts_[7] = {this, TouchAdjust::kLocalShowTextScroll};
+    touch_button_contexts_[8] = {this, TouchAdjust::kLocalShowClock};
+    touch_button_contexts_[9] = {this, TouchAdjust::kLocalToggleTextClock};
+    touch_button_contexts_[10] = {this, TouchAdjust::kLocalNextEffect};
+    touch_button_contexts_[11] = {this, TouchAdjust::kLocalNextColor};
+    color_slider_contexts_[0] = {this, 0U};
+    color_slider_contexts_[1] = {this, 1U};
+    color_slider_contexts_[2] = {this, 2U};
     CreateMenuEntryButton();
     CreateDebugMenuOverlay();
     CreateTouchOverlay();
@@ -669,15 +740,127 @@ void GpDebugLcdDisplay::CreateTouchOverlay() {
         }
     };
 
+    auto create_slider_row = [&](const char* name,
+                                 uint32_t accent_color,
+                                 ColorSliderContext* slider_context,
+                                 lv_obj_t** slider,
+                                 lv_obj_t** value_label,
+                                 int y) {
+        lv_obj_t* row = lv_obj_create(touch_panel_);
+        lv_obj_remove_style_all(row);
+        ClearDebugImageStyle(row);
+        lv_obj_set_size(row, row_width, kColorSliderRowHeight);
+        lv_obj_set_pos(row, 0, y);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t* label = lv_label_create(row);
+        ApplyDebugTextStyle(label, accent_color, LV_TEXT_ALIGN_LEFT, 150);
+        lv_label_set_text(label, name);
+        lv_obj_set_pos(label, 0, 4);
+
+        *slider = lv_slider_create(row);
+        ClearDebugImageStyle(*slider);
+        lv_obj_set_size(*slider, row_width - 62, 12);
+        lv_obj_set_pos(*slider, 18, 8);
+        lv_slider_set_range(*slider, 0, 255);
+        lv_obj_set_style_bg_color(*slider, lv_color_hex(0x1E293B), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(*slider, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_radius(*slider, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+        lv_obj_set_style_bg_color(*slider, lv_color_hex(accent_color), LV_PART_INDICATOR);
+        lv_obj_set_style_bg_opa(*slider, LV_OPA_COVER, LV_PART_INDICATOR);
+        lv_obj_set_style_radius(*slider, LV_RADIUS_CIRCLE, LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(*slider, lv_color_hex(0xF8FAFC), LV_PART_KNOB);
+        lv_obj_set_style_bg_opa(*slider, LV_OPA_COVER, LV_PART_KNOB);
+        lv_obj_set_style_radius(*slider, LV_RADIUS_CIRCLE, LV_PART_KNOB);
+        lv_obj_set_style_pad_all(*slider, 2, LV_PART_KNOB);
+        lv_obj_add_event_cb(*slider, &GpDebugLcdDisplay::OnColorSliderEvent, LV_EVENT_VALUE_CHANGED, slider_context);
+
+        *value_label = lv_label_create(row);
+        lv_obj_set_width(*value_label, 34);
+        lv_label_set_long_mode(*value_label, LV_LABEL_LONG_WRAP);
+        ApplyDebugTextStyle(*value_label, 0xE2E8F0, LV_TEXT_ALIGN_RIGHT, 140);
+        lv_obj_set_pos(*value_label, row_width - 34, 4);
+    };
+
+    auto create_local_action_button = [&](lv_obj_t* parent,
+                                          const char* text,
+                                          TouchButtonContext* context,
+                                          int x,
+                                          int y,
+                                          int width) {
+        lv_obj_t* button = lv_button_create(parent);
+        ClearDebugImageStyle(button);
+        lv_obj_set_size(button, width, kLocalActionButtonHeight);
+        lv_obj_set_pos(button, x, y);
+        lv_obj_set_style_radius(button, 12, 0);
+        lv_obj_set_style_bg_color(button, lv_color_hex(0x1E293B), 0);
+        lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(button, 1, 0);
+        lv_obj_set_style_border_color(button, lv_color_hex(0x475569), 0);
+        lv_obj_add_event_cb(button, &GpDebugLcdDisplay::OnTouchButtonEvent, LV_EVENT_CLICKED, context);
+
+        lv_obj_t* label = lv_label_create(button);
+        ApplyDebugTextStyle(label, 0xF8FAFC, LV_TEXT_ALIGN_CENTER);
+        lv_label_set_text(label, text);
+        lv_obj_center(label);
+        return button;
+    };
+
     create_control_row("Pattern", &touch_button_contexts_[0], &touch_button_contexts_[1], &preset_value_label_, 28, true);
     create_control_row("Effect", &touch_button_contexts_[2], &touch_button_contexts_[3], &effect_value_label_, 72, true);
     create_control_row("Color", nullptr, nullptr, &color_value_label_, 118, false);
+    create_slider_row("R", 0xEF4444, &color_slider_contexts_[0], &red_slider_, &red_value_label_, 156);
+    create_slider_row("G", 0x22C55E, &color_slider_contexts_[1], &green_slider_, &green_value_label_, 188);
+    create_slider_row("B", 0x3B82F6, &color_slider_contexts_[2], &blue_slider_, &blue_value_label_, 220);
+
+    lv_obj_t* local_row = lv_obj_create(touch_panel_);
+    const int local_button_width = (row_width - (kLocalActionButtonGap * 2)) / 3;
+    lv_obj_remove_style_all(local_row);
+    ClearDebugImageStyle(local_row);
+    lv_obj_set_size(local_row, row_width, kLocalActionPanelHeight);
+    lv_obj_set_pos(local_row, 0, 256);
+    lv_obj_clear_flag(local_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* local_label = lv_label_create(local_row);
+    lv_obj_set_width(local_label, row_width);
+    lv_label_set_long_mode(local_label, LV_LABEL_LONG_WRAP);
+    ApplyDebugTextStyle(local_label, 0x94A3B8, LV_TEXT_ALIGN_LEFT, 150);
+    lv_label_set_text(local_label, "Local");
+    lv_obj_set_pos(local_label, 0, 0);
+
+    /* Keep the LED-side offline actions explicit instead of overloading the preset/effect selectors. */
+    create_local_action_button(local_row, "Pat+", &touch_button_contexts_[6], 0, 20, local_button_width);
+    create_local_action_button(local_row,
+                               "Text",
+                               &touch_button_contexts_[7],
+                               local_button_width + kLocalActionButtonGap,
+                               20,
+                               local_button_width);
+    create_local_action_button(local_row,
+                               "Clock",
+                               &touch_button_contexts_[8],
+                               (local_button_width + kLocalActionButtonGap) * 2,
+                               20,
+                               local_button_width);
+    create_local_action_button(local_row, "Fx+", &touch_button_contexts_[10], 0, 56, local_button_width);
+    create_local_action_button(local_row,
+                               "T/C",
+                               &touch_button_contexts_[9],
+                               local_button_width + kLocalActionButtonGap,
+                               56,
+                               local_button_width);
+    create_local_action_button(local_row,
+                               "Color+",
+                               &touch_button_contexts_[11],
+                               (local_button_width + kLocalActionButtonGap) * 2,
+                               56,
+                               local_button_width);
 
     lv_obj_t* action_row = lv_obj_create(touch_panel_);
     lv_obj_remove_style_all(action_row);
     ClearDebugImageStyle(action_row);
     lv_obj_set_size(action_row, row_width, 58);
-    lv_obj_set_pos(action_row, 0, 162);
+    lv_obj_set_pos(action_row, 0, 366);
     lv_obj_clear_flag(action_row, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t* action_label = lv_label_create(action_row);
@@ -755,9 +938,7 @@ void GpDebugLcdDisplay::ApplyColorDebugState(const GpColorDebugState& state) {
     current_state_ = state;
     current_state_.dot_size_px = static_cast<uint16_t>(std::clamp<int>(current_state_.dot_size_px, kDebugDotMinSize, kDebugDotMaxSize));
     if (current_state_.rgb888_text.empty()) {
-        char rgb_text[16] = {0};
-        std::snprintf(rgb_text, sizeof(rgb_text), "#%06X", static_cast<unsigned int>(current_state_.primary_rgb888 & 0xFFFFFFU));
-        current_state_.rgb888_text = rgb_text;
+        current_state_.rgb888_text = FormatRgb888(current_state_.primary_rgb888);
     }
     if (current_state_.label.empty()) {
         current_state_.label = "custom";
@@ -882,6 +1063,10 @@ void GpDebugLcdDisplay::SetMatrixDebugStateCallback(MatrixDebugStateCallback cal
 
 void GpDebugLcdDisplay::SetDebugSnapshotCallback(DebugSnapshotCallback callback) {
     debug_snapshot_callback_ = std::move(callback);
+}
+
+void GpDebugLcdDisplay::SetLocalControlActionCallback(LocalControlActionCallback callback) {
+    local_control_action_callback_ = std::move(callback);
 }
 
 void GpDebugLcdDisplay::SetTouchCommandCallback(TouchCommandCallback callback) {
@@ -1053,9 +1238,35 @@ void GpDebugLcdDisplay::RefreshTouchState() {
         return;
     }
 
+    const uint8_t red = ExtractRgb888Channel(current_state_.primary_rgb888, 16);
+    const uint8_t green = ExtractRgb888Channel(current_state_.primary_rgb888, 8);
+    const uint8_t blue = ExtractRgb888Channel(current_state_.primary_rgb888, 0);
+    char value_text[8] = {0};
+
+    if (current_state_.rgb888_text.empty()) {
+        current_state_.rgb888_text = FormatRgb888(current_state_.primary_rgb888);
+    }
+
     lv_label_set_text(preset_value_label_, GetPresetName(current_state_.preset));
     lv_label_set_text(effect_value_label_, GetAnimationName(current_state_.animation));
-    lv_label_set_text(color_value_label_, current_state_.rgb888_text.empty() ? "#808080" : current_state_.rgb888_text.c_str());
+    lv_label_set_text(color_value_label_, current_state_.rgb888_text.c_str());
+
+    if ((red_slider_ != nullptr) && (green_slider_ != nullptr) && (blue_slider_ != nullptr)
+        && (red_value_label_ != nullptr) && (green_value_label_ != nullptr) && (blue_value_label_ != nullptr)) {
+        refreshing_color_controls_ = true;
+        lv_slider_set_value(red_slider_, red, LV_ANIM_OFF);
+        lv_slider_set_value(green_slider_, green, LV_ANIM_OFF);
+        lv_slider_set_value(blue_slider_, blue, LV_ANIM_OFF);
+        refreshing_color_controls_ = false;
+
+        std::snprintf(value_text, sizeof(value_text), "%u", static_cast<unsigned int>(red));
+        lv_label_set_text(red_value_label_, value_text);
+        std::snprintf(value_text, sizeof(value_text), "%u", static_cast<unsigned int>(green));
+        lv_label_set_text(green_value_label_, value_text);
+        std::snprintf(value_text, sizeof(value_text), "%u", static_cast<unsigned int>(blue));
+        lv_label_set_text(blue_value_label_, value_text);
+    }
+
     RelayoutDebugMenuSections();
 }
 
@@ -1154,6 +1365,8 @@ void GpDebugLcdDisplay::SetActivePage(int page_index) {
 }
 
 void GpDebugLcdDisplay::HandleTouchAdjust(TouchAdjust adjust) {
+    GpMatrixLocalControlAction local_control_action = kGpMatrixLocalControlNone;
+
     if (adjust == TouchAdjust::kCaptureSnapshot) {
         if (!debug_snapshot_callback_) {
             return;
@@ -1175,6 +1388,43 @@ void GpDebugLcdDisplay::HandleTouchAdjust(TouchAdjust adjust) {
     }
 
     switch (adjust) {
+    case TouchAdjust::kLocalNextPattern:
+        local_control_action = kGpMatrixLocalControlNextPattern;
+        break;
+    case TouchAdjust::kLocalShowTextScroll:
+        local_control_action = kGpMatrixLocalControlShowTextScroll;
+        break;
+    case TouchAdjust::kLocalShowClock:
+        local_control_action = kGpMatrixLocalControlShowClock;
+        break;
+    case TouchAdjust::kLocalToggleTextClock:
+        local_control_action = kGpMatrixLocalControlToggleTextClock;
+        break;
+    case TouchAdjust::kLocalNextEffect:
+        local_control_action = kGpMatrixLocalControlNextEffect;
+        break;
+    case TouchAdjust::kLocalNextColor:
+        local_control_action = kGpMatrixLocalControlNextColor;
+        break;
+    default:
+        break;
+    }
+
+    if (local_control_action != kGpMatrixLocalControlNone) {
+        current_state_.source = "touch";
+        current_state_.transcript = BuildTouchCommandTranscript(adjust);
+        if (local_control_action_callback_) {
+            local_control_action_callback_(local_control_action);
+        }
+        if (touch_command_callback_) {
+            touch_command_callback_(current_state_, false);
+        }
+        RefreshTouchState();
+        RefreshInfoPage();
+        return;
+    }
+
+    switch (adjust) {
     case TouchAdjust::kPrevPreset:
         current_state_.preset = CyclePreset(current_state_.preset, -1);
         break;
@@ -1187,6 +1437,12 @@ void GpDebugLcdDisplay::HandleTouchAdjust(TouchAdjust adjust) {
     case TouchAdjust::kNextEffect:
         current_state_.animation = CycleAnimation(current_state_.animation, 1);
         break;
+    case TouchAdjust::kLocalNextPattern:
+    case TouchAdjust::kLocalShowTextScroll:
+    case TouchAdjust::kLocalShowClock:
+    case TouchAdjust::kLocalToggleTextClock:
+    case TouchAdjust::kLocalNextEffect:
+    case TouchAdjust::kLocalNextColor:
     case TouchAdjust::kCaptureSnapshot:
     default:
         break;
@@ -1210,6 +1466,8 @@ void GpDebugLcdDisplay::HandleTouchAdjust(TouchAdjust adjust) {
 }
 
 std::string GpDebugLcdDisplay::BuildTouchCommandTranscript(TouchAdjust adjust) const {
+    bool append_state_summary = true;
+
     if (adjust == TouchAdjust::kRequestPatternDraw) {
         return "绘制任意图案的命令";
     }
@@ -1229,6 +1487,30 @@ std::string GpDebugLcdDisplay::BuildTouchCommandTranscript(TouchAdjust adjust) c
     case TouchAdjust::kNextEffect:
         transcript += "切换到下一个效果。";
         break;
+    case TouchAdjust::kLocalNextPattern:
+        transcript += "执行 LED 端本地下一个图案动作。";
+        append_state_summary = false;
+        break;
+    case TouchAdjust::kLocalShowTextScroll:
+        transcript += "执行 LED 端本地滚动字幕动作。";
+        append_state_summary = false;
+        break;
+    case TouchAdjust::kLocalShowClock:
+        transcript += "执行 LED 端本地时钟动作。";
+        append_state_summary = false;
+        break;
+    case TouchAdjust::kLocalToggleTextClock:
+        transcript += "执行 LED 端本地字幕/时钟切换动作。";
+        append_state_summary = false;
+        break;
+    case TouchAdjust::kLocalNextEffect:
+        transcript += "执行 LED 端本地下一个效果动作。";
+        append_state_summary = false;
+        break;
+    case TouchAdjust::kLocalNextColor:
+        transcript += "执行 LED 端本地下一个颜色动作。";
+        append_state_summary = false;
+        break;
     case TouchAdjust::kCaptureSnapshot:
         transcript += "执行截图。";
         break;
@@ -1237,13 +1519,16 @@ std::string GpDebugLcdDisplay::BuildTouchCommandTranscript(TouchAdjust adjust) c
         break;
     }
 
-    transcript += "当前要求显示 ";
-    transcript += GetPresetName(current_state_.preset);
-    transcript += "，效果为 ";
-    transcript += GetAnimationName(current_state_.animation);
-    transcript += "，主颜色为 ";
-    transcript += current_state_.rgb888_text.empty() ? "#808080" : current_state_.rgb888_text;
-    transcript += "。";
+    if (append_state_summary) {
+        AppendTouchStateSummary(transcript, current_state_);
+    }
+    return transcript;
+}
+
+std::string GpDebugLcdDisplay::BuildColorSliderTranscript() const {
+    std::string transcript = "触摸屏滑块调色。";
+
+    AppendTouchStateSummary(transcript, current_state_);
     return transcript;
 }
 
@@ -1336,6 +1621,49 @@ void GpDebugLcdDisplay::OnTouchButtonEvent(lv_event_t* event) {
     if ((context != nullptr) && (context->self != nullptr)) {
         context->self->HandleTouchAdjust(context->adjust);
     }
+}
+
+void GpDebugLcdDisplay::OnColorSliderEvent(lv_event_t* event) {
+    auto* context = static_cast<ColorSliderContext*>(lv_event_get_user_data(event));
+    GpDebugLcdDisplay* self;
+    uint8_t red;
+    uint8_t green;
+    uint8_t blue;
+
+    if ((context == nullptr) || (context->self == nullptr)) {
+        return;
+    }
+
+    self = context->self;
+    if (self->refreshing_color_controls_
+        || (self->red_slider_ == nullptr)
+        || (self->green_slider_ == nullptr)
+        || (self->blue_slider_ == nullptr)) {
+        return;
+    }
+
+    red = static_cast<uint8_t>(std::clamp<int32_t>(lv_slider_get_value(self->red_slider_), 0, 255));
+    green = static_cast<uint8_t>(std::clamp<int32_t>(lv_slider_get_value(self->green_slider_), 0, 255));
+    blue = static_cast<uint8_t>(std::clamp<int32_t>(lv_slider_get_value(self->blue_slider_), 0, 255));
+    self->current_state_.primary_rgb888 = BuildRgb888(red, green, blue);
+    self->current_state_.has_secondary = false;
+    self->current_state_.rgb888_text = FormatRgb888(self->current_state_.primary_rgb888);
+    self->current_state_.label = self->current_state_.rgb888_text;
+    self->current_state_.source = "touch";
+    self->current_state_.transcript = self->BuildColorSliderTranscript();
+    self->animation_start_us_ = static_cast<uint64_t>(esp_timer_get_time());
+    self->RefreshAnimatedDot();
+
+    if (self->matrix_debug_state_callback_) {
+        self->matrix_debug_state_callback_(self->current_state_);
+    }
+
+    if (self->touch_command_callback_) {
+        self->touch_command_callback_(self->current_state_, false);
+    }
+
+    self->RefreshTouchState();
+    self->RefreshInfoPage();
 }
 
 void GpDebugLcdDisplay::OnPageStripEvent(lv_event_t* event) {

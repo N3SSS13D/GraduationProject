@@ -13,6 +13,14 @@ enum class GpColorDebugAnimation : uint8_t {
     kSolid = 0,
     kGradient = 1,
     kPulse = 2,
+    kScrollLeft = 3,
+    kScrollRight = 4,
+    kFadeIn = 5,
+    kFadeOut = 6,
+    kColorCycle = 7,
+    kRowReveal = 8,
+    kRowHide = 9,
+    kGradientReveal = 10,
 };
 
 enum class GpColorDebugPreset : uint8_t {
@@ -20,8 +28,10 @@ enum class GpColorDebugPreset : uint8_t {
     kDiamond = 1,
     kCross = 2,
     kJluEmblem = 3,
-    kPythonDemo = 4,
     kScrollSubtitle = 5,
+    kChecker = 6,
+    kBorder = 7,
+    kDiagonalX = 8,
 };
 
 struct GpColorDebugState {
@@ -43,6 +53,7 @@ struct GpColorDebugState {
 class GpDebugLcdDisplay : public SpiLcdDisplay {
 public:
     using MatrixDebugStateCallback = std::function<bool(const GpColorDebugState& state)>;
+    using LocalControlActionCallback = std::function<bool(GpMatrixLocalControlAction action)>;
     using DebugSnapshotCallback = std::function<std::string()>;
     using TouchCommandCallback = std::function<void(const GpColorDebugState& state, bool request_pattern_draw)>;
 
@@ -82,6 +93,9 @@ public:
     /* Register the callback used by the local Snap button in the custom menu. */
     void SetDebugSnapshotCallback(DebugSnapshotCallback callback);
 
+    /* Register the callback used to trigger LED-side local/offline scheme actions. */
+    void SetLocalControlActionCallback(LocalControlActionCallback callback);
+
     /* Register the callback used to forward touch-generated state changes to the board transport path. */
     void SetTouchCommandCallback(TouchCommandCallback callback);
 
@@ -98,6 +112,12 @@ private:
         kNextEffect = 3,
         kCaptureSnapshot = 4,
         kRequestPatternDraw = 5,
+        kLocalNextPattern = 6,
+        kLocalShowTextScroll = 7,
+        kLocalShowClock = 8,
+        kLocalToggleTextClock = 9,
+        kLocalNextEffect = 10,
+        kLocalNextColor = 11,
     };
 
     struct MenuButtonContext {
@@ -108,6 +128,11 @@ private:
     struct TouchButtonContext {
         GpDebugLcdDisplay* self = nullptr;
         TouchAdjust adjust = TouchAdjust::kPrevPreset;
+    };
+
+    struct ColorSliderContext {
+        GpDebugLcdDisplay* self = nullptr;
+        uint8_t channel = 0U;
     };
 
     struct MatrixPreviewFrame {
@@ -138,6 +163,12 @@ private:
     lv_obj_t* preset_value_label_ = nullptr;
     lv_obj_t* effect_value_label_ = nullptr;
     lv_obj_t* color_value_label_ = nullptr;
+    lv_obj_t* red_slider_ = nullptr;
+    lv_obj_t* green_slider_ = nullptr;
+    lv_obj_t* blue_slider_ = nullptr;
+    lv_obj_t* red_value_label_ = nullptr;
+    lv_obj_t* green_value_label_ = nullptr;
+    lv_obj_t* blue_value_label_ = nullptr;
     lv_obj_t* snapshot_button_ = nullptr;
     lv_timer_t* debug_animation_timer_ = nullptr;
     GpColorDebugState current_state_;
@@ -148,12 +179,15 @@ private:
     bool pending_menu_visible_ = false;
     bool has_matrix_bitmap_preview_ = false;
     bool has_matrix_animation_preview_ = false;
+    bool refreshing_color_controls_ = false;
     std::string ai_link_status_text_;
     MatrixDebugStateCallback matrix_debug_state_callback_;
+    LocalControlActionCallback local_control_action_callback_;
     DebugSnapshotCallback debug_snapshot_callback_;
     TouchCommandCallback touch_command_callback_;
     std::array<MenuButtonContext, 2> menu_button_contexts_;
-    std::array<TouchButtonContext, 6> touch_button_contexts_;
+    std::array<TouchButtonContext, 12> touch_button_contexts_;
+    std::array<ColorSliderContext, 3> color_slider_contexts_;
     std::array<MatrixPreviewFrame, GP_MATRIX_ANIMATION_MAX_FRAMES> matrix_preview_frames_ = {};
     std::array<lv_obj_t*, 256> debug_matrix_pixels_ = {};
     size_t matrix_preview_frame_count_ = 0U;
@@ -180,6 +214,7 @@ private:
     void SetActivePage(int page_index);
     void HandleTouchAdjust(TouchAdjust adjust);
     std::string BuildTouchCommandTranscript(TouchAdjust adjust) const;
+    std::string BuildColorSliderTranscript() const;
     void EnsureAnimationTimer();
     void RenderMatrixPreviewFrame(const MatrixPreviewFrame& frame);
     void RefreshMatrixAnimationPreview();
@@ -187,6 +222,7 @@ private:
     static void OnAsyncMenuVisibility(void* user_data);
     static void OnMenuButtonEvent(lv_event_t* event);
     static void OnTouchButtonEvent(lv_event_t* event);
+    static void OnColorSliderEvent(lv_event_t* event);
     static void OnPageStripEvent(lv_event_t* event);
 };
 

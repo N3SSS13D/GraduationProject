@@ -4,6 +4,7 @@
 #include "display/emote_display.h"
 #include "ui/gp_debug_display.h"
 #include "gp_led_matrix_esp32.h"
+#include "gp_matrix_local_tools.h"
 #include "transport/gp_led_matrix_transport.h"
 #include "application.h"
 #include "button.h"
@@ -48,14 +49,21 @@ constexpr const char* kSnapshotSettingsNamespace = "debug_snapshot";
 constexpr const char* kSnapshotUploadUrlKey = "upload_url";
 constexpr const char* kDebugWebsocketSettingsNamespace = "debug_ws";
 constexpr const char* kDebugWebsocketUrlKey = "url";
+constexpr const char* kSerialMcpHostCommand = "mcp_host";
 constexpr const char* kDebugPreviewUploadPath = "/debug/preview_image";
 constexpr const char* kDebugPreviewStatusPath = "/debug/preview_status";
 constexpr const char* kSerialSnapCommand = "snap";
 constexpr const char* kSerialSnapUrlCommand = "snap_url";
 constexpr const char* kSerialDebugWebsocketCommand = "debug_ws";
+constexpr const char* kDebugWebsocketDefaultPath = "/debug";
+constexpr const char* kSnapshotUploadDefaultPath = "/snapshot";
 constexpr const char* kDebugWebsocketDefaultUrl = "ws://49.140.69.242:8766/debug";
+constexpr uint16_t kDebugWebsocketServerPort = 8766;
+constexpr uint16_t kSnapshotUploadServerPort = 8765;
 constexpr uint16_t kDebugPreviewServerPort = 8781;
 constexpr size_t kDebugPreviewMaxImageBytes = 256U * 1024U;
+constexpr uint32_t kPendingMatrixAnimationExpireMs = 10000U;
+constexpr size_t kPendingMatrixTranscriptMaxBytes = 192U;
 constexpr uint32_t kBtConfigReplyTimeoutMs = 1200;
 constexpr uint32_t kBtConfigInquiryTimeoutMs = 5000;
 constexpr uint32_t kBtConfigLinkTimeoutMs = 5000;
@@ -87,8 +95,49 @@ std::string TrimAsciiWhitespace(std::string text) {
     return text;
 }
 
+std::string TrimStoredTranscript(const std::string& text) {
+    if (text.size() <= kPendingMatrixTranscriptMaxBytes) {
+        return text;
+    }
+
+    return text.substr(0U, kPendingMatrixTranscriptMaxBytes);
+}
+
 bool StartsWithCommand(const std::string& text, std::string_view prefix) {
     return (text.size() >= prefix.size()) && (text.compare(0, prefix.size(), prefix.data()) == 0);
+}
+
+/* Keep the host override to one plain token so the board can safely rebuild both MCP endpoint URLs. */
+bool IsSimpleHostToken(const std::string& text) {
+    if (text.empty()) {
+        return false;
+    }
+
+    return std::all_of(text.begin(), text.end(), [](unsigned char ch) {
+        return std::isalnum(ch) != 0 || ch == '.' || ch == '-';
+    });
+}
+
+bool IsMatrixBridgeMessageType(const char* text) {
+    if (text == nullptr) {
+        return false;
+    }
+
+    return (std::strcmp(text, "matrix_pattern_result") == 0)
+        || (std::strcmp(text, "matrix_action_result") == 0)
+        || (std::strcmp(text, "matrix_animation_start") == 0)
+        || (std::strcmp(text, "matrix_animation_batch") == 0)
+        || (std::strcmp(text, "matrix_animation_end") == 0);
+}
+
+std::string BuildDebugWebsocketUrlFromHost(const std::string& host) {
+    return std::string("ws://") + host + ":" + std::to_string(kDebugWebsocketServerPort)
+           + kDebugWebsocketDefaultPath;
+}
+
+std::string BuildSnapshotUploadUrlFromHost(const std::string& host) {
+    return std::string("http://") + host + ":" + std::to_string(kSnapshotUploadServerPort)
+           + kSnapshotUploadDefaultPath;
 }
 
 std::string SanitizeAsciiForLog(std::string text) {
@@ -391,13 +440,70 @@ std::optional<std::array<uint16_t, GP_MATRIX_HEIGHT>> ParseMatrixBitmapRowsHex(c
     return rows;
 }
 
+std::optional<std::vector<uint16_t>> ParseMatrixGlyphRowsHex(const std::string& text, size_t glyph_count) {
+    std::vector<uint16_t> rows;
+    std::string hex_digits;
+
+    if (glyph_count == 0U) {
+        return std::nullopt;
+    }
+
+    hex_digits.reserve(text.size());
+    for (char ch : text) {
+        if (std::isxdigit(static_cast<unsigned char>(ch)) != 0) {
+            hex_digits.push_back(ch);
+        }
+    }
+
+    if (hex_digits.size() != (glyph_count * GP_MATRIX_GLYPH_ROWS_SIZE * 2U)) {
+        return std::nullopt;
+    }
+
+    rows.resize(glyph_count * GP_MATRIX_HEIGHT);
+    for (size_t index = 0; index < rows.size(); ++index) {
+        unsigned int value = 0U;
+
+        if (std::sscanf(hex_digits.substr(index * 4U, 4U).c_str(), "%4x", &value) != 1) {
+            return std::nullopt;
+        }
+        rows[index] = static_cast<uint16_t>(value & 0xFFFFU);
+    }
+
+    return rows;
+}
+
+
 GpColorDebugAnimation ParseAnimationName(const std::string& text) {
     const std::string lowered = ToAsciiLower(text);
     if (lowered == "gradient") {
         return GpColorDebugAnimation::kGradient;
     }
-    if (lowered == "pulse") {
+    if (lowered == "pulse" || lowered == "breath") {
         return GpColorDebugAnimation::kPulse;
+    }
+    if (lowered == "scroll_left") {
+        return GpColorDebugAnimation::kScrollLeft;
+    }
+    if (lowered == "scroll_right") {
+        return GpColorDebugAnimation::kScrollRight;
+    }
+    if (lowered == "fade_in") {
+        return GpColorDebugAnimation::kFadeIn;
+    }
+    if (lowered == "fade_out") {
+        return GpColorDebugAnimation::kFadeOut;
+    }
+    if (lowered == "color_cycle") {
+        return GpColorDebugAnimation::kColorCycle;
+    }
+    if (lowered == "row_reveal") {
+        return GpColorDebugAnimation::kRowReveal;
+    }
+    if (lowered == "row_hide") {
+        return GpColorDebugAnimation::kRowHide;
+    }
+    if (lowered == "gradient_reveal") {
+        return GpColorDebugAnimation::kGradientReveal;
     }
     return GpColorDebugAnimation::kSolid;
 }
@@ -408,6 +514,22 @@ const char* ToAnimationName(GpColorDebugAnimation animation) {
         return "gradient";
     case GpColorDebugAnimation::kPulse:
         return "pulse";
+    case GpColorDebugAnimation::kScrollLeft:
+        return "scroll_left";
+    case GpColorDebugAnimation::kScrollRight:
+        return "scroll_right";
+    case GpColorDebugAnimation::kFadeIn:
+        return "fade_in";
+    case GpColorDebugAnimation::kFadeOut:
+        return "fade_out";
+    case GpColorDebugAnimation::kColorCycle:
+        return "color_cycle";
+    case GpColorDebugAnimation::kRowReveal:
+        return "row_reveal";
+    case GpColorDebugAnimation::kRowHide:
+        return "row_hide";
+    case GpColorDebugAnimation::kGradientReveal:
+        return "gradient_reveal";
     case GpColorDebugAnimation::kSolid:
     default:
         return "solid";
@@ -420,10 +542,14 @@ const char* ToPresetName(GpColorDebugPreset preset) {
         return "diamond";
     case GpColorDebugPreset::kCross:
         return "cross";
+    case GpColorDebugPreset::kChecker:
+        return "checker";
+    case GpColorDebugPreset::kBorder:
+        return "border";
+    case GpColorDebugPreset::kDiagonalX:
+        return "diagonal_x";
     case GpColorDebugPreset::kJluEmblem:
         return "jlu_emblem";
-    case GpColorDebugPreset::kPythonDemo:
-        return "python_demo";
     case GpColorDebugPreset::kScrollSubtitle:
         return "scroll_subtitle";
     case GpColorDebugPreset::kSolid:
@@ -476,27 +602,6 @@ cJSON* BuildDotResultJson(const GpColorDebugState& state) {
     cJSON_AddStringToObject(json, "source", state.source.c_str());
     cJSON_AddStringToObject(json, "transcript", state.transcript.c_str());
     cJSON_AddBoolToObject(json, "applied", true);
-    return json;
-}
-
-cJSON* BuildMatrixFrameResultJson(const char* preset,
-                                  const char* frame_hex,
-                                  const char* bitmap_rows_hex,
-                                  const char* primary_rgb888,
-                                  bool applied,
-                                  const char* source,
-                                  const char* transcript) {
-    cJSON* json = cJSON_CreateObject();
-
-    cJSON_AddStringToObject(json, "preset", preset != nullptr ? preset : "");
-    cJSON_AddStringToObject(json, "frame_rgb332_hex", frame_hex != nullptr ? frame_hex : "");
-    cJSON_AddStringToObject(json, "bitmap_rows_hex", bitmap_rows_hex != nullptr ? bitmap_rows_hex : "");
-    cJSON_AddStringToObject(json, "primary_rgb888", primary_rgb888 != nullptr ? primary_rgb888 : "");
-    cJSON_AddNumberToObject(json, "width", GP_MATRIX_WIDTH);
-    cJSON_AddNumberToObject(json, "height", GP_MATRIX_HEIGHT);
-    cJSON_AddBoolToObject(json, "applied", applied);
-    cJSON_AddStringToObject(json, "source", source != nullptr ? source : "mcp");
-    cJSON_AddStringToObject(json, "transcript", transcript != nullptr ? transcript : "");
     return json;
 }
 
@@ -599,7 +704,9 @@ private:
     static constexpr uint32_t kBtBridgeTaskStackWords = 4096;
     static constexpr UBaseType_t kBtBridgeTaskPriority = 1;
     static constexpr uint32_t kBtBridgeStartDelayMs = 1200;
-    static constexpr uint32_t kBtBridgeTickMs = 1000;
+    static constexpr uint32_t kBtBridgeTickMs = 100;
+    static constexpr uint32_t kBtBridgePollTimeoutMs = 5;
+    static constexpr uint32_t kBtBridgeDebugLedIntervalMs = 1000;
     static constexpr uint32_t kBtBridgeQuietWindowMs = 1500;
 
     struct DebugCommand {
@@ -607,10 +714,12 @@ private:
             kApplyMatrixState = 0,
             kCaptureSnapshot = 1,
             kSendDebugWebsocketMessage = 2,
+            kSendLocalControlAction = 3,
         };
 
         Type type = Type::kApplyMatrixState;
         GpColorDebugState state;
+        GpMatrixLocalControlAction local_control_action = kGpMatrixLocalControlNone;
         int quality = 50;
         std::string text;
     };
@@ -648,6 +757,7 @@ private:
     uint16_t pending_matrix_animation_interval_ms_ = kDebugPreviewAnimationIntervalMs;
     std::string pending_matrix_animation_transcript_;
     bool pending_matrix_animation_active_ = false;
+    uint64_t pending_matrix_animation_last_update_us_ = 0U;
     std::unique_ptr<WebSocket> debug_websocket_;
 
     void ResetPendingMatrixAnimation() {
@@ -660,6 +770,28 @@ private:
         pending_matrix_animation_interval_ms_ = kDebugPreviewAnimationIntervalMs;
         pending_matrix_animation_transcript_.clear();
         pending_matrix_animation_active_ = false;
+        pending_matrix_animation_last_update_us_ = 0U;
+    }
+
+    void ExpirePendingMatrixAnimationIfStale(const char* reason) {
+        uint64_t now_us;
+        uint64_t elapsed_ms;
+
+        if (!pending_matrix_animation_active_ || (pending_matrix_animation_last_update_us_ == 0U)) {
+            return;
+        }
+
+        now_us = static_cast<uint64_t>(esp_timer_get_time());
+        elapsed_ms = (now_us - pending_matrix_animation_last_update_us_) / 1000U;
+        if (elapsed_ms < kPendingMatrixAnimationExpireMs) {
+            return;
+        }
+
+        ESP_LOGW(TAG,
+                 "[DBG_WS] stale pending matrix animation cleared: idle_ms=%lu reason=%s",
+                 static_cast<unsigned long>(elapsed_ms),
+                 (reason != nullptr) ? reason : "unknown");
+        ResetPendingMatrixAnimation();
     }
 
     void BeginPendingMatrixAnimation(size_t frame_count,
@@ -668,8 +800,9 @@ private:
         ResetPendingMatrixAnimation();
         pending_matrix_animation_frame_count_ = std::min(frame_count, pending_matrix_animation_frames_.size());
         pending_matrix_animation_interval_ms_ = std::max<uint16_t>(1U, frame_interval_ms);
-        pending_matrix_animation_transcript_ = transcript_text;
+        pending_matrix_animation_transcript_ = TrimStoredTranscript(transcript_text);
         pending_matrix_animation_active_ = (pending_matrix_animation_frame_count_ != 0U);
+        pending_matrix_animation_last_update_us_ = static_cast<uint64_t>(esp_timer_get_time());
     }
 
     void StorePendingMatrixAnimationFrame(size_t frame_index,
@@ -686,8 +819,9 @@ private:
         pending_matrix_animation_frames_[frame_index].frame.background_rgb888 = background_rgb888;
         pending_matrix_animation_frames_[frame_index].valid = true;
         if (!transcript_text.empty()) {
-            pending_matrix_animation_transcript_ = transcript_text;
+            pending_matrix_animation_transcript_ = TrimStoredTranscript(transcript_text);
         }
+        pending_matrix_animation_last_update_us_ = static_cast<uint64_t>(esp_timer_get_time());
 
         pending_matrix_animation_ready_frames_ = 0U;
         while ((pending_matrix_animation_ready_frames_ < pending_matrix_animation_frame_count_)
@@ -871,6 +1005,17 @@ private:
         return httpd_resp_sendstr(req, "{\"accepted\":true}");
     }
 
+    void CloseDebugPreviewHttpServer() {
+        if (debug_preview_http_server_ == nullptr) {
+            return;
+        }
+
+        httpd_stop(debug_preview_http_server_);
+        debug_preview_http_server_ = nullptr;
+        UpdateDebugPreviewStatus(false, "HTTP preview idle");
+        ESP_LOGI(TAG, "[DBG_HTTP] preview server stopped");
+    }
+
     void EnsureDebugPreviewHttpServer() {
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
         httpd_uri_t preview_uri = {};
@@ -1039,7 +1184,11 @@ private:
             this->HandleDebugWebsocketMessage(data, len, binary);
         });
         debug_websocket_->OnDisconnected([this]() {
-            UpdateDebugWebsocketStatus(false, "Debug WS disconnected");
+            UpdateDebugWebsocketStatus(false, "Debug WS disconnected, will retry");
+            Application::GetInstance().Schedule([this]() {
+                CloseDebugWebsocket();
+                EnsureDebugWebsocketConnected();
+            });
         });
 
         ESP_LOGI(TAG, "[DBG_WS] connecting url=%s", url.c_str());
@@ -1064,6 +1213,10 @@ private:
     }
 
     bool SendDebugWebsocketMessage(const std::string& message) {
+        /* Start the local preview receiver only when a debug websocket exchange is actually
+         * requested, so the HTTP server does not occupy memory for normal voice sessions. */
+        EnsureDebugPreviewHttpServer();
+
         if (!EnsureDebugWebsocketConnected()) {
             return false;
         }
@@ -1081,6 +1234,49 @@ private:
 
         UpdateDebugWebsocketStatus(true, "Debug WS message sent");
         ESP_LOGI(TAG, "[DBG_WS] tx %s", SanitizeAsciiForLog(message).c_str());
+        return true;
+    }
+
+    bool HandleMatrixBridgePayload(const cJSON* payload) {
+        const auto* type = (payload == nullptr) ? nullptr : cJSON_GetObjectItem(payload, "type");
+        const auto* action = (payload == nullptr) ? nullptr : cJSON_GetObjectItem(payload, "action");
+        const char* message_type = nullptr;
+        cJSON* normalized_root = nullptr;
+        char* json_text = nullptr;
+
+        if (!cJSON_IsObject(payload)) {
+            return false;
+        }
+
+        if (cJSON_IsString(type) && IsMatrixBridgeMessageType(type->valuestring)) {
+            message_type = type->valuestring;
+        } else if (cJSON_IsString(action) && IsMatrixBridgeMessageType(action->valuestring)) {
+            /* Main-channel custom payloads can carry the matrix result name in action instead of type. */
+            message_type = action->valuestring;
+        } else {
+            return false;
+        }
+
+        normalized_root = cJSON_Duplicate(payload, true);
+        if (normalized_root == nullptr) {
+            ESP_LOGW(TAG, "[CUSTOM] failed to duplicate matrix payload");
+            return false;
+        }
+
+        if (!cJSON_IsString(cJSON_GetObjectItem(normalized_root, "type"))) {
+            cJSON_AddStringToObject(normalized_root, "type", message_type);
+        }
+
+        json_text = cJSON_PrintUnformatted(normalized_root);
+        cJSON_Delete(normalized_root);
+        if (json_text == nullptr) {
+            ESP_LOGW(TAG, "[CUSTOM] failed to encode matrix payload");
+            return false;
+        }
+
+        ESP_LOGI(TAG, "[CUSTOM] forward matrix payload type=%s", message_type);
+        HandleDebugWebsocketMessage(json_text, std::strlen(json_text), false);
+        cJSON_free(json_text);
         return true;
     }
 
@@ -1119,6 +1315,191 @@ private:
             return;
         }
 
+        if (std::strcmp(type->valuestring, "matrix_action_result") == 0) {
+            const auto* source_id = cJSON_GetObjectItem(root, "source_id");
+            const auto* content_id = cJSON_GetObjectItem(root, "content_id");
+            const auto* effect_id = cJSON_GetObjectItem(root, "effect_id");
+            const auto* direction_id = cJSON_GetObjectItem(root, "direction_id");
+            const auto* color_mode_id = cJSON_GetObjectItem(root, "color_mode_id");
+            const auto* brightness = cJSON_GetObjectItem(root, "brightness");
+            const auto* primary_rgb888 = cJSON_GetObjectItem(root, "primary_rgb888");
+            const auto* secondary_rgb888 = cJSON_GetObjectItem(root, "secondary_rgb888");
+            const auto* pattern_id = cJSON_GetObjectItem(root, "pattern_id");
+            const auto* glyph_id = cJSON_GetObjectItem(root, "glyph_id");
+            const auto* scroll_step = cJSON_GetObjectItem(root, "scroll_step");
+            const auto* anim_step = cJSON_GetObjectItem(root, "anim_step");
+            const auto* gradient_span = cJSON_GetObjectItem(root, "gradient_span");
+            const auto* flags = cJSON_GetObjectItem(root, "flags");
+            const auto* frame_interval_ms = cJSON_GetObjectItem(root, "frame_interval_ms");
+            const auto* timeline_duration_ms = cJSON_GetObjectItem(root, "timeline_duration_ms");
+            const auto* timeline_repeat_delay_ms = cJSON_GetObjectItem(root, "timeline_repeat_delay_ms");
+            const auto* timeline_repeat_count = cJSON_GetObjectItem(root, "timeline_repeat_count");
+            const auto* timeline_path_id = cJSON_GetObjectItem(root, "timeline_path_id");
+            const auto* animation_flags = cJSON_GetObjectItem(root, "animation_flags");
+            const auto* apply_flags = cJSON_GetObjectItem(root, "apply_flags");
+            const auto* glyph_rows_hex = cJSON_GetObjectItem(root, "glyph_rows_hex");
+            const auto* glyph_count = cJSON_GetObjectItem(root, "glyph_count");
+            const auto* glyph_width = cJSON_GetObjectItem(root, "glyph_width");
+            const auto* glyph_spacing = cJSON_GetObjectItem(root, "glyph_spacing");
+            const auto* transcript = cJSON_GetObjectItem(root, "transcript");
+            GpMatrixActionPayload scheduled_action = {};
+            std::vector<uint16_t> scheduled_glyph_rows;
+            std::optional<uint32_t> parsed_primary_rgb;
+            std::optional<uint32_t> parsed_secondary_rgb;
+            uint16_t interval_ms = 0U;
+            uint16_t timeline_duration_value = 0U;
+            uint16_t timeline_delay_value = 0U;
+            uint8_t scheduled_glyph_count = 0U;
+            uint8_t scheduled_glyph_width = GP_MATRIX_WIDTH;
+            uint8_t scheduled_glyph_spacing = 0U;
+
+            if (!cJSON_IsNumber(content_id) || !cJSON_IsNumber(effect_id) || !cJSON_IsString(primary_rgb888)) {
+                ESP_LOGW(TAG, "[DBG_WS] matrix_action_result missing action fields");
+                cJSON_Delete(root);
+                return;
+            }
+
+            parsed_primary_rgb = ParseRgb888(primary_rgb888->valuestring);
+            if (!parsed_primary_rgb.has_value()) {
+                ESP_LOGW(TAG, "[DBG_WS] invalid matrix_action_result primary color");
+                cJSON_Delete(root);
+                return;
+            }
+
+            if (cJSON_IsString(secondary_rgb888)) {
+                parsed_secondary_rgb = ParseRgb888(secondary_rgb888->valuestring);
+                if (!parsed_secondary_rgb.has_value()) {
+                    ESP_LOGW(TAG, "[DBG_WS] invalid matrix_action_result secondary color");
+                    cJSON_Delete(root);
+                    return;
+                }
+            }
+
+            if (cJSON_IsString(glyph_rows_hex)) {
+                if (!cJSON_IsNumber(glyph_count) || (glyph_count->valueint <= 0)) {
+                    ESP_LOGW(TAG, "[DBG_WS] matrix_action_result missing glyph_count");
+                    cJSON_Delete(root);
+                    return;
+                }
+
+                scheduled_glyph_count = static_cast<uint8_t>(glyph_count->valueint);
+                if (cJSON_IsNumber(glyph_width) && (glyph_width->valueint > 0)) {
+                    scheduled_glyph_width = static_cast<uint8_t>(glyph_width->valueint);
+                }
+                if (cJSON_IsNumber(glyph_spacing) && (glyph_spacing->valueint >= 0)) {
+                    scheduled_glyph_spacing = static_cast<uint8_t>(glyph_spacing->valueint);
+                }
+
+                auto parsed_glyph_rows = ParseMatrixGlyphRowsHex(glyph_rows_hex->valuestring, scheduled_glyph_count);
+                if (!parsed_glyph_rows.has_value()) {
+                    ESP_LOGW(TAG, "[DBG_WS] invalid matrix_action_result glyph data");
+                    cJSON_Delete(root);
+                    return;
+                }
+                scheduled_glyph_rows = std::move(*parsed_glyph_rows);
+            }
+
+            scheduled_action.source = static_cast<uint8_t>(cJSON_IsNumber(source_id)
+                ? source_id->valueint
+                : kGpMatrixActionSourceMcp);
+            scheduled_action.content = static_cast<uint8_t>(content_id->valueint);
+            scheduled_action.effect = static_cast<uint8_t>(effect_id->valueint);
+            scheduled_action.direction = static_cast<uint8_t>(cJSON_IsNumber(direction_id) ? direction_id->valueint : 0);
+            scheduled_action.color_mode = static_cast<uint8_t>(cJSON_IsNumber(color_mode_id) ? color_mode_id->valueint : 0);
+            scheduled_action.brightness = static_cast<uint8_t>(cJSON_IsNumber(brightness) ? brightness->valueint : 200);
+            scheduled_action.primary_r = static_cast<uint8_t>((*parsed_primary_rgb >> 16) & 0xFFU);
+            scheduled_action.primary_g = static_cast<uint8_t>((*parsed_primary_rgb >> 8) & 0xFFU);
+            scheduled_action.primary_b = static_cast<uint8_t>(*parsed_primary_rgb & 0xFFU);
+            if (parsed_secondary_rgb.has_value()) {
+                scheduled_action.secondary_r = static_cast<uint8_t>((*parsed_secondary_rgb >> 16) & 0xFFU);
+                scheduled_action.secondary_g = static_cast<uint8_t>((*parsed_secondary_rgb >> 8) & 0xFFU);
+                scheduled_action.secondary_b = static_cast<uint8_t>(*parsed_secondary_rgb & 0xFFU);
+                scheduled_action.flags |= GP_MATRIX_ACTION_FLAG_USE_SECONDARY;
+            }
+            scheduled_action.pattern_id = static_cast<uint8_t>(cJSON_IsNumber(pattern_id) ? pattern_id->valueint : 0);
+            scheduled_action.glyph_id = static_cast<uint8_t>(cJSON_IsNumber(glyph_id) ? glyph_id->valueint : 0);
+            scheduled_action.scroll_step = static_cast<uint8_t>(cJSON_IsNumber(scroll_step) ? scroll_step->valueint : 1);
+            scheduled_action.anim_step = static_cast<uint8_t>(cJSON_IsNumber(anim_step) ? anim_step->valueint : 1);
+            scheduled_action.gradient_span = static_cast<uint8_t>(cJSON_IsNumber(gradient_span) ? gradient_span->valueint : 96);
+            scheduled_action.flags |= static_cast<uint8_t>(cJSON_IsNumber(flags) ? flags->valueint : 0);
+            if (!scheduled_glyph_rows.empty()) {
+                scheduled_action.flags |= GP_MATRIX_ACTION_FLAG_USE_UPLOADED_GLYPHS;
+            }
+
+            interval_ms = static_cast<uint16_t>(cJSON_IsNumber(frame_interval_ms) && (frame_interval_ms->valueint > 0)
+                ? frame_interval_ms->valueint
+                : 0U);
+            timeline_duration_value = static_cast<uint16_t>(cJSON_IsNumber(timeline_duration_ms) && (timeline_duration_ms->valueint > 0)
+                ? timeline_duration_ms->valueint
+                : 0U);
+            timeline_delay_value = static_cast<uint16_t>(cJSON_IsNumber(timeline_repeat_delay_ms) && (timeline_repeat_delay_ms->valueint > 0)
+                ? timeline_repeat_delay_ms->valueint
+                : 0U);
+            GP_MATRIX_WRITE_LE16(&scheduled_action.frame_interval_ms_lo, interval_ms);
+            GP_MATRIX_WRITE_LE16(&scheduled_action.timeline_duration_ms_lo, timeline_duration_value);
+            GP_MATRIX_WRITE_LE16(&scheduled_action.timeline_repeat_delay_ms_lo, timeline_delay_value);
+            scheduled_action.timeline_repeat_count = static_cast<uint8_t>(cJSON_IsNumber(timeline_repeat_count)
+                ? timeline_repeat_count->valueint
+                : 0U);
+            scheduled_action.timeline_path = static_cast<uint8_t>(cJSON_IsNumber(timeline_path_id)
+                ? timeline_path_id->valueint
+                : kGpMatrixTimelinePathLinear);
+            scheduled_action.animation_flags = static_cast<uint8_t>(cJSON_IsNumber(animation_flags)
+                ? animation_flags->valueint
+                : 0U);
+            scheduled_action.apply_flags = static_cast<uint8_t>(cJSON_IsNumber(apply_flags)
+                ? apply_flags->valueint
+                : (GP_MATRIX_APPLY_FLAG_PATTERN | GP_MATRIX_APPLY_FLAG_GLYPH));
+
+            const std::string transcript_text = cJSON_IsString(transcript) ? transcript->valuestring : "";
+            cJSON_Delete(root);
+
+            Application::GetInstance().Schedule([this,
+                                                 scheduled_action,
+                                                 scheduled_glyph_rows,
+                                                 scheduled_glyph_count,
+                                                 scheduled_glyph_width,
+                                                 scheduled_glyph_spacing,
+                                                 transcript_text]() {
+                auto* matrix_led = led_matrix_.get();
+                bool led_forwarded = false;
+                bool glyph_forwarded = true;
+
+                ResetPendingMatrixAnimation();
+
+                if (matrix_led != nullptr) {
+                    if (!scheduled_glyph_rows.empty()) {
+                        glyph_forwarded = matrix_led->ShowGlyphRows(scheduled_glyph_rows.data(),
+                                                                    scheduled_glyph_rows.size(),
+                                                                    scheduled_glyph_count,
+                                                                    scheduled_glyph_width,
+                                                                    scheduled_glyph_spacing);
+                        if (!glyph_forwarded) {
+                            ESP_LOGW(TAG, "[DBG_WS] failed to relay glyph rows before matrix action");
+                        }
+                    }
+
+                    if (glyph_forwarded) {
+                        led_forwarded = matrix_led->ShowAction(scheduled_action);
+                    }
+                    if (!led_forwarded) {
+                        ESP_LOGW(TAG, "[DBG_WS] failed to relay matrix action to LED side over Bluetooth");
+                    }
+                }
+
+                if (display_ != nullptr) {
+                    display_->ShowNotification(led_forwarded ? "WS action relayed" : "WS action send failed", 1500);
+                    if (!transcript_text.empty()) {
+                        display_->SetChatMessage("system", transcript_text.c_str());
+                    }
+                }
+
+                Application::GetInstance().CompletePendingMatrixCommand();
+            });
+            UpdateDebugWebsocketStatus(true, "Debug WS action received");
+            return;
+        }
+
         if (std::strcmp(type->valuestring, "matrix_animation_start") == 0) {
             const auto* frame_count = cJSON_GetObjectItem(root, "frame_count");
             const auto* frame_interval_ms = cJSON_GetObjectItem(root, "frame_interval_ms");
@@ -1151,6 +1532,189 @@ private:
             });
             UpdateDebugWebsocketStatus(true, "Debug WS animation start received");
             cJSON_Delete(root);
+            return;
+        }
+
+        if (std::strcmp(type->valuestring, "matrix_animation_batch") == 0) {
+            const auto* frame_count = cJSON_GetObjectItem(root, "frame_count");
+            const auto* frame_interval_ms = cJSON_GetObjectItem(root, "frame_interval_ms");
+            const auto* primary_rgb888 = cJSON_GetObjectItem(root, "primary_rgb888");
+            const auto* background_rgb888 = cJSON_GetObjectItem(root, "background_rgb888");
+            const auto* transcript = cJSON_GetObjectItem(root, "transcript");
+            const auto* frames_array = cJSON_GetObjectItem(root, "frames");
+            uint16_t scheduled_interval_ms = kDebugPreviewAnimationIntervalMs;
+
+            if (!cJSON_IsNumber(frame_count) || (frame_count->valueint <= 0)
+                || (frame_count->valueint > static_cast<int>(GP_MATRIX_ANIMATION_MAX_FRAMES))
+                || !cJSON_IsArray(frames_array)) {
+                ESP_LOGW(TAG, "[DBG_WS] matrix_animation_batch missing frame_count or frames array");
+                cJSON_Delete(root);
+                return;
+            }
+
+            if (cJSON_IsNumber(frame_interval_ms) && (frame_interval_ms->valueint > 0)) {
+                scheduled_interval_ms = static_cast<uint16_t>(frame_interval_ms->valueint);
+            }
+
+            const std::string transcript_text = cJSON_IsString(transcript) ? transcript->valuestring : "";
+            const std::string primary_color = cJSON_IsString(primary_rgb888) ? primary_rgb888->valuestring : "#F5F5F5";
+            const std::string background_color = cJSON_IsString(background_rgb888) ? background_rgb888->valuestring : "#000000";
+            const size_t scheduled_frame_count = static_cast<size_t>(frame_count->valueint);
+            const int array_size = cJSON_GetArraySize(frames_array);
+
+            /* Decode frames on the WebSocket thread so the scheduled task only keeps
+               one compact copy per frame instead of duplicating JSON strings. */
+            struct BatchedFrame {
+                std::array<uint16_t, GP_MATRIX_HEIGHT> bitmap_rows = {};
+                uint32_t primary_rgb888 = 0xF5F5F5U;
+                uint32_t background_rgb888 = 0x000000U;
+                size_t frame_index = 0U;
+                bool valid = false;
+            };
+            auto batched_frames = std::make_shared<std::vector<BatchedFrame>>();
+            batched_frames->reserve(static_cast<size_t>(array_size));
+
+            for (int idx = 0; idx < array_size; ++idx) {
+                const auto* frame_obj = cJSON_GetArrayItem(frames_array, idx);
+                if (!cJSON_IsObject(frame_obj)) {
+                    continue;
+                }
+
+                BatchedFrame bf;
+                const auto* bm_hex = cJSON_GetObjectItem(frame_obj, "bitmap_rows_hex");
+                const auto* fg = cJSON_GetObjectItem(frame_obj, "primary_rgb888");
+                const auto* bg = cJSON_GetObjectItem(frame_obj, "background_rgb888");
+                const auto* fi = cJSON_GetObjectItem(frame_obj, "frame_index");
+
+                const char* bitmap_rows_hex_text = cJSON_IsString(bm_hex) ? bm_hex->valuestring : nullptr;
+                const char* primary_rgb_text = cJSON_IsString(fg) ? fg->valuestring : primary_color.c_str();
+                const char* background_rgb_text = cJSON_IsString(bg) ? bg->valuestring : background_color.c_str();
+                std::optional<std::array<uint16_t, GP_MATRIX_HEIGHT>> parsed_bitmap_rows;
+                std::optional<uint32_t> parsed_primary_rgb;
+                std::optional<uint32_t> parsed_background_rgb;
+
+                if (bitmap_rows_hex_text != nullptr) {
+                    parsed_bitmap_rows = ParseMatrixBitmapRowsHex(bitmap_rows_hex_text);
+                }
+                if (primary_rgb_text != nullptr) {
+                    parsed_primary_rgb = ParseRgb888(primary_rgb_text);
+                }
+                if (background_rgb_text != nullptr) {
+                    parsed_background_rgb = ParseRgb888(background_rgb_text);
+                }
+
+                if (!parsed_bitmap_rows.has_value() || !parsed_primary_rgb.has_value()) {
+                    continue;
+                }
+
+                if (cJSON_IsNumber(fi) && (fi->valueint >= 0)) {
+                    bf.frame_index = static_cast<size_t>(fi->valueint);
+                } else {
+                    bf.frame_index = static_cast<size_t>(idx);
+                }
+                bf.bitmap_rows = *parsed_bitmap_rows;
+                bf.primary_rgb888 = *parsed_primary_rgb;
+                if (parsed_background_rgb.has_value()) {
+                    bf.background_rgb888 = *parsed_background_rgb;
+                }
+                bf.valid = true;
+                batched_frames->push_back(std::move(bf));
+            }
+
+            cJSON_Delete(root);
+
+            Application::GetInstance().Schedule([this,
+                                                 batched_frames,
+                                                 scheduled_frame_count,
+                                                 scheduled_interval_ms,
+                                                 transcript_text]() {
+                auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display_);
+                auto* matrix_led = led_matrix_.get();
+                std::vector<GpLedMatrixEsp32::BitmapAnimationFrame> relay_frames;
+                std::vector<uint8_t> relay_frame_valid;
+
+                BeginPendingMatrixAnimation(scheduled_frame_count, scheduled_interval_ms, transcript_text);
+                if (debug_display != nullptr) {
+                    debug_display->BeginMatrixAnimationPreview(scheduled_frame_count, scheduled_interval_ms);
+                }
+
+                relay_frames.resize(pending_matrix_animation_frame_count_);
+                relay_frame_valid.resize(pending_matrix_animation_frame_count_, 0U);
+
+                for (const auto& bf : *batched_frames) {
+                    if (!bf.valid) {
+                        continue;
+                    }
+                    if (bf.frame_index >= pending_matrix_animation_frame_count_) {
+                        ESP_LOGW(TAG,
+                                 "[DBG_WS] drop batch frame out of range: idx=%u frame_count=%u",
+                                 static_cast<unsigned int>(bf.frame_index),
+                                 static_cast<unsigned int>(pending_matrix_animation_frame_count_));
+                        continue;
+                    }
+
+                    StorePendingMatrixAnimationFrame(bf.frame_index,
+                                                    bf.bitmap_rows,
+                                                    bf.primary_rgb888,
+                                                    bf.background_rgb888,
+                                                    transcript_text);
+                    relay_frames[bf.frame_index].bitmap_rows = bf.bitmap_rows;
+                    relay_frames[bf.frame_index].primary_rgb888 = bf.primary_rgb888;
+                    relay_frames[bf.frame_index].background_rgb888 = bf.background_rgb888;
+                    relay_frame_valid[bf.frame_index] = 1U;
+                    if (debug_display != nullptr) {
+                        debug_display->ApplyMatrixAnimationPreviewFrame(
+                            bf.frame_index,
+                            bf.bitmap_rows,
+                            bf.primary_rgb888,
+                            bf.background_rgb888);
+                    }
+                }
+
+                bool led_forwarded = false;
+                if (matrix_led != nullptr) {
+                    std::vector<GpLedMatrixEsp32::BitmapAnimationFrame> frames;
+                    const bool complete = IsPendingMatrixAnimationComplete(scheduled_frame_count);
+
+                    if (complete) {
+                        frames.reserve(pending_matrix_animation_frame_count_);
+                        for (size_t fi = 0U; fi < pending_matrix_animation_frame_count_; ++fi) {
+                            frames.push_back(pending_matrix_animation_frames_[fi].frame);
+                        }
+                    } else {
+                        /* Do not drop the whole draw when one frame is malformed. */
+                        for (size_t fi = 0U; fi < relay_frames.size(); ++fi) {
+                            if (relay_frame_valid[fi] != 0U) {
+                                frames.push_back(relay_frames[fi]);
+                            }
+                        }
+                        ESP_LOGW(TAG,
+                                 "[DBG_WS] incomplete batch; fallback frames=%u expected=%u",
+                                 static_cast<unsigned int>(frames.size()),
+                                 static_cast<unsigned int>(pending_matrix_animation_frame_count_));
+                    }
+
+                    if (!frames.empty()) {
+                        led_forwarded = matrix_led->ShowBitmapAnimation(frames, scheduled_interval_ms);
+                    }
+                    if (!led_forwarded) {
+                        ESP_LOGW(TAG, "[DBG_WS] failed to relay batched animation to LED over Bluetooth");
+                    }
+                }
+
+                if (debug_display != nullptr) {
+                    debug_display->EndMatrixAnimationPreview();
+                }
+                if (display_ != nullptr) {
+                    display_->ShowNotification(led_forwarded ? "WS anim batch relayed" : "WS anim batch preview only", 1500);
+                    if (!transcript_text.empty()) {
+                        display_->SetChatMessage("system", transcript_text.c_str());
+                    }
+                }
+                ResetPendingMatrixAnimation();
+                Application::GetInstance().CompletePendingMatrixCommand();
+            });
+            UpdateDebugWebsocketStatus(true, "Debug WS animation batch received");
             return;
         }
 
@@ -1209,11 +1773,14 @@ private:
                 auto* matrix_led = led_matrix_.get();
                 bool led_forwarded = false;
 
+                ExpirePendingMatrixAnimationIfStale("matrix_pattern_result");
+
                 if ((scheduled_frame_index >= 0) && (scheduled_frame_count > 1)) {
                     const size_t frame_index_value = static_cast<size_t>(scheduled_frame_index);
                     const size_t frame_count_value = static_cast<size_t>(scheduled_frame_count);
 
-                    if ((!pending_matrix_animation_active_)
+                    if ((frame_index_value == 0U)
+                        || (!pending_matrix_animation_active_)
                         || (pending_matrix_animation_frame_count_ != frame_count_value)) {
                         BeginPendingMatrixAnimation(frame_count_value, scheduled_interval_ms, transcript_text);
                         if (debug_display != nullptr) {
@@ -1234,6 +1801,9 @@ private:
                     }
                     return;
                 }
+
+                /* Single-frame draw should not keep stale animation cache alive. */
+                ResetPendingMatrixAnimation();
 
                 if (debug_display != nullptr) {
                     debug_display->ApplyMatrixBitmapPreview(scheduled_rows,
@@ -1258,6 +1828,8 @@ private:
                         display_->SetChatMessage("system", transcript_text.c_str());
                     }
                 }
+
+                Application::GetInstance().CompletePendingMatrixCommand();
             });
             UpdateDebugWebsocketStatus(true, "Debug WS pattern received");
             cJSON_Delete(root);
@@ -1280,6 +1852,8 @@ private:
                 auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display_);
                 auto* matrix_led = led_matrix_.get();
                 bool led_forwarded = false;
+
+                ExpirePendingMatrixAnimationIfStale("matrix_animation_end");
 
                 if (debug_display != nullptr) {
                     debug_display->EndMatrixAnimationPreview();
@@ -1310,6 +1884,7 @@ private:
                 }
 
                 ResetPendingMatrixAnimation();
+                Application::GetInstance().CompletePendingMatrixCommand();
             });
             UpdateDebugWebsocketStatus(true, "Debug WS animation end received");
             cJSON_Delete(root);
@@ -1579,6 +2154,12 @@ cleanup:
             case DebugCommand::Type::kSendDebugWebsocketMessage:
                 self->SendDebugWebsocketMessage(command->text);
                 break;
+            case DebugCommand::Type::kSendLocalControlAction:
+                if ((self->led_matrix_ != nullptr)
+                    && (command->local_control_action != kGpMatrixLocalControlNone)) {
+                    self->led_matrix_->SendLocalControlAction(command->local_control_action);
+                }
+                break;
             default:
                 break;
             }
@@ -1588,7 +2169,7 @@ cleanup:
     bool EnqueueDebugCommand(std::unique_ptr<DebugCommand> command) {
         DebugCommand* raw_command = nullptr;
 
-        if ((debug_command_queue_ == nullptr) || (command == nullptr)) {
+        if ((command == nullptr) || !EnsureDebugCommandTask()) {
             return false;
         }
 
@@ -1607,6 +2188,14 @@ cleanup:
 
         command->type = DebugCommand::Type::kApplyMatrixState;
         command->state = state;
+        return EnqueueDebugCommand(std::move(command));
+    }
+
+    bool QueueLocalControlAction(GpMatrixLocalControlAction action) {
+        auto command = std::make_unique<DebugCommand>();
+
+        command->type = DebugCommand::Type::kSendLocalControlAction;
+        command->local_control_action = action;
         return EnqueueDebugCommand(std::move(command));
     }
 
@@ -1663,13 +2252,17 @@ cleanup:
         return request_pattern_draw ? "Debug WS draw request queued" : "Debug WS state queued";
     }
 
-    void InitializeDebugCommandTask() {
+    bool EnsureDebugCommandTask() {
         BaseType_t task_created;
+
+        if (debug_command_queue_ != nullptr) {
+            return true;
+        }
 
         debug_command_queue_ = xQueueCreate(kDebugCommandQueueLength, sizeof(DebugCommand*));
         if (debug_command_queue_ == nullptr) {
             ESP_LOGW(TAG, "Failed to create debug command queue");
-            return;
+            return false;
         }
 
         task_created = xTaskCreate(
@@ -1683,7 +2276,10 @@ cleanup:
             vQueueDelete(debug_command_queue_);
             debug_command_queue_ = nullptr;
             ESP_LOGW(TAG, "Failed to create debug command task");
+            return false;
         }
+
+        return true;
     }
 
     void ShowSerialCommandNotification(const std::string& text) {
@@ -1698,6 +2294,8 @@ cleanup:
         std::string argument_text;
         std::string command;
         int snap_quality = 50;
+        const std::string mcp_help_text =
+            "mcp_host get | status | set <ip_or_host> | reset | help";
         const std::string help_text =
             "snap | snap <quality> | snap_url get | set <url> | clear | reset | help";
         const std::string ws_help_text =
@@ -1722,6 +2320,60 @@ cleanup:
 
             command = QueueDebugSnapshotCapture(snap_quality);
             ESP_LOGI(TAG, "Serial command triggered snapshot: %s", command.c_str());
+            return;
+        }
+
+        /* One host override keeps debug_ws and snapshot upload aligned after the PC Wi-Fi IP changes. */
+        if (StartsWithCommand(line, kSerialMcpHostCommand) &&
+            ((line.size() == std::strlen(kSerialMcpHostCommand))
+             || std::isspace(static_cast<unsigned char>(line[std::strlen(kSerialMcpHostCommand)])))) {
+            argument_text = TrimAsciiWhitespace(line.substr(std::strlen(kSerialMcpHostCommand)));
+            if (argument_text.empty() || argument_text == "help") {
+                ESP_LOGI(TAG, "Serial command: %s", mcp_help_text.c_str());
+                LogDebugWebsocketStatus("serial_mcp_host_help");
+                LogDebugSnapshotUploadUrl("serial_mcp_host_help");
+                return;
+            }
+
+            if (argument_text == "get" || argument_text == "status") {
+                LogDebugWebsocketStatus(argument_text == "get" ? "serial_mcp_host_get" : "serial_mcp_host_status");
+                LogDebugSnapshotUploadUrl(argument_text == "get" ? "serial_mcp_host_get" : "serial_mcp_host_status");
+                ShowSerialCommandNotification("MCP host status printed");
+                return;
+            }
+
+            if (argument_text == "reset") {
+                SetDebugWebsocketUrl("");
+                CloseDebugWebsocket();
+                if (!ResetDebugSnapshotUploadUrlToCompiledDefault()) {
+                    SetDebugSnapshotUploadUrl("");
+                }
+                LogDebugWebsocketStatus("serial_mcp_host_reset");
+                LogDebugSnapshotUploadUrl("serial_mcp_host_reset");
+                ShowSerialCommandNotification("MCP host reset");
+                return;
+            }
+
+            if (StartsWithCommand(argument_text, "set ")) {
+                command = TrimAsciiWhitespace(argument_text.substr(4));
+                if (!IsSimpleHostToken(command)) {
+                    ESP_LOGW(TAG, "Serial command set failed: invalid host token=%s", command.c_str());
+                    ESP_LOGI(TAG, "Usage: %s", mcp_help_text.c_str());
+                    return;
+                }
+
+                SetDebugWebsocketUrl(BuildDebugWebsocketUrlFromHost(command));
+                SetDebugSnapshotUploadUrl(BuildSnapshotUploadUrlFromHost(command));
+                CloseDebugWebsocket();
+                ESP_LOGI(TAG, "Serial command set MCP host: %s", command.c_str());
+                LogDebugWebsocketStatus("serial_mcp_host_set");
+                LogDebugSnapshotUploadUrl("serial_mcp_host_set");
+                ShowSerialCommandNotification("MCP host updated");
+                return;
+            }
+
+            ESP_LOGW(TAG, "Unknown serial command: %s", line.c_str());
+            ESP_LOGI(TAG, "Usage: %s", mcp_help_text.c_str());
             return;
         }
 
@@ -1838,7 +2490,7 @@ cleanup:
         }
 
         ESP_LOGI(TAG,
-                 "Serial debug command ready: snap | snap <quality> | snap_url get | set <url> | clear | reset | help | debug_ws get | status | set <url> | clear | close | help");
+                 "Serial debug command ready: mcp_host get | status | set <ip_or_host> | reset | help | snap | snap <quality> | snap_url get | set <url> | clear | reset | help | debug_ws get | status | set <url> | clear | close | help");
         while (true) {
             if (std::fgets(buffer, sizeof(buffer), stdin) == nullptr) {
                 clearerr(stdin);
@@ -1867,6 +2519,7 @@ cleanup:
     static void RunBluetoothBridgeTask(void* task_parameter) {
         auto* self = static_cast<LichuangDevBoard*>(task_parameter);
         uint8_t led_index = 0U;
+        uint32_t debug_led_elapsed_ms = 0U;
 
         if ((self == nullptr) || (self->led_matrix_ == nullptr)) {
             vTaskDelete(nullptr);
@@ -1875,11 +2528,20 @@ cleanup:
 
         vTaskDelay(pdMS_TO_TICKS(kBtBridgeStartDelayMs));
         self->led_matrix_->RunStartupLinkTest();
+        (void)self->led_matrix_->SyncClockTime(true);
 
         while (true) {
-            /* Keep the periodic P2 LED test out of the way while real matrix traffic is active. */
-            if (self->led_matrix_->TrySendBackgroundDebugLedCommand(led_index, kBtBridgeQuietWindowMs)) {
-                led_index = static_cast<uint8_t>((led_index + 1U) % (GP_MATRIX_DEBUG_LED_MAX_INDEX + 1U));
+            (void)self->led_matrix_->PollIncomingRequest(kBtBridgePollTimeoutMs);
+            (void)self->led_matrix_->SyncClockTime();
+
+            debug_led_elapsed_ms += kBtBridgeTickMs;
+            if (debug_led_elapsed_ms >= kBtBridgeDebugLedIntervalMs) {
+                debug_led_elapsed_ms = 0U;
+
+                /* Keep the periodic P2 LED test out of the way while real matrix traffic is active. */
+                if (self->led_matrix_->TrySendBackgroundDebugLedCommand(led_index, kBtBridgeQuietWindowMs)) {
+                    led_index = static_cast<uint8_t>((led_index + 1U) % (GP_MATRIX_DEBUG_LED_MAX_INDEX + 1U));
+                }
             }
             vTaskDelay(pdMS_TO_TICKS(kBtBridgeTickMs));
         }
@@ -2196,68 +2858,7 @@ cleanup:
                 return BuildDotResultJson(state);
             });
 
-        mcp_server.AddTool("self.screen.matrix_16x16.draw",
-            "Draw one 16x16 matrix frame on the LED side via layered bitmap format. "
-            "Requires bitmap_rows_hex (64 hex chars, 16x16 bitmap) plus primary_rgb888 and optional background_rgb888.",
-            PropertyList({
-                Property("bitmap_rows_hex", kPropertyTypeString, std::string("")),
-                Property("primary_rgb888", kPropertyTypeString, std::string("")),
-                Property("background_rgb888", kPropertyTypeString, std::string("#000000")),
-                Property("source", kPropertyTypeString, std::string("mcp")),
-                Property("transcript", kPropertyTypeString, std::string(""))
-            }),
-            [this](const PropertyList& properties) -> ReturnValue {
-                auto* matrix_led = led_matrix_.get();
-                auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display_);
-                const std::string bitmap_rows_hex = properties["bitmap_rows_hex"].value<std::string>();
-                const std::string primary_text = properties["primary_rgb888"].value<std::string>();
-                const std::string background_text = properties["background_rgb888"].value<std::string>();
-                const std::string source = properties["source"].value<std::string>();
-                const std::string transcript = properties["transcript"].value<std::string>();
-                bool applied = false;
-
-                if (matrix_led == nullptr) {
-                    throw std::runtime_error("LED matrix transport is not initialized");
-                }
-
-                if (bitmap_rows_hex.empty()) {
-                    throw std::runtime_error("bitmap_rows_hex is required");
-                }
-
-                const auto bitmap_rows = ParseMatrixBitmapRowsHex(bitmap_rows_hex);
-                const auto primary_rgb = ParseRgb888(primary_text);
-                const auto background_rgb = ParseRgb888(background_text);
-
-                if (!bitmap_rows.has_value()) {
-                    throw std::runtime_error("bitmap_rows_hex must contain exactly 16 rows encoded as 64 hex characters");
-                }
-                if (!primary_rgb.has_value()) {
-                    throw std::runtime_error("primary_rgb888 must be a RGB888 string like #RRGGBB");
-                }
-
-                if (debug_display != nullptr) {
-                    debug_display->ApplyMatrixBitmapPreview(*bitmap_rows, *primary_rgb, background_rgb.value_or(0x000000U));
-                }
-                applied = matrix_led->ShowBitmapFrame(bitmap_rows->data(),
-                                                      bitmap_rows->size(),
-                                                      *primary_rgb,
-                                                      background_rgb.value_or(0x000000U),
-                                                      kGpMatrixModeSolidFrame);
-
-                if (!applied) {
-                    throw std::runtime_error("16x16 frame draw failed");
-                }
-
-                char rgb_text[16] = {0};
-                std::snprintf(rgb_text, sizeof(rgb_text), "#%06X", static_cast<unsigned int>(*primary_rgb & 0xFFFFFFU));
-                return BuildMatrixFrameResultJson("",
-                                                  "",
-                                                  bitmap_rows_hex.c_str(),
-                                                  rgb_text,
-                                                  applied,
-                                                  source.c_str(),
-                                                  transcript.c_str());
-            });
+        RegisterGpMatrixLocalMcpTools(mcp_server, led_matrix_.get(), display_);
 
         mcp_server.AddTool("self.screen.preview_image.fetch_http",
             "Fetch one PNG or JPEG from a host HTTP URL and show it in the debug preview area.",
@@ -2344,6 +2945,9 @@ cleanup:
         debug_display->SetMatrixDebugStateCallback([this](const GpColorDebugState& state) {
             return QueueMatrixDebugState(state);
         });
+        debug_display->SetLocalControlActionCallback([this](GpMatrixLocalControlAction action) {
+            return QueueLocalControlAction(action);
+        });
         debug_display->SetDebugSnapshotCallback([this]() {
             return QueueDebugSnapshotCapture(50);
         });
@@ -2366,30 +2970,38 @@ public:
         InitializeTouch();
         InitializeButtons();
         InitializeCamera();
-        InitializeDebugCommandTask();
         InitializeTools();
         InitializeLedMatrix();
         InitializeSerialDebugCommands();
-        UpdateDebugPreviewStatus(false, "HTTP preview waiting for Wi-Fi");
+        UpdateDebugPreviewStatus(false, "HTTP preview idle");
+        UpdateDebugWebsocketStatus(false, "Debug WS idle");
         LogDebugWebsocketStatus("boot");
         SetNetworkEventCallback([this](NetworkEvent event, const std::string& data) {
             (void)data;
 
             switch (event) {
             case NetworkEvent::Connected:
+                UpdateDebugPreviewStatus(false, "HTTP preview idle");
+                UpdateDebugWebsocketStatus(false, "Debug WS connecting on Wi-Fi ready");
                 Application::GetInstance().Schedule([this]() {
-                    EnsureDebugPreviewHttpServer();
                     EnsureDebugWebsocketConnected();
                 });
                 break;
             case NetworkEvent::Connecting:
                 UpdateDebugPreviewStatus(false, "HTTP preview waiting for Wi-Fi");
+                UpdateDebugWebsocketStatus(false, "Debug WS waiting for Wi-Fi");
                 break;
             case NetworkEvent::Disconnected:
+                CloseDebugPreviewHttpServer();
+                CloseDebugWebsocket();
                 UpdateDebugPreviewStatus(false, "HTTP preview Wi-Fi disconnected");
+                UpdateDebugWebsocketStatus(false, "Debug WS Wi-Fi disconnected");
                 break;
             case NetworkEvent::WifiConfigModeEnter:
+                CloseDebugPreviewHttpServer();
+                CloseDebugWebsocket();
                 UpdateDebugPreviewStatus(false, "HTTP preview Wi-Fi config mode");
+                UpdateDebugWebsocketStatus(false, "Debug WS Wi-Fi config mode");
                 break;
             default:
                 break;
@@ -2409,6 +3021,10 @@ public:
 
     virtual Display* GetDisplay() override {
         return display_;
+    }
+
+    virtual bool HandleCustomPayload(const cJSON* payload) override {
+        return HandleMatrixBridgePayload(payload);
     }
 
     virtual Led* GetLed() override {

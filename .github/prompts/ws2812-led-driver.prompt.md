@@ -27,6 +27,8 @@ Read only the narrow files needed for this task:
   - Boot init and runtime loop (`GpLedMatrixAi8051u_Poll -> MidTask_Process`).
 - `Sources/mid/gp_led_action.c`
   - Remote action/frame/animation execution and local/remote control switching.
+- `Sources/mid/local_display_scheme.c`
+  - Offline startup/key orchestration; local autoplay items are stored as image ids plus effect-command descriptors.
 - `Sources/drv/gp_led_matrix_ai8051u.c`
   - UART2 packet assembly, command dispatch, ACK/reply behavior.
 - `Sources/drv/ws2812_drv.c`
@@ -51,6 +53,8 @@ For `LED-side` refresh, animation, or scheduler optimization tasks:
 4. Keep changes minimal and traceable to the requested behavior.
 5. After source changes, run a Keil rebuild for `Project/STC51/ws2812_driver/ws2812_driver.uvproj`.
 6. If behavior changes timing or output rules, sync docs in `Doc/Instructions/` and `Project/STC51/README.md`.
+7. Keep new effects local-only unless host/protocol control is explicitly required; do not extend
+  `Project/Protocols/gp_led_matrix_protocol.h` by default for offline-only effects.
 
 ## Output format
 

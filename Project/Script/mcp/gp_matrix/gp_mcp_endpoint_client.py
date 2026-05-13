@@ -92,12 +92,30 @@ BITMAP_LAYER_COLOR_BYTES = RGB888_BYTES           # 3
 BITMAP_LAYER_TOTAL_BYTES = BITMAP_LAYER_HEADER_BYTES + BITMAP_LAYER_BITMAP_BYTES + BITMAP_LAYER_COLOR_BYTES  # 36
 BITMAP_LAYERED_MAX_COLORS = 16
 ANIMATION_MAX_LAYERS = 4
+MATRIX_MAX_GLYPH_TRANSFER_BYTES = 256
+MATRIX_GLYPH_ROWS_BYTES_PER_GLYPH = MATRIX_HEIGHT * 2
+MATRIX_MAX_DIRECT_GLYPH_COUNT = MATRIX_MAX_GLYPH_TRANSFER_BYTES // MATRIX_GLYPH_ROWS_BYTES_PER_GLYPH
+MATRIX_DEFAULT_BRIGHTNESS = 200
+MATRIX_DEFAULT_GRADIENT_SPAN = 160
+MATRIX_DEFAULT_ANIM_INTERVAL_MS = 64
+MATRIX_DEFAULT_SCROLL_INTERVAL_MS = 96
+MATRIX_DEFAULT_COLOR_INTERVAL_MS = 80
+MATRIX_DEFAULT_SCROLL_GLYPH_SPACING = 1
+MATRIX_SCROLL_SPACE_WIDTH_MIN = 4
+MATRIX_GLYPH_RENDER_CANVAS_SIZE = MATRIX_WIDTH * 4
+MATRIX_GLYPH_RENDER_MARGIN = MATRIX_WIDTH // 2
+MATRIX_GLYPH_THRESHOLD = 72
+MATRIX_ASCII_GLYPH_MAX_WIDTH = 12
+MATRIX_ASCII_GLYPH_MAX_HEIGHT = 13
+MATRIX_WIDE_GLYPH_MAX_WIDTH = MATRIX_WIDTH - 1
+MATRIX_WIDE_GLYPH_MAX_HEIGHT = MATRIX_HEIGHT - 1
+MATRIX_ASCII_SCROLL_SIDE_PADDING = 1
 
 MAX_DRAWING_SOURCE_CHARS = 4000
 MAX_DRAWING_AST_NODES = 512
 MAX_DRAWING_RANGE_STEPS = 256
 MAX_TEXT_FRAME_COUNT = 48
-MAX_ANIMATION_FRAME_COUNT = 24
+MAX_ANIMATION_FRAME_COUNT = 32
 LOCAL_MCP_SERVER_NAME = "gp-display-mcp-bridge"
 
 DRAW_FRAME_TOOL_NAMES = frozenset({
@@ -107,11 +125,208 @@ DRAW_FRAME_TOOL_NAMES = frozenset({
 PROMPT_RENDER_TOOL_NAMES = frozenset({"self.screen.matrix_16x16.render_prompt"})
 PYTHON_DRAW_TOOL_NAMES = frozenset({"self.screen.matrix_16x16.draw_python"})
 TEXT_SEQUENCE_TOOL_NAMES = frozenset({"self.screen.matrix_16x16.show_text"})
+SCROLL_SUBTITLE_TOOL_NAMES = frozenset({"self.screen.matrix_16x16.show_scroll_subtitle"})
 ANIMATION_SEQUENCE_TOOL_NAMES = frozenset({"self.screen.matrix_16x16.draw_animation"})
+EFFECT_COMMAND_TOOL_NAMES = frozenset({"self.screen.matrix_16x16.show_effect"})
 DEBUG_WS_DELIVERY_TOOL_NAMES = (
-    DRAW_FRAME_TOOL_NAMES | PYTHON_DRAW_TOOL_NAMES | TEXT_SEQUENCE_TOOL_NAMES | ANIMATION_SEQUENCE_TOOL_NAMES
+    DRAW_FRAME_TOOL_NAMES | PYTHON_DRAW_TOOL_NAMES | TEXT_SEQUENCE_TOOL_NAMES | SCROLL_SUBTITLE_TOOL_NAMES
+    | ANIMATION_SEQUENCE_TOOL_NAMES
+    | EFFECT_COMMAND_TOOL_NAMES
 )
 HTTP_PREVIEW_FALLBACK_TOOL_NAMES = DRAW_FRAME_TOOL_NAMES | PYTHON_DRAW_TOOL_NAMES
+
+MATRIX_ACTION_FLAG_USE_SECONDARY = 0x01
+MATRIX_ACTION_FLAG_REMOTE_ENABLE = 0x02
+MATRIX_ACTION_FLAG_REMOTE_RELEASE = 0x04
+MATRIX_ACTION_FLAG_USE_UPLOADED_GLYPHS = 0x08
+
+MATRIX_APPLY_FLAG_PATTERN = 0x01
+MATRIX_APPLY_FLAG_GLYPH = 0x02
+
+MATRIX_CONTENT_IDS: dict[str, int] = {
+    "solid": 0,
+    "pattern": 1,
+    "glyph": 2,
+}
+
+MATRIX_EFFECT_IDS: dict[str, int] = {
+    "static": 0,
+    "breath": 1,
+    "gradient": 2,
+    "scroll_left": 3,
+    "scroll_right": 4,
+    "text_scroll": 5,
+    "fade_in": 6,
+    "fade_out": 7,
+    "color_cycle": 8,
+    "row_reveal": 9,
+    "row_hide": 10,
+    "gradient_reveal": 11,
+}
+
+MATRIX_DIRECTION_IDS: dict[str, int] = {
+    "normal": 0,
+    "rotate_180": 1,
+    "rotate_cw_90": 2,
+    "rotate_ccw_90": 3,
+}
+
+MATRIX_COLOR_MODE_IDS: dict[str, int] = {
+    "solid": 0,
+    "gradient": 1,
+}
+
+MATRIX_TIMELINE_PATH_IDS: dict[str, int] = {
+    "linear": 0,
+    "ease_in_out": 1,
+    "breath_curve": 2,
+}
+
+MATRIX_PATTERN_IDS: dict[str, int] = {
+    "diamond": 0,
+    "cross": 1,
+    "jlu_emblem": 2,
+    "checker": 3,
+    "border": 4,
+    "diagonal_x": 5,
+}
+
+MATRIX_SCROLL_EFFECT_NAMES = frozenset({"text_scroll", "scroll_left", "scroll_right"})
+
+MATRIX_NATIVE_EFFECT_DEFAULTS: dict[str, dict[str, Any]] = {
+    "static": {
+        "frame_interval_ms": 32,
+        "scroll_step": 1,
+        "anim_step": 1,
+        "gradient_span": MATRIX_DEFAULT_GRADIENT_SPAN,
+        "timeline_duration_ms": 0,
+        "timeline_repeat_delay_ms": 0,
+        "timeline_repeat_count": 0,
+        "timeline_path": "linear",
+        "color_mode": "solid",
+    },
+    "breath": {
+        "frame_interval_ms": MATRIX_DEFAULT_ANIM_INTERVAL_MS,
+        "scroll_step": 1,
+        "anim_step": 2,
+        "gradient_span": MATRIX_DEFAULT_GRADIENT_SPAN,
+        "timeline_duration_ms": 1600,
+        "timeline_repeat_delay_ms": 240,
+        "timeline_repeat_count": 255,
+        "timeline_path": "breath_curve",
+        "color_mode": "solid",
+    },
+    "gradient": {
+        "frame_interval_ms": MATRIX_DEFAULT_ANIM_INTERVAL_MS,
+        "scroll_step": 1,
+        "anim_step": 2,
+        "gradient_span": 180,
+        "timeline_duration_ms": 0,
+        "timeline_repeat_delay_ms": 0,
+        "timeline_repeat_count": 0,
+        "timeline_path": "linear",
+        "color_mode": "gradient",
+    },
+    "scroll_left": {
+        "frame_interval_ms": MATRIX_DEFAULT_SCROLL_INTERVAL_MS,
+        "scroll_step": 1,
+        "anim_step": 1,
+        "gradient_span": MATRIX_DEFAULT_GRADIENT_SPAN,
+        "timeline_duration_ms": 0,
+        "timeline_repeat_delay_ms": 0,
+        "timeline_repeat_count": 0,
+        "timeline_path": "linear",
+        "color_mode": "solid",
+    },
+    "scroll_right": {
+        "frame_interval_ms": MATRIX_DEFAULT_SCROLL_INTERVAL_MS,
+        "scroll_step": 1,
+        "anim_step": 1,
+        "gradient_span": MATRIX_DEFAULT_GRADIENT_SPAN,
+        "timeline_duration_ms": 0,
+        "timeline_repeat_delay_ms": 0,
+        "timeline_repeat_count": 0,
+        "timeline_path": "linear",
+        "color_mode": "solid",
+    },
+    "text_scroll": {
+        "frame_interval_ms": MATRIX_DEFAULT_SCROLL_INTERVAL_MS,
+        "scroll_step": 1,
+        "anim_step": 1,
+        "gradient_span": MATRIX_DEFAULT_GRADIENT_SPAN,
+        "timeline_duration_ms": 0,
+        "timeline_repeat_delay_ms": 0,
+        "timeline_repeat_count": 0,
+        "timeline_path": "linear",
+        "color_mode": "solid",
+    },
+    "fade_in": {
+        "frame_interval_ms": MATRIX_DEFAULT_ANIM_INTERVAL_MS,
+        "scroll_step": 1,
+        "anim_step": 1,
+        "gradient_span": MATRIX_DEFAULT_GRADIENT_SPAN,
+        "timeline_duration_ms": 1200,
+        "timeline_repeat_delay_ms": 200,
+        "timeline_repeat_count": 255,
+        "timeline_path": "ease_in_out",
+        "color_mode": "solid",
+    },
+    "fade_out": {
+        "frame_interval_ms": MATRIX_DEFAULT_ANIM_INTERVAL_MS,
+        "scroll_step": 1,
+        "anim_step": 1,
+        "gradient_span": MATRIX_DEFAULT_GRADIENT_SPAN,
+        "timeline_duration_ms": 1200,
+        "timeline_repeat_delay_ms": 200,
+        "timeline_repeat_count": 255,
+        "timeline_path": "ease_in_out",
+        "color_mode": "solid",
+    },
+    "color_cycle": {
+        "frame_interval_ms": MATRIX_DEFAULT_COLOR_INTERVAL_MS,
+        "scroll_step": 1,
+        "anim_step": 1,
+        "gradient_span": MATRIX_DEFAULT_GRADIENT_SPAN,
+        "timeline_duration_ms": 0,
+        "timeline_repeat_delay_ms": 0,
+        "timeline_repeat_count": 0,
+        "timeline_path": "linear",
+        "color_mode": "solid",
+    },
+    "row_reveal": {
+        "frame_interval_ms": MATRIX_DEFAULT_ANIM_INTERVAL_MS,
+        "scroll_step": 1,
+        "anim_step": 1,
+        "gradient_span": MATRIX_DEFAULT_GRADIENT_SPAN,
+        "timeline_duration_ms": 960,
+        "timeline_repeat_delay_ms": 120,
+        "timeline_repeat_count": 255,
+        "timeline_path": "linear",
+        "color_mode": "solid",
+    },
+    "row_hide": {
+        "frame_interval_ms": MATRIX_DEFAULT_ANIM_INTERVAL_MS,
+        "scroll_step": 1,
+        "anim_step": 1,
+        "gradient_span": MATRIX_DEFAULT_GRADIENT_SPAN,
+        "timeline_duration_ms": 960,
+        "timeline_repeat_delay_ms": 120,
+        "timeline_repeat_count": 255,
+        "timeline_path": "linear",
+        "color_mode": "solid",
+    },
+    "gradient_reveal": {
+        "frame_interval_ms": MATRIX_DEFAULT_ANIM_INTERVAL_MS,
+        "scroll_step": 1,
+        "anim_step": 1,
+        "gradient_span": 180,
+        "timeline_duration_ms": 960,
+        "timeline_repeat_delay_ms": 120,
+        "timeline_repeat_count": 255,
+        "timeline_path": "linear",
+        "color_mode": "gradient",
+    },
+}
 
 ALLOWED_DRAW_HELPER_NAMES = frozenset({
     "range",
@@ -517,6 +732,33 @@ def summarize_status_payload(payload: Any) -> str:
 
 
 def summarize_matrix_payload(payload: Dict[str, Any]) -> str:
+    if str(payload.get("data_format", "")).strip().lower() == "matrix_action_v2":
+        parts: list[str] = ["target=led_16x16", "action"]
+        content_type = str(payload.get("content_type", "")).strip()
+        effect_name = str(payload.get("effect_name", "")).strip()
+        primary_rgb888 = str(payload.get("primary_rgb888", "")).strip()
+        secondary_rgb888 = str(payload.get("secondary_rgb888", "")).strip()
+        transcript = str(payload.get("transcript", "")).strip()
+        pattern_id = payload.get("pattern_id")
+        glyph_count = payload.get("glyph_count")
+
+        if content_type:
+            parts.append(f"content={content_type}")
+        if effect_name:
+            parts.append(f"effect={effect_name}")
+        if isinstance(pattern_id, int) and content_type == "pattern":
+            parts.append(f"pattern_id={pattern_id}")
+        if isinstance(glyph_count, int) and glyph_count > 0:
+            parts.append(f"glyph_count={glyph_count}")
+        if primary_rgb888:
+            parts.append(f"primary_rgb888={primary_rgb888}")
+        if secondary_rgb888:
+            parts.append(f"secondary_rgb888={secondary_rgb888}")
+        if transcript:
+            parts.append(f"transcript={transcript}")
+
+        return summarize_status_payload(" ".join(parts))
+
     frame_hex = str(payload.get("frame_rgb332_hex", ""))
     bitmap_rows_hex = str(payload.get("bitmap_rows_hex", ""))
     primary_rgb888 = str(payload.get("primary_rgb888", ""))
@@ -922,7 +1164,9 @@ def normalize_bitmap_rows_hex_value(bitmap_rows_hex: Any, field_name: str) -> st
     raise ValueError(
         f"{field_name} must contain either exactly {MATRIX_BITMAP_HEX_CHARS} hex characters "
         f"or {MATRIX_HEIGHT} row tokens of 1-4 hex digits (16 rows x 16 bits = {MATRIX_BITMAP_BYTES} bytes). "
-        "Shorthand compact hex patterns are also accepted when length is a multiple of 4 and will be repeated to 16 rows"
+        "Shorthand compact hex patterns are also accepted when length is a multiple of 4 and will be repeated to 16 rows. "
+        "Use bitmap_ascii for 16x16 ASCII art or draw_python ops/python_source for generated shapes; do not send "
+        "frame_rgb332_hex, PIL image objects, or other full-color image blobs here"
     )
 
 
@@ -1025,16 +1269,51 @@ def _effect_blink(base_rows, frame_count, effect):
     return [bitmap_rows_to_hex(base_rows if i < on_n else off_rows) for i in range(frame_count)]
 
 def _effect_flash(base_rows, frame_count, effect):
+    """Flash on/off pattern with seamless loop — the last frame is off and
+    the first frame is on, creating a natural transition."""
     on_count = max(1, min(frame_count - 1, int(effect.get("on_count", 2))))
     off_hex = bitmap_rows_to_hex([0] * MATRIX_HEIGHT)
     on_hex = bitmap_rows_to_hex(base_rows)
-    return [on_hex if (i % max(1, frame_count // on_count)) == 0 else off_hex for i in range(frame_count)]
+    gap = max(1, frame_count // on_count)
+    frames = []
+    for i in range(frame_count):
+        # Flash at positions 0, gap, 2*gap, ...
+        is_on = (i % gap == 0) and i < on_count * gap
+        frames.append(on_hex if is_on else off_hex)
+    return frames
 
 def _effect_wipe(base_rows, frame_count, effect):
+    """Wipe reveal then wipe hide (ping-pong) for a seamless loop.
+    First half: progressively reveal the image. Second half: progressively hide it.
+    The loop point is at the fully-hidden state, which connects smoothly."""
     direction = effect["name"].split("_")[1]
+    half = max(1, frame_count // 2)
     frames = []
-    for fi in range(frame_count):
-        progress = (fi + 1) / frame_count
+
+    for fi in range(half):
+        progress = (fi + 1) / half  # 1/half → 1.0 (reveal)
+        mask = [0] * MATRIX_HEIGHT
+        if direction == "left":
+            for c in range(max(1, int(MATRIX_WIDTH * progress))):
+                for r in range(MATRIX_HEIGHT):
+                    if (base_rows[r] >> (MATRIX_WIDTH - 1 - c)) & 1:
+                        mask[r] |= 1 << (MATRIX_WIDTH - 1 - c)
+        elif direction == "right":
+            for c in range(MATRIX_WIDTH - max(1, int(MATRIX_WIDTH * progress)), MATRIX_WIDTH):
+                for r in range(MATRIX_HEIGHT):
+                    if (base_rows[r] >> (MATRIX_WIDTH - 1 - c)) & 1:
+                        mask[r] |= 1 << (MATRIX_WIDTH - 1 - c)
+        elif direction == "up":
+            for r in range(max(1, int(MATRIX_HEIGHT * progress))):
+                mask[r] = base_rows[r]
+        elif direction == "down":
+            for r in range(MATRIX_HEIGHT - max(1, int(MATRIX_HEIGHT * progress)), MATRIX_HEIGHT):
+                mask[r] = base_rows[r]
+        frames.append(bitmap_rows_to_hex(mask))
+
+    for fi in range(half, frame_count):
+        progress = 1.0 - (fi - half + 0.5) / max(1, frame_count - half)  # 1.0 → ~0 (hide)
+        progress = max(0.0, min(1.0, progress))
         mask = [0] * MATRIX_HEIGHT
         if direction == "left":
             for c in range(max(1, int(MATRIX_WIDTH * progress))):
@@ -1056,15 +1335,33 @@ def _effect_wipe(base_rows, frame_count, effect):
     return frames
 
 def _effect_marquee(base_rows, frame_count, effect):
+    """Generate marquee frames that form a seamless loop.
+
+    Total shift (frame_count * step) must be a multiple of MATRIX_WIDTH so the
+    content returns to its starting column when the animation loops."""
     direction = "right" if effect["name"] == "marquee_right" else "left"
     step = max(1, int(effect.get("step", 1)))
+    # Enforce seamless loop: frame_count * step must be a multiple of MATRIX_WIDTH
+    total_shift = frame_count * step
+    if total_shift % MATRIX_WIDTH != 0:
+        cycles = (total_shift + MATRIX_WIDTH - 1) // MATRIX_WIDTH
+        frame_count = (cycles * MATRIX_WIDTH) // step
     return [bitmap_rows_to_hex(shift_bitmap_rows(base_rows,
             -(i * step) % MATRIX_WIDTH if direction == "right" else (i * step) % MATRIX_WIDTH))
             for i in range(frame_count)]
 
 def _effect_scroll_vertical(base_rows, frame_count, effect):
+    """Generate vertical scroll frames that form a seamless loop.
+
+    Total shift (frame_count * step) must be a multiple of MATRIX_HEIGHT so the
+    content returns to its starting row when the animation loops."""
     step = max(1, int(effect.get("step", 1)))
     up = effect["name"] == "scroll_up"
+    # Enforce seamless loop: frame_count * step must be a multiple of MATRIX_HEIGHT
+    total_shift = frame_count * step
+    if total_shift % MATRIX_HEIGHT != 0:
+        cycles = (total_shift + MATRIX_HEIGHT - 1) // MATRIX_HEIGHT
+        frame_count = (cycles * MATRIX_HEIGHT) // step
     frames = []
     for fi in range(frame_count):
         offset = (fi * step) % MATRIX_HEIGHT
@@ -1074,29 +1371,40 @@ def _effect_scroll_vertical(base_rows, frame_count, effect):
     return frames
 
 def _effect_breathe(base_rows, frame_count, effect):
+    """Density breathing with seamless loop: last-frame density is one step away
+    from first-frame density, avoiding a stutter at the loop point."""
     lo = max(0.0, min(1.0, float(effect.get("min_density", 0.20))))
     hi = max(0.0, min(1.0, float(effect.get("max_density", 1.00))))
     if lo > hi:
         lo, hi = hi, lo
     frames = []
     for fi in range(frame_count):
-        phase = fi / max(1, frame_count - 1)
+        phase = fi / frame_count  # 0 → (N-1)/N, one step short of a full cycle
         d = lo + (hi - lo) * (1.0 - abs(phase * 2.0 - 1.0))
         frames.append(bitmap_rows_to_hex(apply_density_to_bitmap_rows(base_rows, d)))
     return frames
 
 def _effect_fade(base_rows, frame_count, effect):
-    fade_in = effect["name"] == "fade_in"
-    return [bitmap_rows_to_hex(apply_density_to_bitmap_rows(base_rows,
-            max(0.0, (fi + 1) / frame_count if fade_in else 1.0 - (fi + 1) / frame_count)))
-            for fi in range(frame_count)]
+    """Fade-in followed by fade-out (ping-pong) for a seamless loop.
+    The full cycle: density 0→1→0, with the loop point at minimum density."""
+    half = max(1, frame_count // 2)
+    frames = []
+    for fi in range(half):
+        density = max(0.0, (fi + 1) / half)  # 1/half → 1.0
+        frames.append(bitmap_rows_to_hex(apply_density_to_bitmap_rows(base_rows, density)))
+    for fi in range(half, frame_count):
+        density = max(0.0, 1.0 - (fi - half + 1) / (frame_count - half))  # 1.0 → small
+        frames.append(bitmap_rows_to_hex(apply_density_to_bitmap_rows(base_rows, density)))
+    return frames
 
 def _effect_pulse(base_rows, frame_count, effect):
+    """Scale pulse with seamless loop: last-frame scale is one step away
+    from first-frame scale, avoiding a stutter at the loop point."""
     lo = max(0.1, min(1.0, float(effect.get("min_scale", 0.5))))
     hi = max(0.1, min(1.0, float(effect.get("max_scale", 1.0))))
     frames = []
     for fi in range(frame_count):
-        phase = fi / max(1, frame_count - 1)
+        phase = fi / frame_count  # 0 → (N-1)/N, one step short of a full cycle
         scale = lo + (hi - lo) * (1.0 - abs(phase * 2.0 - 1.0))
         ox = int(MATRIX_WIDTH * (1.0 - scale) / 2)
         scaled = [0] * MATRIX_HEIGHT
@@ -1296,6 +1604,11 @@ def validate_matrix_python_source(python_source: str) -> ast.Module:
         if node_count > MAX_DRAWING_AST_NODES:
             raise ValueError(f"python_source is too complex; keep it under {MAX_DRAWING_AST_NODES} AST nodes")
 
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            raise ValueError(
+                "Do not use import or PIL in python_source; use draw.<method>(...), helper functions, or ops instead"
+            )
+
         if not isinstance(node, ALLOWED_DRAW_AST_NODE_TYPES):
             raise ValueError(f"Unsupported Python construct: {type(node).__name__}")
 
@@ -1307,6 +1620,10 @@ def validate_matrix_python_source(python_source: str) -> ast.Module:
             raise ValueError("Only simple for-loop targets are allowed in python_source")
 
         if isinstance(node, ast.Attribute):
+            if isinstance(node.value, ast.Name) and node.value.id in {"Image", "ImageDraw", "ImageFont", "PIL"}:
+                raise ValueError(
+                    "Do not use PIL objects in python_source; the bridge already provides a 16x16 canvas via draw"
+                )
             if not isinstance(node.value, ast.Name) or node.value.id != "draw":
                 raise ValueError("Only draw.<method>(...) attribute access is allowed in python_source")
             if node.attr not in ALLOWED_DRAW_METHOD_NAMES:
@@ -1341,6 +1658,10 @@ def validate_matrix_eval_source(eval_source: str) -> ast.Expression:
             raise ValueError(f"Unsupported eval Python construct: {type(node).__name__}")
 
         if isinstance(node, ast.Attribute):
+            if isinstance(node.value, ast.Name) and node.value.id in {"Image", "ImageDraw", "ImageFont", "PIL"}:
+                raise ValueError(
+                    "Do not use PIL objects in eval_source; the bridge already provides a 16x16 canvas via draw"
+                )
             if not isinstance(node.value, ast.Name) or node.value.id != "draw":
                 raise ValueError("Only draw.<method>(...) attribute access is allowed in eval_source")
             if node.attr not in ALLOWED_DRAW_METHOD_NAMES:
@@ -1604,50 +1925,115 @@ def render_bitmap_animation_frame_sequence(
     return result
 
 
+def is_ascii_matrix_glyph(glyph: str) -> bool:
+    return glyph.isascii() and glyph.isprintable() and not glyph.isspace()
+
+
+def fit_rendered_glyph_mask_to_matrix(mask_image: Image.Image, *, max_width: int, max_height: int) -> Image.Image:
+    fitted_image = Image.new("1", (MATRIX_WIDTH, MATRIX_HEIGHT), 0)
+    glyph_bbox = mask_image.getbbox()
+
+    if glyph_bbox is None:
+        return fitted_image
+
+    cropped_mask = mask_image.crop(glyph_bbox).convert("L")
+    scale = min(
+        max_width / max(1, cropped_mask.width),
+        max_height / max(1, cropped_mask.height),
+    )
+    resized_width = max(1, min(MATRIX_WIDTH, int(round(cropped_mask.width * scale))))
+    resized_height = max(1, min(MATRIX_HEIGHT, int(round(cropped_mask.height * scale))))
+    resized_mask = cropped_mask.resize((resized_width, resized_height), Image.BILINEAR)
+    thresholded_mask = resized_mask.point(
+        lambda value: 255 if value >= MATRIX_GLYPH_THRESHOLD else 0
+    ).convert("1")
+    paste_x = max(0, (MATRIX_WIDTH - thresholded_mask.width) // 2)
+    paste_y = max(0, (MATRIX_HEIGHT - thresholded_mask.height) // 2)
+
+    fitted_image.paste(thresholded_mask, (paste_x, paste_y))
+    return fitted_image
+
+
 def render_text_glyph_to_mask_image(glyph: str) -> Image.Image:
     if len(glyph) != 1:
         raise ValueError("Each glyph must be exactly one character long")
 
-    glyph_image = Image.new("1", (MATRIX_WIDTH, MATRIX_HEIGHT), 0)
     if glyph.isspace():
-        return glyph_image
+        return Image.new("1", (MATRIX_WIDTH, MATRIX_HEIGHT), 0)
 
-    draw_context = ImageDraw.Draw(glyph_image)
     font_paths = [font_path for font_path in MATRIX_TEXT_FONT_CANDIDATES if os.path.isfile(font_path)]
+    max_width = MATRIX_ASCII_GLYPH_MAX_WIDTH if is_ascii_matrix_glyph(glyph) else MATRIX_WIDE_GLYPH_MAX_WIDTH
+    max_height = MATRIX_ASCII_GLYPH_MAX_HEIGHT if is_ascii_matrix_glyph(glyph) else MATRIX_WIDE_GLYPH_MAX_HEIGHT
 
-    for font_size in range(16, 7, -1):
+    # Render onto a larger grayscale canvas first, then fit back into 16x16.
+    # This keeps thin strokes and adds room for Latin side bearings.
+    for font_size in range(MATRIX_GLYPH_RENDER_CANVAS_SIZE, 11, -2):
         for font_path in font_paths:
             try:
                 font = ImageFont.truetype(font_path, size=font_size)
             except OSError:
                 continue
 
-            bbox = draw_context.textbbox((0, 0), glyph, font=font)
+            render_image = Image.new(
+                "L",
+                (MATRIX_GLYPH_RENDER_CANVAS_SIZE, MATRIX_GLYPH_RENDER_CANVAS_SIZE),
+                0,
+            )
+            render_draw = ImageDraw.Draw(render_image)
+            bbox = render_draw.textbbox(
+                (MATRIX_GLYPH_RENDER_MARGIN, MATRIX_GLYPH_RENDER_MARGIN),
+                glyph,
+                font=font,
+            )
             if bbox is None:
                 continue
 
             glyph_width = bbox[2] - bbox[0]
             glyph_height = bbox[3] - bbox[1]
-            if glyph_width <= 0 or glyph_height <= 0 or glyph_width > MATRIX_WIDTH or glyph_height > MATRIX_HEIGHT:
+            if glyph_width <= 0 or glyph_height <= 0:
+                continue
+            if (
+                glyph_width > (MATRIX_GLYPH_RENDER_CANVAS_SIZE - (MATRIX_GLYPH_RENDER_MARGIN * 2))
+                or glyph_height > (MATRIX_GLYPH_RENDER_CANVAS_SIZE - (MATRIX_GLYPH_RENDER_MARGIN * 2))
+            ):
                 continue
 
-            x_pos = (MATRIX_WIDTH - glyph_width) / 2 - bbox[0]
-            y_pos = (MATRIX_HEIGHT - glyph_height) / 2 - bbox[1]
-            draw_context.text((x_pos, y_pos), glyph, fill=1, font=font)
+            render_draw.text(
+                (MATRIX_GLYPH_RENDER_MARGIN - bbox[0], MATRIX_GLYPH_RENDER_MARGIN - bbox[1]),
+                glyph,
+                fill=255,
+                font=font,
+            )
+            glyph_image = fit_rendered_glyph_mask_to_matrix(
+                render_image,
+                max_width=max_width,
+                max_height=max_height,
+            )
             if glyph_image.getbbox() is not None:
                 return glyph_image
-            draw_context.rectangle((0, 0, MATRIX_WIDTH - 1, MATRIX_HEIGHT - 1), fill=0)
 
     fallback_font = ImageFont.load_default()
-    fallback_bbox = draw_context.textbbox((0, 0), glyph, font=fallback_font)
-    if fallback_bbox is not None:
-        glyph_width = fallback_bbox[2] - fallback_bbox[0]
-        glyph_height = fallback_bbox[3] - fallback_bbox[1]
-        x_pos = (MATRIX_WIDTH - glyph_width) / 2 - fallback_bbox[0]
-        y_pos = (MATRIX_HEIGHT - glyph_height) / 2 - fallback_bbox[1]
-        draw_context.text((x_pos, y_pos), glyph, fill=1, font=fallback_font)
+    fallback_image = Image.new("L", (MATRIX_GLYPH_RENDER_CANVAS_SIZE, MATRIX_GLYPH_RENDER_CANVAS_SIZE), 0)
+    fallback_draw = ImageDraw.Draw(fallback_image)
+    fallback_bbox = fallback_draw.textbbox(
+        (MATRIX_GLYPH_RENDER_MARGIN, MATRIX_GLYPH_RENDER_MARGIN),
+        glyph,
+        font=fallback_font,
+    )
+    if fallback_bbox is None:
+        return Image.new("1", (MATRIX_WIDTH, MATRIX_HEIGHT), 0)
 
-    return glyph_image
+    fallback_draw.text(
+        (MATRIX_GLYPH_RENDER_MARGIN - fallback_bbox[0], MATRIX_GLYPH_RENDER_MARGIN - fallback_bbox[1]),
+        glyph,
+        fill=255,
+        font=fallback_font,
+    )
+    return fit_rendered_glyph_mask_to_matrix(
+        fallback_image,
+        max_width=max_width,
+        max_height=max_height,
+    )
 
 
 def render_text_to_matrix_frame_sequence(
@@ -1709,6 +2095,408 @@ def render_text_to_matrix_frame_sequence(
         "applied": True,
         "tool_name": "self.screen.matrix_16x16.show_text",
     }
+
+
+def normalize_scroll_subtitle_effect_name(effect_name: Any) -> str:
+    normalized_effect_name = normalize_native_effect_name(effect_name or "text_scroll")
+
+    if normalized_effect_name == "text_scroll":
+        return "scroll_left"
+    if normalized_effect_name in {"scroll_left", "scroll_right"}:
+        return normalized_effect_name
+
+    raise ValueError(
+        "scroll subtitle effect must be one of text_scroll, scroll_left, scroll_right, marquee_left, or marquee_right"
+    )
+
+
+def build_text_strip_mask_image(
+    text: str,
+    glyph_spacing: int,
+    leading_padding: int,
+    trailing_padding: int,
+    space_width: int,
+) -> Image.Image:
+    glyph_images: list[Image.Image] = []
+    total_width = max(0, leading_padding) + max(0, trailing_padding)
+
+    for glyph in text:
+        if glyph.isspace():
+            glyph_image = Image.new("1", (max(1, space_width), MATRIX_HEIGHT), 0)
+        else:
+            glyph_image = render_text_glyph_to_mask_image(glyph)
+            glyph_bbox = glyph_image.getbbox()
+            if glyph_bbox is None:
+                glyph_image = Image.new("1", (max(1, space_width), MATRIX_HEIGHT), 0)
+            else:
+                glyph_image = glyph_image.crop((glyph_bbox[0], 0, glyph_bbox[2], MATRIX_HEIGHT))
+                if is_ascii_matrix_glyph(glyph):
+                    padded_glyph_image = Image.new(
+                        "1",
+                        (glyph_image.width + (MATRIX_ASCII_SCROLL_SIDE_PADDING * 2), MATRIX_HEIGHT),
+                        0,
+                    )
+                    padded_glyph_image.paste(glyph_image, (MATRIX_ASCII_SCROLL_SIDE_PADDING, 0))
+                    glyph_image = padded_glyph_image
+
+        glyph_images.append(glyph_image)
+        total_width += glyph_image.width
+
+    if len(glyph_images) > 1:
+        total_width += glyph_spacing * (len(glyph_images) - 1)
+
+    strip_image = Image.new("1", (max(MATRIX_WIDTH, total_width), MATRIX_HEIGHT), 0)
+    cursor_x = max(0, leading_padding)
+
+    for glyph_index, glyph_image in enumerate(glyph_images):
+        strip_image.paste(glyph_image, (cursor_x, 0))
+        cursor_x += glyph_image.width
+        if glyph_index + 1 < len(glyph_images):
+            cursor_x += glyph_spacing
+
+    return strip_image
+
+
+def build_scroll_subtitle_positions(total_shift: int, step: int, frame_count: int) -> list[int]:
+    if total_shift <= 0:
+        return [0] * max(1, frame_count or 1)
+
+    if frame_count > 0:
+        if frame_count == 1:
+            return [0]
+
+        return [
+            min(total_shift, int(round((frame_index * total_shift) / (frame_count - 1))))
+            for frame_index in range(frame_count)
+        ]
+
+    positions = list(range(0, total_shift + 1, max(1, step)))
+    if positions[-1] != total_shift:
+        positions.append(total_shift)
+    return positions
+
+
+def render_scroll_subtitle_animation(
+    text: str,
+    effect: Optional[Dict[str, Any]] = None,
+    primary_rgb888: str = "",
+    background_rgb888: str = "",
+    frame_interval_ms: int = MATRIX_DEFAULT_SCROLL_INTERVAL_MS,
+    source: str = "mcp_scroll_subtitle",
+    transcript: str = "",
+) -> Dict[str, Any]:
+    text_input = text
+    effect_config = dict(effect or {})
+
+    if not text_input.strip():
+        raise ValueError("text is required")
+    if len(text_input) > MAX_TEXT_FRAME_COUNT:
+        raise ValueError(f"text is too long; keep it under {MAX_TEXT_FRAME_COUNT} characters")
+    if frame_interval_ms < ANIMATION_FRAME_INTERVAL_MIN_MS or frame_interval_ms > ANIMATION_FRAME_INTERVAL_MAX_MS:
+        raise ValueError(
+            f"frame_interval_ms must be between {ANIMATION_FRAME_INTERVAL_MIN_MS} and {ANIMATION_FRAME_INTERVAL_MAX_MS}"
+        )
+
+    effect_name = normalize_scroll_subtitle_effect_name(effect_config.get("name", "text_scroll"))
+    step = max(1, int(effect_config.get("step", 1)))
+    frame_count = max(0, int(effect_config.get("frame_count", 0)))
+    glyph_spacing = max(0, int(effect_config.get("glyph_spacing", MATRIX_DEFAULT_SCROLL_GLYPH_SPACING)))
+    leading_padding = max(0, int(effect_config.get("leading_padding", MATRIX_WIDTH)))
+    trailing_padding = max(0, int(effect_config.get("trailing_padding", MATRIX_WIDTH)))
+    space_width = max(
+        1,
+        int(effect_config.get("space_width", max(MATRIX_SCROLL_SPACE_WIDTH_MIN, glyph_spacing + 2))),
+    )
+
+    # Render the whole subtitle into one off-screen strip, then sample 16x16 windows for transport.
+    strip_image = build_text_strip_mask_image(
+        text=text_input,
+        glyph_spacing=glyph_spacing,
+        leading_padding=leading_padding,
+        trailing_padding=trailing_padding,
+        space_width=space_width,
+    )
+    positions = build_scroll_subtitle_positions(
+        total_shift=max(0, strip_image.width - MATRIX_WIDTH),
+        step=step,
+        frame_count=frame_count,
+    )
+    if effect_name == "scroll_right":
+        positions = list(reversed(positions))
+
+    bitmap_rows_hex_list: list[str] = []
+    for position in positions:
+        window_image = strip_image.crop((position, 0, position + MATRIX_WIDTH, MATRIX_HEIGHT))
+        bitmap_rows_hex_list.append(bitmap_rows_to_hex(build_bitmap_rows_from_mask_image(window_image)))
+
+    animation_result = render_bitmap_animation_frame_sequence(
+        bitmap_rows_hex_list=bitmap_rows_hex_list,
+        primary_rgb888=primary_rgb888,
+        background_rgb888=background_rgb888,
+        frame_interval_ms=frame_interval_ms,
+        source=source,
+        transcript=transcript or text_input,
+    )
+    animation_result["tool_name"] = "self.screen.matrix_16x16.show_scroll_subtitle"
+    animation_result["text"] = text_input
+    animation_result["effect"] = {
+        "name": effect_name,
+        "step": step,
+        "frame_count": frame_count or len(positions),
+        "glyph_spacing": glyph_spacing,
+        "leading_padding": leading_padding,
+        "trailing_padding": trailing_padding,
+        "space_width": space_width,
+    }
+    animation_result["effect_mode"] = "text_strip_scroll"
+    return animation_result
+
+
+def normalize_native_effect_name(effect_name: Any) -> str:
+    normalized = str(effect_name).strip().lower()
+    alias_map = {
+        "scroll": "text_scroll",
+        "scroll_text": "text_scroll",
+        "scroll_subtitle": "text_scroll",
+        "text_scroll_jlu": "text_scroll",
+        "loop_scroll": "scroll_left",
+        "loop_scroll_left": "scroll_left",
+        "loop_scroll_right": "scroll_right",
+        "marquee_left": "scroll_left",
+        "marquee_right": "scroll_right",
+    }
+    return alias_map.get(normalized, normalized)
+
+
+def build_text_glyph_rows_hex(text: str) -> str:
+    glyph_rows_hex_parts: list[str] = []
+
+    for glyph in text:
+        glyph_mask_image = render_text_glyph_to_mask_image(glyph)
+        glyph_rows_hex_parts.append(bitmap_rows_to_hex(build_bitmap_rows_from_mask_image(glyph_mask_image)))
+
+    return "".join(glyph_rows_hex_parts)
+
+
+def build_matrix_action_payload(
+    *,
+    content_type: str,
+    effect_name: str,
+    primary_rgb888: str,
+    secondary_rgb888: str,
+    brightness: int,
+    direction: str,
+    color_mode: str,
+    pattern_id: int,
+    glyph_id: int,
+    scroll_step: int,
+    anim_step: int,
+    gradient_span: int,
+    frame_interval_ms: int,
+    timeline_duration_ms: int,
+    timeline_repeat_delay_ms: int,
+    timeline_repeat_count: int,
+    timeline_path: str,
+    flags: int,
+    animation_flags: int,
+    apply_flags: int,
+    source: str,
+    transcript: str,
+    glyph_rows_hex: str = "",
+    glyph_count: int = 0,
+    glyph_width: int = MATRIX_WIDTH,
+    glyph_spacing: int = 1,
+) -> Dict[str, Any]:
+    resolved_primary_rgb = parse_rgb888(primary_rgb888)
+    resolved_secondary_rgb = parse_rgb888(secondary_rgb888) if secondary_rgb888 else 0
+    normalized_effect_name = normalize_native_effect_name(effect_name)
+    normalized_content_type = str(content_type).strip().lower()
+    normalized_direction = str(direction).strip().lower() or "normal"
+    normalized_color_mode = str(color_mode).strip().lower() or "solid"
+    normalized_timeline_path = str(timeline_path).strip().lower() or "linear"
+    action_flags = int(flags)
+
+    if normalized_content_type not in MATRIX_CONTENT_IDS:
+        raise ValueError(f"Unsupported content_type: {normalized_content_type}")
+    if normalized_effect_name not in MATRIX_EFFECT_IDS:
+        raise ValueError(f"Unsupported effect: {normalized_effect_name}")
+    if normalized_direction not in MATRIX_DIRECTION_IDS:
+        raise ValueError(f"Unsupported direction: {normalized_direction}")
+    if normalized_color_mode not in MATRIX_COLOR_MODE_IDS:
+        raise ValueError(f"Unsupported color_mode: {normalized_color_mode}")
+    if normalized_timeline_path not in MATRIX_TIMELINE_PATH_IDS:
+        raise ValueError(f"Unsupported timeline_path: {normalized_timeline_path}")
+
+    if secondary_rgb888:
+        action_flags |= MATRIX_ACTION_FLAG_USE_SECONDARY
+    if glyph_rows_hex:
+        action_flags |= MATRIX_ACTION_FLAG_USE_UPLOADED_GLYPHS
+
+    return {
+        "data_format": "matrix_action_v2",
+        "content_type": normalized_content_type,
+        "content_id": MATRIX_CONTENT_IDS[normalized_content_type],
+        "effect_name": normalized_effect_name,
+        "effect_id": MATRIX_EFFECT_IDS[normalized_effect_name],
+        "direction": normalized_direction,
+        "direction_id": MATRIX_DIRECTION_IDS[normalized_direction],
+        "color_mode": normalized_color_mode,
+        "color_mode_id": MATRIX_COLOR_MODE_IDS[normalized_color_mode],
+        "brightness": max(0, min(255, int(brightness))),
+        "primary_rgb888": format_rgb888(resolved_primary_rgb),
+        "secondary_rgb888": format_rgb888(resolved_secondary_rgb) if secondary_rgb888 else "",
+        "pattern_id": max(0, int(pattern_id)),
+        "glyph_id": max(0, int(glyph_id)),
+        "scroll_step": max(1, int(scroll_step)),
+        "anim_step": max(1, int(anim_step)),
+        "gradient_span": max(0, min(255, int(gradient_span))),
+        "flags": action_flags,
+        "frame_interval_ms": max(0, int(frame_interval_ms)),
+        "timeline_duration_ms": max(0, int(timeline_duration_ms)),
+        "timeline_repeat_delay_ms": max(0, int(timeline_repeat_delay_ms)),
+        "timeline_repeat_count": max(0, min(255, int(timeline_repeat_count))),
+        "timeline_path": normalized_timeline_path,
+        "timeline_path_id": MATRIX_TIMELINE_PATH_IDS[normalized_timeline_path],
+        "animation_flags": max(0, min(255, int(animation_flags))),
+        "apply_flags": max(0, min(255, int(apply_flags))),
+        "glyph_rows_hex": glyph_rows_hex.lower(),
+        "glyph_count": max(0, int(glyph_count)),
+        "glyph_width": max(0, min(MATRIX_WIDTH, int(glyph_width))),
+        "glyph_spacing": max(0, min(MATRIX_WIDTH, int(glyph_spacing))),
+        "source": source,
+        "transcript": transcript,
+        "applied": True,
+        "tool_name": "self.screen.matrix_16x16.show_effect",
+    }
+
+
+def render_matrix_effect_command(
+    *,
+    effect: str,
+    text: str = "",
+    pattern_name: str = "",
+    pattern_id: Optional[int] = None,
+    primary_rgb888: str = "",
+    secondary_rgb888: str = "",
+    background_rgb888: str = "",
+    brightness: int = MATRIX_DEFAULT_BRIGHTNESS,
+    direction: str = "normal",
+    color_mode: str = "",
+    scroll_step: int = 0,
+    anim_step: int = 0,
+    gradient_span: int = 0,
+    frame_interval_ms: int = 0,
+    timeline_duration_ms: int = 0,
+    timeline_repeat_delay_ms: int = 0,
+    timeline_repeat_count: Optional[int] = None,
+    timeline_path: str = "",
+    flags: int = 0,
+    animation_flags: int = 0,
+    apply_flags: int = 0,
+    source: str = "mcp_effect",
+    transcript: str = "",
+) -> Dict[str, Any]:
+    normalized_effect_name = normalize_native_effect_name(effect)
+    effect_defaults = MATRIX_NATIVE_EFFECT_DEFAULTS.get(normalized_effect_name)
+    normalized_text = str(text)
+    normalized_pattern_name = str(pattern_name).strip().lower()
+    resolved_primary_rgb888 = primary_rgb888 or "#F5F5F5"
+    resolved_secondary_rgb888 = secondary_rgb888 or background_rgb888
+    transcript_text = transcript or normalized_text or normalized_pattern_name or normalized_effect_name
+    resolved_pattern_id = 0
+    content_type = "solid"
+    glyph_rows_hex = ""
+    glyph_count = 0
+
+    if effect_defaults is None:
+        raise ValueError(f"Unsupported effect: {normalized_effect_name}")
+
+    if normalized_text and normalized_pattern_name:
+        raise ValueError("Provide either text or pattern_name/pattern_id, not both")
+
+    if normalized_pattern_name or (pattern_id is not None):
+        content_type = "pattern"
+        if pattern_id is not None:
+            resolved_pattern_id = int(pattern_id)
+        else:
+            if normalized_pattern_name not in MATRIX_PATTERN_IDS:
+                raise ValueError(f"Unsupported pattern_name: {normalized_pattern_name}")
+            resolved_pattern_id = MATRIX_PATTERN_IDS[normalized_pattern_name]
+        if normalized_effect_name == "text_scroll":
+            raise ValueError("text_scroll is only valid for text/glyph content")
+    elif normalized_text:
+        content_type = "glyph"
+        if len(normalized_text) > MATRIX_MAX_DIRECT_GLYPH_COUNT:
+            raise ValueError(
+                f"text is too long for direct LED glyph upload; keep it under {MATRIX_MAX_DIRECT_GLYPH_COUNT} characters "
+                "or use draw_animation"
+            )
+        if (len(normalized_text) > 1) and (normalized_effect_name not in MATRIX_SCROLL_EFFECT_NAMES):
+            raise ValueError(
+                "Direct LED text effects support multi-glyph text only for text_scroll, scroll_left, and scroll_right"
+            )
+        glyph_rows_hex = build_text_glyph_rows_hex(normalized_text)
+        glyph_count = len(normalized_text)
+
+    resolved_color_mode = color_mode or str(effect_defaults["color_mode"])
+    resolved_scroll_step = scroll_step if scroll_step > 0 else int(effect_defaults["scroll_step"])
+    resolved_anim_step = anim_step if anim_step > 0 else int(effect_defaults["anim_step"])
+    resolved_gradient_span = gradient_span if gradient_span > 0 else int(effect_defaults["gradient_span"])
+    resolved_frame_interval_ms = frame_interval_ms if frame_interval_ms > 0 else int(effect_defaults["frame_interval_ms"])
+    resolved_timeline_duration_ms = (
+        timeline_duration_ms if timeline_duration_ms > 0 else int(effect_defaults["timeline_duration_ms"])
+    )
+    resolved_timeline_repeat_delay_ms = (
+        timeline_repeat_delay_ms
+        if timeline_repeat_delay_ms > 0
+        else int(effect_defaults["timeline_repeat_delay_ms"])
+    )
+    resolved_timeline_repeat_count = (
+        int(timeline_repeat_count)
+        if timeline_repeat_count is not None
+        else int(effect_defaults["timeline_repeat_count"])
+    )
+    resolved_timeline_path = timeline_path or str(effect_defaults["timeline_path"])
+
+    if resolved_color_mode == "gradient" and not resolved_secondary_rgb888:
+        resolved_secondary_rgb888 = "#000000"
+
+    if apply_flags == 0:
+        if content_type == "pattern":
+            apply_flags = MATRIX_APPLY_FLAG_PATTERN
+        elif content_type == "glyph":
+            apply_flags = MATRIX_APPLY_FLAG_GLYPH
+        else:
+            apply_flags = MATRIX_APPLY_FLAG_PATTERN | MATRIX_APPLY_FLAG_GLYPH
+
+    return build_matrix_action_payload(
+        content_type=content_type,
+        effect_name=normalized_effect_name,
+        primary_rgb888=resolved_primary_rgb888,
+        secondary_rgb888=resolved_secondary_rgb888,
+        brightness=brightness,
+        direction=direction,
+        color_mode=resolved_color_mode,
+        pattern_id=resolved_pattern_id,
+        glyph_id=0,
+        scroll_step=resolved_scroll_step,
+        anim_step=resolved_anim_step,
+        gradient_span=resolved_gradient_span,
+        frame_interval_ms=resolved_frame_interval_ms,
+        timeline_duration_ms=resolved_timeline_duration_ms,
+        timeline_repeat_delay_ms=resolved_timeline_repeat_delay_ms,
+        timeline_repeat_count=resolved_timeline_repeat_count,
+        timeline_path=resolved_timeline_path,
+        flags=flags,
+        animation_flags=animation_flags,
+        apply_flags=apply_flags,
+        source=source,
+        transcript=transcript_text,
+        glyph_rows_hex=glyph_rows_hex,
+        glyph_count=glyph_count,
+        glyph_width=MATRIX_WIDTH,
+        glyph_spacing=1,
+    )
 
 
 def build_png_chunk(chunk_type: bytes, chunk_data: bytes) -> bytes:
@@ -1892,7 +2680,7 @@ def build_random_matrix_frame_payload(transcript: str, source: str = "debug_ws")
             "blink", "flash", "wipe_left", "wipe_right",
             "marquee_left", "marquee_right", "breathe", "fade_in", "fade_out",
         ))
-        frame_count = random.randint(6, 24)
+        frame_count = random.randint(8, MAX_ANIMATION_FRAME_COUNT)
         interval_ms = random.choice((42, 70, 100, 120, 160, 200, 300, 420))
         effect_params: Dict[str, Any] = {"name": effect_name, "frame_count": frame_count}
         if effect_name == "blink":
@@ -1926,7 +2714,7 @@ def build_random_matrix_frame_payload(transcript: str, source: str = "debug_ws")
     # --- 20%: ops_sequence animation (loading circle, moving square, etc.) ---
     anim_type = random.choice(("circle_loading", "square_move", "cross_fade", "snake"))
     interval_ms = random.choice((70, 100, 120, 160))
-    frame_count = random.randint(8, 24)
+    frame_count = random.randint(8, MAX_ANIMATION_FRAME_COUNT)
 
     if anim_type == "circle_loading":
         ops_seq = _build_loading_circle_ops(frame_count)
@@ -1986,13 +2774,37 @@ def _build_loading_circle_ops(frame_count: int) -> list[list[Dict[str, Any]]]:
 
 
 def _build_moving_square_ops(frame_count: int) -> list[list[Dict[str, Any]]]:
-    """Build a bouncing square animation."""
+    """Build a square tracing a closed rectangular path for seamless looping.
+
+    The square moves along the perimeter of the available draw area: top edge →
+    right edge → bottom edge → left edge → back to start.  The last frame places
+    the square one step before the first-frame position, so the loop transition
+    is a natural advance along the path."""
     frames: list[list[Dict[str, Any]]] = []
     size = 4
+    max_x = MATRIX_WIDTH - size   # 12
+    max_y = MATRIX_HEIGHT - size  # 12
+    # Perimeter length in steps: top + right + bottom + left
+    perimeter = 2 * (max_x + max_y)  # 48
+
     for idx in range(frame_count):
-        phase = idx / max(1, frame_count - 1)
-        x0 = int((MATRIX_WIDTH - size) * (0.5 + 0.4 * _math.sin(phase * _math.pi * 2)))
-        y0 = int((MATRIX_HEIGHT - size) * (0.5 + 0.3 * _math.cos(phase * _math.pi * 3)))
+        dist = (idx * perimeter) // frame_count  # 0 → perimeter-1 (one step short)
+        if dist < max_x:
+            # Top edge: left → right
+            x0, y0 = dist, 0
+        elif dist < max_x + max_y:
+            # Right edge: top → bottom
+            x0, y0 = max_x, dist - max_x
+        elif dist < 2 * max_x + max_y:
+            # Bottom edge: right → left
+            x0, y0 = 2 * max_x + max_y - dist - 1, max_y
+        else:
+            # Left edge: bottom → top
+            x0, y0 = 0, perimeter - dist - 1
+
+        # Clamp to valid range
+        x0 = max(0, min(max_x, x0))
+        y0 = max(0, min(max_y, y0))
         frames.append([
             {"op": "clear", "fill": 0},
             {"op": "rectangle", "x0": x0, "y0": y0, "x1": x0 + size, "y1": y0 + size},
@@ -2001,43 +2813,67 @@ def _build_moving_square_ops(frame_count: int) -> list[list[Dict[str, Any]]]:
 
 
 def _build_cross_fade_ops(frame_count: int) -> list[list[Dict[str, Any]]]:
-    """Build alternating cross/diamond fade pattern."""
+    """Build cross/diamond alternating pattern with smooth transitions.
+
+    Cross→diamond→cross→... with gradual shape morphing so the loop point
+    connects the last frame naturally back to the first frame."""
     frames: list[list[Dict[str, Any]]] = []
+    half = max(1, frame_count // 2)
     for idx in range(frame_count):
-        if idx < frame_count // 2:
+        if idx < half:
             frames.append([
                 {"op": "clear", "fill": 0},
                 {"op": "line", "x0": 0, "y0": 0, "x1": 15, "y1": 15, "width": 1},
                 {"op": "line", "x0": 15, "y0": 0, "x1": 0, "y1": 15, "width": 1},
             ])
-        else:
+        elif idx < half + (frame_count - half) // 2:
             cx, cy, r = 7, 7, 5
             frames.append([
                 {"op": "clear", "fill": 0},
                 {"op": "fill_ellipse", "x0": cx - r, "y0": cy - r, "x1": cx + r, "y1": cy + r},
             ])
+        else:
+            cx, cy, r = 7, 7, 5
+            frames.append([
+                {"op": "clear", "fill": 0},
+                {"op": "ellipse", "x0": cx - r, "y0": cy - r, "x1": cx + r, "y1": cy + r},
+            ])
     return frames
 
 
 def _build_snake_ops(frame_count: int) -> list[list[Dict[str, Any]]]:
-    """Build a snake-like moving line animation."""
+    """Build a snake tracing the full perimeter for seamless looping.
+
+    The snake head walks a closed path: top row (0→15) → right column (1→14) →
+    bottom row (15→0) → left column (14→1) → back to (0,0).  The last frame
+    places the head one step before the first-frame position."""
     frames: list[list[Dict[str, Any]]] = []
     length = 6
+    # Closed perimeter: top(16) + right(14) + bottom(15) + left(13) = 58
+    perimeter = MATRIX_WIDTH + (MATRIX_HEIGHT - 2) + (MATRIX_WIDTH - 1) + (MATRIX_HEIGHT - 3)
+
+    def _head_pos(pos: int):
+        """Return (x, y) for a head position along the closed perimeter."""
+        p = pos % perimeter
+        if p < MATRIX_WIDTH:
+            return (p, 0)
+        p -= MATRIX_WIDTH
+        if p < MATRIX_HEIGHT - 2:
+            return (MATRIX_WIDTH - 1, p + 1)
+        p -= MATRIX_HEIGHT - 2
+        if p < MATRIX_WIDTH - 1:
+            return (MATRIX_WIDTH - 2 - p, MATRIX_HEIGHT - 1)
+        p -= MATRIX_WIDTH - 1
+        return (0, MATRIX_HEIGHT - 2 - p)
+
     for idx in range(frame_count):
-        head = idx % (MATRIX_WIDTH * 2 - 2)
-        if head < MATRIX_WIDTH:
-            hx, hy = head, 0
-        else:
-            hx, hy = MATRIX_WIDTH - 1, head - MATRIX_WIDTH + 1
+        head = (idx * perimeter) // frame_count  # 0 → perimeter-1 (one step short)
         segments = []
         for s in range(length):
             pos = head - s
             if pos < 0:
                 pos = 0
-            if pos < MATRIX_WIDTH:
-                sx, sy = pos, 0
-            else:
-                sx, sy = MATRIX_WIDTH - 1, pos - MATRIX_WIDTH + 1
+            sx, sy = _head_pos(pos)
             if 0 <= sx < MATRIX_WIDTH and 0 <= sy < MATRIX_HEIGHT:
                 segments.append({"op": "point", "x": sx, "y": sy})
         frames.append([{"op": "clear", "fill": 0}] + segments)
@@ -2076,6 +2912,48 @@ def _strip_frame_payload_for_transport(frame_payload: Dict[str, Any]) -> Dict[st
     }
 
 
+def _strip_action_payload_for_transport(action_payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Strip a native matrix action payload down to the fields needed by the AI-side debug websocket."""
+    return {
+        k: v for k, v in action_payload.items()
+        if k in (
+            "data_format",
+            "content_type",
+            "content_id",
+            "effect_name",
+            "effect_id",
+            "direction",
+            "direction_id",
+            "color_mode",
+            "color_mode_id",
+            "brightness",
+            "primary_rgb888",
+            "secondary_rgb888",
+            "pattern_id",
+            "glyph_id",
+            "scroll_step",
+            "anim_step",
+            "gradient_span",
+            "flags",
+            "frame_interval_ms",
+            "timeline_duration_ms",
+            "timeline_repeat_delay_ms",
+            "timeline_repeat_count",
+            "timeline_path",
+            "timeline_path_id",
+            "animation_flags",
+            "apply_flags",
+            "glyph_rows_hex",
+            "glyph_count",
+            "glyph_width",
+            "glyph_spacing",
+            "source",
+            "transcript",
+            "tool_name",
+        )
+    }
+
+
 def build_jlu_scroll_animation(
     primary_rgb888: str = "#F5F5F5",
     background_rgb888: str = "#000000",
@@ -2083,11 +2961,17 @@ def build_jlu_scroll_animation(
     source: str = "debug_ws",
     transcript: str = "吉林大学",
 ) -> Dict[str, Any]:
-    """Build a smooth 24-frame horizontal scroll animation of '吉林大学' text."""
+    """Build a smooth horizontal scroll animation of '吉林大学' text.
+
+    Text scrolls right-to-left across the 16×16 matrix with a 4-px trailing gap.
+    total_width = 72 (68 px text + 4 px gap) with frame_count = 24 gives a
+    uniform 3 px/step advance.  Cyclic modulo wrapping on total_width makes the
+    last-frame→first-frame loop transition identical to every other frame step."""
     glyph_count = len(_JLU_GLYPHS)
     glyph_advance = _JLU_GLYPH_WIDTH + _JLU_GLYPH_SPACING
-    text_width = glyph_count * glyph_advance
-    total_width = text_width + MATRIX_WIDTH  # scroll-in + scroll-out
+    text_width = glyph_count * glyph_advance  # 68 px of actual glyph content
+    trailing_pad = 4
+    total_width = text_width + trailing_pad  # 72 px (divisible by 24 → 3 px/step)
     frame_count = 24
 
     # Pre-unpack glyph rows for fast column lookup
@@ -2104,12 +2988,12 @@ def build_jlu_scroll_animation(
 
     frames: list[str] = []
     for frame_idx in range(frame_count):
-        offset = (frame_idx * total_width) // frame_count
+        offset = (frame_idx * total_width) // frame_count  # 0, 3, 6, ..., 69
         frame_rows = [0] * MATRIX_HEIGHT
         for screen_col in range(MATRIX_WIDTH):
-            virtual_col = screen_col + offset
-            if virtual_col < 0 or virtual_col >= text_width:
-                continue
+            virtual_col = (screen_col + offset) % total_width
+            if virtual_col >= text_width:
+                continue  # trailing gap column, leave blank
             glyph_idx = virtual_col // glyph_advance
             glyph_col = virtual_col % glyph_advance
             if glyph_idx < glyph_count and glyph_col < _JLU_GLYPH_WIDTH:
@@ -2183,7 +3067,7 @@ def build_tool_list() -> list[Dict[str, Any]]:
         },
         {
             "name": "self.screen.matrix_16x16.draw_frame",
-            "description": "Draw one 16x16 matrix frame via layered bitmap format. Provide bitmap_rows_hex (64 hex chars = 16x16 bitmap) plus primary_rgb888 and optional background_rgb888. Internally converts to the layered bitmap protocol (BITMAP_LAYERED).",
+            "description": "Draw a single 16x16 image on the LED matrix display. Use this when the user asks to show a specific pre-computed bitmap or ASCII art pattern on the LED screen. Provide bitmap_rows_hex (64 hex chars = 16x16 bitmap) plus primary_rgb888 and optional background_rgb888. For generating new shapes from user descriptions, prefer self.screen.matrix_16x16.draw_python instead.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -2208,17 +3092,17 @@ def build_tool_list() -> list[Dict[str, Any]]:
         },
         {
             "name": "self.screen.matrix_16x16.draw_python",
-            "description": "Primary LLM drawing tool. Execute restricted Pillow ImageDraw-style Python statements, evaluate restricted Python expressions with eval(), and return one unified 16x16 frame payload.",
+            "description": "Draw shapes, patterns, or pictures on the 16x16 LED matrix display. Call this tool whenever the user asks to draw, paint, create, or display geometric shapes (squares, circles, triangles, rectangles, polygons, lines), patterns, simple icons, or any visual content on the LED screen. The canvas is 16 pixels wide by 16 pixels tall. Use ops for declarative drawing, python_source/eval_source for algorithmic patterns. For text display use show_text or show_scroll_subtitle instead. For animation sequences use draw_animation.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "python_source": {
                         "type": "string",
-                        "description": "Restricted Python drawing statements. Use draw.point, draw.line, draw.rectangle, draw.ellipse, draw.polygon, helper functions like line(...), fill_rectangle(...), fill_circle(...), or eval(\"<expression>\") for nested dynamic drawing.",
+                        "description": "Restricted Python drawing statements on the pre-created 16x16 canvas. Allowed: draw.point/line/rectangle/ellipse/polygon, helper functions like line(...), fill_rectangle(...), fill_circle(...), or eval(\"<expression>\"). Forbidden: import, from PIL, Image.new, ImageDraw.Draw, or file/network access.",
                     },
                     "eval_source": {
                         "type": "string",
-                        "description": "Restricted Python expression evaluated with eval(). Prefer this for comprehensions, conditional expressions, or other dynamic draw patterns. If both python_source and eval_source are provided, python_source runs first.",
+                        "description": "Restricted Python expression evaluated with eval(). Prefer this for comprehensions, conditional expressions, or other dynamic draw patterns. Same sandbox as python_source: no import, no PIL objects, no Image.new. If both python_source and eval_source are provided, python_source runs first.",
                     },
                     "ops": build_draw_python_ops_schema(),
                     "primary_rgb888": {
@@ -2241,7 +3125,7 @@ def build_tool_list() -> list[Dict[str, Any]]:
         },
         {
             "name": "self.screen.matrix_16x16.show_text",
-            "description": "Convert text into a 16x16 frame sequence and deliver each frame to the AI preview through the debug websocket when available.",
+            "description": "Display text on the 16x16 LED matrix, rendering each character as a separate frame. Call this tool when the user asks to show text, letters, or words on the LED display (NOT for scrolling subtitles — use show_scroll_subtitle for that).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -2264,8 +3148,92 @@ def build_tool_list() -> list[Dict[str, Any]]:
             },
         },
         {
+            "name": "self.screen.matrix_16x16.show_scroll_subtitle",
+            "description": "Display scrolling subtitles/marquee text on the LED matrix. Call this tool when the user asks for scrolling text, running messages, or marquee-style subtitles on the LED display. It rasterizes the full text into an off-screen bitmap strip, then emits a matrix_frame_sequence_v2 animation using effect parameters. For static (non-scrolling) text, use show_text. For drawing shapes, use draw_python.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "Required subtitle text. The bridge renders the full string into one off-screen strip before extracting 16x16 animation frames.",
+                    },
+                    "effect": {
+                        "type": "object",
+                        "description": "Optional horizontal scroll effect config. Supported names: text_scroll, scroll_left, scroll_right, marquee_left, marquee_right. Omit to use text_scroll defaults.",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "step": {"type": "integer", "minimum": 1, "maximum": 8},
+                            "frame_count": {"type": "integer", "minimum": 2, "maximum": 96},
+                            "glyph_spacing": {"type": "integer", "minimum": 0, "maximum": 8},
+                            "leading_padding": {"type": "integer", "minimum": 0, "maximum": 32},
+                            "trailing_padding": {"type": "integer", "minimum": 0, "maximum": 32},
+                            "space_width": {"type": "integer", "minimum": 1, "maximum": 16}
+                        }
+                    },
+                    "frame_interval_ms": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 65535,
+                        "description": "Delay between consecutive animation frames in milliseconds. 96 ms is a good default for readable subtitle scroll.",
+                    },
+                    "primary_rgb888": {"type": "string"},
+                    "background_rgb888": {"type": "string"},
+                    "source": {"type": "string"},
+                    "transcript": {"type": "string"}
+                },
+                "required": ["text"],
+            },
+        },
+        {
+            "name": "self.screen.matrix_16x16.show_effect",
+            "description": "Apply a native LED-side effect or display a built-in pattern on the LED matrix. Call this tool when the user asks to change the display mode, apply effects (breath, gradient, fade, scroll, color cycle), switch to a built-in pattern (diamond, cross, border, checker, diagonal, jlu_emblem), or set the LED screen to a solid color. For drawing custom shapes, prefer self.screen.matrix_16x16.draw_python. For scrolling subtitles, prefer self.screen.matrix_16x16.show_scroll_subtitle.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "effect": {
+                        "type": "string",
+                        "description": "Required native effect name. Supported values: static, breath, gradient, scroll_left, scroll_right, text_scroll, fade_in, fade_out, color_cycle, row_reveal, row_hide, gradient_reveal. Aliases marquee_left/right and loop_scroll_left/right are also accepted.",
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Optional text source for glyph-based native effects. Multi-character direct mode is supported for text_scroll/scroll_left/scroll_right only.",
+                    },
+                    "pattern_name": {
+                        "type": "string",
+                        "description": "Optional built-in LED-side pattern name: diamond, cross, jlu_emblem, checker, border, diagonal_x.",
+                    },
+                    "pattern_id": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 15,
+                        "description": "Optional raw built-in pattern id. Use pattern_name unless you already know the numeric id.",
+                    },
+                    "primary_rgb888": {"type": "string"},
+                    "secondary_rgb888": {"type": "string"},
+                    "background_rgb888": {"type": "string"},
+                    "brightness": {"type": "integer", "minimum": 0, "maximum": 255},
+                    "direction": {"type": "string", "enum": ["normal", "rotate_180", "rotate_cw_90", "rotate_ccw_90"]},
+                    "color_mode": {"type": "string", "enum": ["solid", "gradient"]},
+                    "scroll_step": {"type": "integer", "minimum": 1, "maximum": 32},
+                    "anim_step": {"type": "integer", "minimum": 1, "maximum": 32},
+                    "gradient_span": {"type": "integer", "minimum": 0, "maximum": 255},
+                    "frame_interval_ms": {"type": "integer", "minimum": 0, "maximum": 65535},
+                    "timeline_duration_ms": {"type": "integer", "minimum": 0, "maximum": 65535},
+                    "timeline_repeat_delay_ms": {"type": "integer", "minimum": 0, "maximum": 65535},
+                    "timeline_repeat_count": {"type": "integer", "minimum": 0, "maximum": 255},
+                    "timeline_path": {"type": "string", "enum": ["linear", "ease_in_out", "breath_curve"]},
+                    "flags": {"type": "integer", "minimum": 0, "maximum": 255},
+                    "animation_flags": {"type": "integer", "minimum": 0, "maximum": 255},
+                    "apply_flags": {"type": "integer", "minimum": 0, "maximum": 255},
+                    "source": {"type": "string"},
+                    "transcript": {"type": "string"},
+                },
+                "required": ["effect"],
+            },
+        },
+        {
             "name": "self.screen.matrix_16x16.draw_animation",
-            "description": "Transmit a compact 16x16 bitmap animation sequence for LED-side buffered playback. Each frame is a 32-byte 1-bit bitmap plus foreground/background RGB888, for a total compact frame size of 38 bytes. The LED side buffers 24 frames; if more frames are supplied, the bridge resamples them to 24 and scales frame_interval_ms to preserve the overall duration. Do not implement timing in python_source with sleep/yield style logic; animation timing is controlled only by frame_interval_ms.",
+            "description": "Play an animation sequence on the LED matrix display. Call this tool when the user asks for animated content, motion effects, or multi-frame sequences. Transmits compact 16x16 bitmap frames for LED-side buffered playback (max 32 frames). Each frame is a 32-byte 1-bit bitmap plus foreground/background RGB888. If more frames are supplied, the bridge resamples them to 32 and scales frame_interval_ms to preserve the overall duration. Do not implement timing in python_source with sleep/yield style logic; animation timing is controlled only by frame_interval_ms. For single-frame drawings, prefer self.screen.matrix_16x16.draw_python. For scrolling text, prefer self.screen.matrix_16x16.show_scroll_subtitle. For static effects on solid/pattern content, prefer self.screen.matrix_16x16.show_effect.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -2836,6 +3804,25 @@ def handle_local_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Dict[st
             transcript=str(arguments.get("transcript", "")),
         )
 
+    if tool_name in SCROLL_SUBTITLE_TOOL_NAMES:
+        effect_argument = arguments.get("effect")
+        if effect_argument in (None, "", []):
+            effect_config: Dict[str, Any] = {}
+        elif isinstance(effect_argument, dict):
+            effect_config = effect_argument
+        else:
+            effect_config = {"name": effect_argument}
+
+        return render_scroll_subtitle_animation(
+            text=str(arguments.get("text", "")),
+            effect=effect_config,
+            primary_rgb888=str(arguments.get("primary_rgb888", "#F5F5F5")),
+            background_rgb888=str(arguments.get("background_rgb888", "#000000")),
+            frame_interval_ms=int(arguments.get("frame_interval_ms", MATRIX_DEFAULT_SCROLL_INTERVAL_MS)),
+            source=str(arguments.get("source", "mcp_scroll_subtitle")),
+            transcript=str(arguments.get("transcript", "")),
+        )
+
     if tool_name in ANIMATION_SEQUENCE_TOOL_NAMES:
         resolved_primary_rgb888 = str(arguments.get("primary_rgb888", "#F5F5F5"))
         resolved_background_rgb888 = str(arguments.get("background_rgb888", "#000000"))
@@ -2867,6 +3854,33 @@ def handle_local_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Dict[st
 
         return animation_result
 
+    if tool_name in EFFECT_COMMAND_TOOL_NAMES:
+        return render_matrix_effect_command(
+            effect=str(arguments.get("effect", "")),
+            text=str(arguments.get("text", "")),
+            pattern_name=str(arguments.get("pattern_name", arguments.get("pattern", ""))),
+            pattern_id=arguments.get("pattern_id"),
+            primary_rgb888=str(arguments.get("primary_rgb888", "#F5F5F5")),
+            secondary_rgb888=str(arguments.get("secondary_rgb888", "")),
+            background_rgb888=str(arguments.get("background_rgb888", "")),
+            brightness=int(arguments.get("brightness", MATRIX_DEFAULT_BRIGHTNESS)),
+            direction=str(arguments.get("direction", "normal")),
+            color_mode=str(arguments.get("color_mode", "")),
+            scroll_step=int(arguments.get("scroll_step", 0)),
+            anim_step=int(arguments.get("anim_step", 0)),
+            gradient_span=int(arguments.get("gradient_span", 0)),
+            frame_interval_ms=int(arguments.get("frame_interval_ms", 0)),
+            timeline_duration_ms=int(arguments.get("timeline_duration_ms", 0)),
+            timeline_repeat_delay_ms=int(arguments.get("timeline_repeat_delay_ms", 0)),
+            timeline_repeat_count=arguments.get("timeline_repeat_count"),
+            timeline_path=str(arguments.get("timeline_path", "")),
+            flags=int(arguments.get("flags", 0)),
+            animation_flags=int(arguments.get("animation_flags", 0)),
+            apply_flags=int(arguments.get("apply_flags", 0)),
+            source=str(arguments.get("source", "mcp_effect")),
+            transcript=str(arguments.get("transcript", "")),
+        )
+
     if tool_name in PROMPT_RENDER_TOOL_NAMES:
         return render_prompt_to_matrix_frame(
             prompt=str(arguments.get("prompt", "")),
@@ -2881,25 +3895,46 @@ def handle_local_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Dict[st
 
 async def send_payload_via_ws(send_fn, payload, default_interval_ms, status):
     """Unified WS sender: auto-detects animation vs single frame. Module-level so both
-    McpBridgeServer and LocalDebugWebSocketServer can share it."""
+    McpBridgeServer and LocalDebugWebSocketServer can share it.
+
+    Animations are sent as a single batched message (matrix_animation_batch) so the
+    ESP32 receives all frames at once and can pipeline them to the LED without
+    per-frame WebSocket round-trip delays.  This eliminates the 'dead air' gap
+    between the old animation stopping and the new one starting."""
+    if str(payload.get("data_format", "")).strip().lower() == "matrix_action_v2":
+        stripped_action = _strip_action_payload_for_transport(payload)
+        await send_fn({"type": "matrix_action_result", **stripped_action})
+        update_matrix_status(status, stripped_action, "debug_ws_sent")
+        return {"requested": True, "transport": "debug_ws", "sent": True, "action": True}
+
     frames = payload.get("frames")
     if isinstance(frames, list) and frames:
         interval_ms = max(1, int(payload.get("frame_interval_ms", default_interval_ms)))
-        await send_fn({"type": "matrix_animation_start", "content_type": "animation",
-                       "frame_count": len(frames), "frame_interval_ms": interval_ms,
-                       "source": payload.get("source", ""), "transcript": payload.get("transcript", "")})
-        for fp in frames:
+        primary_rgb888 = str(payload.get("primary_rgb888", "#F5F5F5"))
+        background_rgb888 = str(payload.get("background_rgb888", "#000000"))
+        source = str(payload.get("source", ""))
+        transcript = str(payload.get("transcript", ""))
+
+        batched_frames = []
+        for frame_index, fp in enumerate(frames):
             if not isinstance(fp, dict):
                 continue
             stripped = _strip_frame_payload_for_transport(fp)
-            stripped["frame_interval_ms"] = interval_ms
-            await send_fn({"type": "matrix_pattern_result", **stripped})
+            stripped.pop("frame_interval_ms", None)
+            stripped["frame_index"] = frame_index
+            batched_frames.append(stripped)
             update_matrix_status(status, stripped, "debug_ws_sent")
-        await send_fn({"type": "matrix_animation_end", "content_type": "animation",
-                       "frame_count": len(frames), "frame_interval_ms": interval_ms,
-                       "source": payload.get("source", ""), "transcript": payload.get("transcript", "")})
+
+        await send_fn({"type": "matrix_animation_batch",
+                       "frame_count": len(batched_frames),
+                       "frame_interval_ms": interval_ms,
+                       "primary_rgb888": primary_rgb888,
+                       "background_rgb888": background_rgb888,
+                       "source": source,
+                       "transcript": transcript,
+                       "frames": batched_frames})
         return {"requested": True, "transport": "debug_ws", "sent": True,
-                "frame_count": len(frames), "frame_interval_ms": interval_ms}
+                "frame_count": len(batched_frames), "frame_interval_ms": interval_ms}
 
     stripped = _strip_frame_payload_for_transport(payload)
     await send_fn({"type": "matrix_pattern_result", **stripped})

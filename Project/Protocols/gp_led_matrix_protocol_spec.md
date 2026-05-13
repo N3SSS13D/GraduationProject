@@ -80,6 +80,8 @@ V2 版本明确以以下目标为优先级：
 | `SetMode` | `0x03` | 设置播放模式 |
 | `StateHint` | `0x04` | 同步 `AI端` 当前状态 |
 | `SetAction` | `0x05` | 下发本地动作描述（图案、效果、颜色、方向等） |
+| `SetTime` | `0x08` | 同步 `AI端` Wi-Fi 实时时间到 `LED端` 本地时钟缓存 |
+| `RequestCachedBitmap` | `0x09` | `LED端` 请求 `AI端` 重发最近一次单帧位图 |
 | `FrameStart` | `0x10` | 开始一次帧传输（保留兼容） |
 | `FrameChunk` | `0x11` | 分片发送帧数据（保留兼容） |
 | `FrameCommit` | `0x12` | 提交并显示帧（保留兼容） |
@@ -174,7 +176,65 @@ AnimationEnd(0x15) → [frame_count:1]
 - 主/次 RGB888 颜色
 - `pattern_id` / `glyph_id`
 - `scroll_step` / `anim_step` / `gradient_span`
-- `flags`：是否使用次色、是否进入远程模式、是否释放远程模式
+- `flags`：是否使用次色、是否进入远程模式、是否释放远程模式、是否使用已上传字模
+- `frame_interval_ms`
+- `timeline_duration_ms` / `timeline_repeat_delay_ms` / `timeline_repeat_count` / `timeline_path`
+- `animation_flags` / `apply_flags`
+
+当前活动版本中，`GpMatrixActionPayload` 已扩展为 `28` 字节，并与 `LED端` 的 `GpLedDisplayProfile` 核心时序参数对齐。新增动作效果包括：
+
+- `row_reveal`
+- `row_hide`
+- `gradient_reveal`
+
+本次协议约定补充：当 `SetAction` 的 `content = state` 且 `animation_flags` 携带 `GpMatrixLocalControlAction` 时，
+`LED端` 不再把该包解释为颜色/图案状态，而是直接执行本地离线方案动作：
+
+- `next_pattern`
+- `show_text_scroll`
+- `show_clock`
+- `toggle_text_clock`
+- `next_effect`
+- `next_color`
+
+该分支继续复用同一个 `28` 字节 `GpMatrixActionPayload`，不新增串口命令字；此时 `apply_flags` 与常规渲染字段可保持 `0`。
+
+当主机侧通过 `matrix_action_result` 请求字幕滚动或自定义字模效果时，应先完成 `ScrollGlyphStart + ScrollGlyphChunk + ScrollGlyphCommit` 字模上传，再发送带 `USE_UPLOADED_GLYPHS` 标志位的 `SetAction`。当前共享协议头允许最多 `256` 字节字模上传，等价于最多 `8` 个 `16x16` 字模。
+
+#### 时间同步负载（`SetTime`, `0x08`）
+
+`SetTime` 使用固定 `6` 字节负载：
+
+| 字段 | 长度 | 说明 |
+| --- | --- | --- |
+| `year` | 1 | 相对 `2000` 年的偏移量，例如 `26` 表示 `2026` |
+| `month` | 1 | `1..12` |
+| `day` | 1 | `1..31`，由 `LED端` 结合年月校验 |
+| `hour` | 1 | `0..23` |
+| `minute` | 1 | `0..59` |
+| `second` | 1 | `0..59` |
+
+行为约束：
+
+1. `AI端` 在蓝牙链路建立后即可发送一次 `SetTime`，之后按秒发送当前 Wi-Fi 同步得到的本地时间。
+2. `LED端` 收到后只更新本地三行时钟缓存，不切换显示模式，也不改变远程接管状态。
+3. `LED端` 在两次 `SetTime` 之间使用本地软件时基递增秒数，因此短暂丢包不会让时钟立即停住。
+4. 该命令通常可以不带 `ACK_REQUIRED`；联调或链路诊断阶段可按需开启 ACK。
+
+#### 主机缓存位图重取（`RequestCachedBitmap`, `0x09`）
+
+`RequestCachedBitmap` 当前使用空负载：
+
+| 字段 | 长度 | 说明 |
+| --- | --- | --- |
+| payload | 0 | 预留；当前版本无需额外参数 |
+
+行为约束：
+
+1. `LED端` 在本地按键切换到“最近 AI 图片”本地图案槽时发送该命令，请求 `AI端` 重新下发最近一次单帧位图。
+2. `AI端` 收到后不返回专用 Reply，而是直接重发最近缓存的单帧位图；若当前没有缓存位图，则仅记录警告。
+3. `LED端` 收到重发位图后，总是先更新本地图案槽缓存；只有当前未选中该本地图案槽时，才继续按远程直接帧方式接管显示。
+4. 该命令默认不带 `ACK_REQUIRED`，避免和正常图像 ACK 流相互阻塞。
 
 #### RGB332 帧（保留兼容）
 
@@ -194,8 +254,9 @@ AnimationEnd(0x15) → [frame_count:1]
 
 1. **优先使用 `LayeredFrame`(0x18)** 发送单帧，免三次握手。
 2. 动画使用 `AnimationStart + LayeredAnimFrame×N + AnimationEnd`。
-3. 对需要确认的关键命令启用 `ACK_REQUIRED`。
-4. 旧命令 `FrameStart/FrameChunk/FrameCommit` 和 `AnimationFrame` 保留兼容。
+3. 对可直接映射为 `LED端` 原生效果的任务，优先使用 `ScrollGlyph* + SetAction` 或仅 `SetAction`，避免主机侧重复合成逐帧动画。
+4. 对需要确认的关键命令启用 `ACK_REQUIRED`。
+5. 旧命令 `FrameStart/FrameChunk/FrameCommit` 和 `AnimationFrame` 保留兼容。
 
 ### 当前验证重点
 

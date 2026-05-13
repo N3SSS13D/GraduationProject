@@ -37,6 +37,10 @@
 
 #define TAG "AudioService"
 
+namespace {
+constexpr uint32_t kUplinkDropLogInterval = 16;
+}
+
 AudioService::AudioService() {
     event_group_ = xEventGroupCreate();
 }
@@ -175,9 +179,11 @@ void AudioService::Stop() {
 
     std::lock_guard<std::mutex> lock(audio_queue_mutex_);
     audio_encode_queue_.clear();
+    audio_send_queue_.clear();
     audio_decode_queue_.clear();
     audio_playback_queue_.clear();
     audio_testing_queue_.clear();
+    timestamp_queue_.clear();
     audio_queue_cv_.notify_all();
 }
 
@@ -337,7 +343,7 @@ void AudioService::OpusCodecTask() {
         std::unique_lock<std::mutex> lock(audio_queue_mutex_);
         audio_queue_cv_.wait(lock, [this]() {
             return service_stopped_ ||
-                (!audio_encode_queue_.empty() && audio_send_queue_.size() < MAX_SEND_PACKETS_IN_QUEUE) ||
+                !audio_encode_queue_.empty() ||
                 (!audio_decode_queue_.empty() && audio_playback_queue_.size() < MAX_PLAYBACK_TASKS_IN_QUEUE);
         });
         if (service_stopped_) {
@@ -400,7 +406,7 @@ void AudioService::OpusCodecTask() {
             debug_statistics_.decode_count++;
         }
         /* Encode the audio to send queue */
-        if (!audio_encode_queue_.empty() && audio_send_queue_.size() < MAX_SEND_PACKETS_IN_QUEUE) {
+        if (!audio_encode_queue_.empty()) {
             auto task = std::move(audio_encode_queue_.front());
             audio_encode_queue_.pop_front();
             audio_queue_cv_.notify_all();
@@ -429,7 +435,21 @@ void AudioService::OpusCodecTask() {
                     if (task->type == kAudioTaskTypeEncodeToSendQueue) {
                         {
                             std::lock_guard<std::mutex> lock2(audio_queue_mutex_);
+                            /* Keep the uplink path realtime. If transport send falls behind,
+                             * drop the oldest encoded packet instead of blocking AFE fetch. */
+                            if (audio_send_queue_.size() >= MAX_SEND_PACKETS_IN_QUEUE) {
+                                audio_send_queue_.pop_front();
+                                debug_statistics_.uplink_packet_drop_count++;
+                                if ((debug_statistics_.uplink_packet_drop_count == 1) ||
+                                    ((debug_statistics_.uplink_packet_drop_count % kUplinkDropLogInterval) == 0)) {
+                                    ESP_LOGW(TAG,
+                                        "Dropping oldest uplink Opus packet, send queue full (drops=%lu, depth=%u)",
+                                        debug_statistics_.uplink_packet_drop_count,
+                                        (unsigned int)audio_send_queue_.size());
+                                }
+                            }
                             audio_send_queue_.push_back(std::move(packet));
+                            audio_queue_cv_.notify_all();
                         }
                         if (callbacks_.on_send_queue_available) {
                             callbacks_.on_send_queue_available();
@@ -506,7 +526,22 @@ void AudioService::PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t
         timestamp_queue_.pop_front();
     }
 
-    audio_queue_cv_.wait(lock, [this]() { return audio_encode_queue_.size() < MAX_ENCODE_TASKS_IN_QUEUE; });
+    /* Never block the AFE fetch task behind a saturated uplink queue. Keep the newest
+     * PCM frames and discard the oldest buffered realtime frame when transport stalls. */
+    if ((type == kAudioTaskTypeEncodeToSendQueue) && (audio_encode_queue_.size() >= MAX_ENCODE_TASKS_IN_QUEUE)) {
+        audio_encode_queue_.pop_front();
+        debug_statistics_.uplink_pcm_drop_count++;
+        if ((debug_statistics_.uplink_pcm_drop_count == 1) ||
+            ((debug_statistics_.uplink_pcm_drop_count % kUplinkDropLogInterval) == 0)) {
+            ESP_LOGW(TAG,
+                "Dropping oldest uplink PCM frame, encode queue full (drops=%lu, depth=%u)",
+                debug_statistics_.uplink_pcm_drop_count,
+                (unsigned int)audio_encode_queue_.size());
+        }
+    } else {
+        audio_queue_cv_.wait(lock, [this]() { return audio_encode_queue_.size() < MAX_ENCODE_TASKS_IN_QUEUE; });
+    }
+
     audio_encode_queue_.push_back(std::move(task));
     audio_queue_cv_.notify_all();
 }
@@ -534,6 +569,11 @@ std::unique_ptr<AudioStreamPacket> AudioService::PopPacketFromSendQueue() {
     audio_send_queue_.pop_front();
     audio_queue_cv_.notify_all();
     return packet;
+}
+
+bool AudioService::HasPendingSendPackets() {
+    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+    return !audio_send_queue_.empty();
 }
 
 void AudioService::EncodeWakeWord() {
@@ -589,6 +629,10 @@ void AudioService::EnableVoiceProcessing(bool enable) {
     if (enable) {
         if (!audio_processor_initialized_) {
             audio_processor_->Initialize(codec_, OPUS_FRAME_DURATION_MS, models_list_);
+            if (audio_processor_->GetFeedSize() == 0) {
+                ESP_LOGE(TAG, "Audio processor initialization failed: invalid feed size");
+                return;
+            }
             audio_processor_initialized_ = true;
         }
 
@@ -603,11 +647,25 @@ void AudioService::EnableVoiceProcessing(bool enable) {
                 esp_ae_rate_cvt_reset(input_resampler_);
             }
         }
+        {
+            std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+            audio_encode_queue_.clear();
+            audio_send_queue_.clear();
+            timestamp_queue_.clear();
+            audio_queue_cv_.notify_all();
+        }
         audio_processor_->Start();
         xEventGroupSetBits(event_group_, AS_EVENT_AUDIO_PROCESSOR_RUNNING);
     } else {
         audio_processor_->Stop();
         xEventGroupClearBits(event_group_, AS_EVENT_AUDIO_PROCESSOR_RUNNING);
+        {
+            std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+            audio_encode_queue_.clear();
+            audio_send_queue_.clear();
+            timestamp_queue_.clear();
+            audio_queue_cv_.notify_all();
+        }
     }
 }
 

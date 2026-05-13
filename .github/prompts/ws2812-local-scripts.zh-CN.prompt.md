@@ -37,18 +37,22 @@ model: "GPT-5 (copilot)"
 
 1. MCP 工具名与参数名必须自解释。
 2. 脚本 payload 格式必须与当前协议文档一致。
-3. 主机脚本链路必须收敛到 `AI端` 预览/上传接口。
-4. 不要绕过 `AI端` 调度，直接假定 `LED端` 原始串口细节。
-5. 若脚本流程变化，同步更新 `Project/Script/README.md` 与 `Doc/Instructions/problem_tracking.md`。
-6. 默认将 `Project/Script/tools/ws2812_auto_debug.py` 作为联调自动化主入口。
-7. 自动联调链路默认顺序必须保持：
+3. 主机桥工具命名空间保持在 `self.screen.matrix_16x16.*`；`self.screen.matrix_16x16.local.*` 只保留给 `AI端`
+   本地调试辅助工具，不能把这些本地工具名写进主机脚本 MCP 调用或使用说明。
+4. 主机脚本链路必须收敛到 `AI端` 预览/上传接口。
+5. 不要绕过 `AI端` 调度，直接假定 `LED端` 原始串口细节。
+6. 若脚本流程变化，同步更新 `Project/Script/README.md` 与 `Doc/Instructions/problem_tracking.md`。
+7. 当显示需求可以直接映射为 `LED端` 原生纯色/图案/文字效果时，优先使用 `self.screen.matrix_16x16.show_effect` 和 `matrix_action_result`，不要默认把它拆成动画帧。
+8. 当需求是“原始字幕文本 + 横向滚动参数 + 图像序列传输”时，优先使用 `self.screen.matrix_16x16.show_scroll_subtitle`，不要默认手工展开成 `draw_animation` 帧列表。
+9. 默认将 `Project/Script/tools/ws2812_auto_debug.py` 作为联调自动化主入口。
+10. 自动联调链路默认顺序必须保持：
    - 仅执行 `Project/STC51/ws2812_driver/ws2812_driver.uvproj` 的 Keil 编译，不做下载
    - 等待 `20s` 后打开 `AI8051U` 串口监视（默认 `COM15`，可参数覆盖）
    - 执行 `Project/xiaozhi-esp32` 的 ESP-IDF `build flash monitor`
-8. 工具路径必须可配置且执行前先校验：
+11. 工具路径必须可配置且执行前先校验：
    - Keil 根目录：`S:\Embedded\Keil`
    - ESP-IDF 根目录：`S:\Embedded\ESP\v5.4.3\esp-idf`
-9. 自动化入口变更后必须清理旧引用，不能保留失效脚本路径。
+12. 自动化入口变更后必须清理旧引用，不能保留失效脚本路径。
 
 ## 输出格式
 

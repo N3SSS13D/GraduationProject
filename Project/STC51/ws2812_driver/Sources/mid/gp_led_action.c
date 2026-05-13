@@ -1,8 +1,10 @@
 #include "config.h"
+#include "app.h"
 #include "draw_drv.h"
 #include "offline_pattern.h"
 #include "gp_led_action.h"
-#include "test_image.h"
+#include "rtc_clock.h"
+#include "local_display_assets.h"
 #include "ws2812_drv.h"
 
 #define GP_LED_COMM_ACTIVE_TIMEOUT_TICKS 300U
@@ -27,12 +29,10 @@ static uint16_t g_gpLedAnimationFrameIntervalMs = GP_MATRIX_ANIMATION_DEFAULT_IN
 static uint16_t g_gpLedAnimationElapsedMs = 0U;
 static uint16_t g_gpLedCommActiveTicks = 0U;
 static uint16_t g_gpLedDebugFlowTicks = 0U;
-/* Direct-frame rendering shares a single scratch area to reduce EDATA usage. */
-static DrawDrv_RenderConfig_t xdata g_gpLedRenderCfg;
-/* Compact remote animations keep up to 24 variable-size frames for loop playback.
-   BITMAP_RGB888 frames use 38 bytes; BITMAP_LAYERED frames use up to GP_MATRIX_ANIMATION_LAYERED_MAX_FRAME_SIZE. */
-static uint8_t xdata g_gpLedAnimationFrames[GP_MATRIX_ANIMATION_MAX_FRAMES][GP_MATRIX_ANIMATION_LAYERED_MAX_FRAME_SIZE];
+/* Keep buffered playback in one canonical 36-byte single-layer format to cap storage at 32 x 36 bytes. */
+static uint8_t xdata g_gpLedAnimationFrames[GP_MATRIX_ANIMATION_MAX_FRAMES][GP_MATRIX_BITMAP_LAYER_TOTAL_BYTES];
 static uint8_t xdata g_gpLedAnimationFrameValid[GP_MATRIX_ANIMATION_MAX_FRAMES];
+static uint8_t xdata g_gpLedRemotePatternFrame[GP_MATRIX_RGB332_FRAME_SIZE];
 static uint8_t xdata g_gpLedTempRow = 0U;
 static uint8_t xdata g_gpLedTempCol = 0U;
 static uint8_t xdata g_gpLedTempRowMapped = 0U;
@@ -52,9 +52,18 @@ static GpLedDisplayProfile xdata g_gpLedProfile;
 
 static void GpLedAction_RenderBitmapFrameRgb888(const uint8_t xdata *frameData, uint8_t brightness);
 static void GpLedAction_RenderBitmapLayeredFrame(const uint8_t xdata *frameData, uint16_t length, uint8_t brightness);
+static uint8_t GpLedAction_ValidateLayeredFrame(const uint8_t xdata *frameData, uint16_t length);
+static GpMatrixStatusCode GpLedAction_ApplyLocalControlAction(uint8_t localControlAction);
 static GpMatrixStatusCode GpLedAction_ApplyDisplayProfileCore(const GpLedDisplayProfile xdata *profile,
                                                               uint8_t requireHostControl,
                                                               uint8_t markRemoteActive);
+static uint8_t GpLedAction_StoreCanonicalAnimationFrame(uint8_t frameIndex,
+                                                        const uint8_t xdata *frameData,
+                                                        uint16_t length);
+static uint8_t GpLedAction_PackRgb332(uint8_t red, uint8_t green, uint8_t blue);
+static void GpLedAction_CacheRemoteRgb332Frame(const uint8_t xdata *frameData);
+static void GpLedAction_CacheRemoteBitmapFrameRgb888(const uint8_t xdata *frameData);
+static void GpLedAction_CacheRemoteBitmapLayeredFrame(const uint8_t xdata *frameData, uint16_t length);
 
 static void GpLedAction_ResetAnimationState(void)
 {
@@ -82,16 +91,9 @@ static void GpLedAction_RenderAnimationFrame(uint8_t frameIndex)
         return;
     }
 
-    if (g_gpLedAnimationFrameFormat == GP_MATRIX_PAYLOAD_FORMAT_BITMAP_LAYERED)
-    {
-        GpLedAction_RenderBitmapLayeredFrame(g_gpLedAnimationFrames[frameIndex],
-                                              GP_MATRIX_ANIMATION_LAYERED_MAX_FRAME_SIZE,
-                                              g_gpLedDefaultBrightness);
-    }
-    else
-    {
-        GpLedAction_RenderBitmapFrameRgb888(g_gpLedAnimationFrames[frameIndex], g_gpLedDefaultBrightness);
-    }
+    GpLedAction_RenderBitmapLayeredFrame(g_gpLedAnimationFrames[frameIndex],
+                                         GP_MATRIX_BITMAP_LAYER_TOTAL_BYTES,
+                                         g_gpLedDefaultBrightness);
 }
 
 static uint8_t GpLedAction_AreAnimationFramesReady(uint8_t frameCount)
@@ -149,6 +151,253 @@ static uint8_t GpLedAction_ScaleColor(uint8_t value, uint8_t brightness)
     return (uint8_t)(scaled / 255U);
 }
 
+static uint8_t GpLedAction_PackRgb332(uint8_t red, uint8_t green, uint8_t blue)
+{
+    return (uint8_t)((red & 0xE0U) | ((green >> 3) & 0x1CU) | ((blue >> 6) & 0x03U));
+}
+
+static void GpLedAction_CacheRemoteRgb332Frame(const uint8_t xdata *frameData)
+{
+    if (frameData == 0)
+    {
+        return;
+    }
+
+    for (g_gpLedTempPixelIndex = 0U; g_gpLedTempPixelIndex < GP_MATRIX_RGB332_FRAME_SIZE; ++g_gpLedTempPixelIndex)
+    {
+        g_gpLedRemotePatternFrame[g_gpLedTempPixelIndex] = frameData[g_gpLedTempPixelIndex];
+    }
+
+    (void)DrawDrv_LoadRemotePatternFrame(g_gpLedRemotePatternFrame, GP_MATRIX_RGB332_FRAME_SIZE);
+}
+
+static void GpLedAction_CacheRemoteBitmapFrameRgb888(const uint8_t xdata *frameData)
+{
+    const uint8_t xdata *bitmapData;
+    const uint8_t xdata *colorData;
+    uint8_t primaryPacked;
+    uint8_t backgroundPacked;
+
+    if (frameData == 0)
+    {
+        return;
+    }
+
+    bitmapData = frameData;
+    colorData = &frameData[GP_MATRIX_BITMAP_ROWS_BYTES];
+    primaryPacked = GpLedAction_PackRgb332(colorData[0], colorData[1], colorData[2]);
+    backgroundPacked = GpLedAction_PackRgb332(colorData[3], colorData[4], colorData[5]);
+
+    for (g_gpLedTempRow = 0U; g_gpLedTempRow < GP_MATRIX_HEIGHT; ++g_gpLedTempRow)
+    {
+        g_gpLedTempRowBits = (uint16_t)bitmapData[(uint16_t)g_gpLedTempRow * 2U];
+        g_gpLedTempRowBits |= (uint16_t)bitmapData[(uint16_t)g_gpLedTempRow * 2U + 1U] << 8;
+        for (g_gpLedTempCol = 0U; g_gpLedTempCol < GP_MATRIX_WIDTH; ++g_gpLedTempCol)
+        {
+            g_gpLedTempPixelIndex = (uint16_t)g_gpLedTempRow * GP_MATRIX_WIDTH + g_gpLedTempCol;
+            if ((g_gpLedTempRowBits & (uint16_t)(0x8000U >> g_gpLedTempCol)) != 0U)
+            {
+                g_gpLedRemotePatternFrame[g_gpLedTempPixelIndex] = primaryPacked;
+            }
+            else
+            {
+                g_gpLedRemotePatternFrame[g_gpLedTempPixelIndex] = backgroundPacked;
+            }
+        }
+    }
+
+    (void)DrawDrv_LoadRemotePatternFrame(g_gpLedRemotePatternFrame, GP_MATRIX_RGB332_FRAME_SIZE);
+}
+
+static void GpLedAction_CacheRemoteBitmapLayeredFrame(const uint8_t xdata *frameData, uint16_t length)
+{
+    const uint8_t xdata *layerData;
+    const uint8_t xdata *bitmapData;
+    uint8_t totalLayers;
+    uint8_t layerPacked;
+    uint16_t layerLimit;
+    uint16_t layerOffset;
+
+    if ((frameData == 0) || (length < GP_MATRIX_BITMAP_LAYER_TOTAL_BYTES))
+    {
+        return;
+    }
+
+    totalLayers = (uint8_t)(frameData[0] >> 4);
+    if ((totalLayers == 0U) || ((uint16_t)totalLayers * GP_MATRIX_BITMAP_LAYER_TOTAL_BYTES > length))
+    {
+        return;
+    }
+
+    for (g_gpLedTempPixelIndex = 0U; g_gpLedTempPixelIndex < GP_MATRIX_RGB332_FRAME_SIZE; ++g_gpLedTempPixelIndex)
+    {
+        g_gpLedRemotePatternFrame[g_gpLedTempPixelIndex] = (uint8_t)LOCALDISPLAY_ASSET_BG_RGB332;
+    }
+
+    layerLimit = (uint16_t)totalLayers * GP_MATRIX_BITMAP_LAYER_TOTAL_BYTES;
+    for (layerOffset = 0U; layerOffset < layerLimit; layerOffset += GP_MATRIX_BITMAP_LAYER_TOTAL_BYTES)
+    {
+        layerData = &frameData[layerOffset];
+        bitmapData = &layerData[GP_MATRIX_BITMAP_LAYER_HEADER_BYTES];
+        layerPacked = GpLedAction_PackRgb332(layerData[GP_MATRIX_BITMAP_LAYER_HEADER_BYTES
+                                                        + GP_MATRIX_BITMAP_LAYER_BITMAP_BYTES],
+                                             layerData[GP_MATRIX_BITMAP_LAYER_HEADER_BYTES
+                                                        + GP_MATRIX_BITMAP_LAYER_BITMAP_BYTES + 1U],
+                                             layerData[GP_MATRIX_BITMAP_LAYER_HEADER_BYTES
+                                                        + GP_MATRIX_BITMAP_LAYER_BITMAP_BYTES + 2U]);
+
+        for (g_gpLedTempRow = 0U; g_gpLedTempRow < GP_MATRIX_HEIGHT; ++g_gpLedTempRow)
+        {
+            g_gpLedTempRowBits = (uint16_t)bitmapData[(uint16_t)g_gpLedTempRow * 2U];
+            g_gpLedTempRowBits |= (uint16_t)bitmapData[(uint16_t)g_gpLedTempRow * 2U + 1U] << 8;
+            for (g_gpLedTempCol = 0U; g_gpLedTempCol < GP_MATRIX_WIDTH; ++g_gpLedTempCol)
+            {
+                if ((g_gpLedTempRowBits & (uint16_t)(0x8000U >> g_gpLedTempCol)) == 0U)
+                {
+                    continue;
+                }
+
+                g_gpLedTempPixelIndex = (uint16_t)g_gpLedTempRow * GP_MATRIX_WIDTH + g_gpLedTempCol;
+                g_gpLedRemotePatternFrame[g_gpLedTempPixelIndex] = layerPacked;
+            }
+        }
+    }
+
+    (void)DrawDrv_LoadRemotePatternFrame(g_gpLedRemotePatternFrame, GP_MATRIX_RGB332_FRAME_SIZE);
+}
+
+static uint8_t GpLedAction_IsBlackColorTriplet(const uint8_t xdata *colorData)
+{
+    if (colorData == 0)
+    {
+        return 0U;
+    }
+
+    if ((colorData[0] != 0U) || (colorData[1] != 0U) || (colorData[2] != 0U))
+    {
+        return 0U;
+    }
+
+    return 1U;
+}
+
+static uint8_t GpLedAction_IsFullBitmapMask(const uint8_t xdata *bitmapData)
+{
+    uint8_t byteIndex;
+
+    if (bitmapData == 0)
+    {
+        return 0U;
+    }
+
+    for (byteIndex = 0U; byteIndex < GP_MATRIX_BITMAP_ROWS_BYTES; ++byteIndex)
+    {
+        if (bitmapData[byteIndex] != 0xFFU)
+        {
+            return 0U;
+        }
+    }
+
+    return 1U;
+}
+
+static void GpLedAction_CopyCanonicalLayerFrame(uint8_t frameIndex,
+                                                const uint8_t xdata *bitmapData,
+                                                const uint8_t xdata *colorData)
+{
+    uint8_t byteIndex;
+    uint8_t xdata *dest;
+
+    dest = g_gpLedAnimationFrames[frameIndex];
+    dest[0] = 0x10U;
+    for (byteIndex = 0U; byteIndex < GP_MATRIX_BITMAP_ROWS_BYTES; ++byteIndex)
+    {
+        dest[1U + byteIndex] = bitmapData[byteIndex];
+    }
+
+    dest[1U + GP_MATRIX_BITMAP_ROWS_BYTES] = colorData[0];
+    dest[1U + GP_MATRIX_BITMAP_ROWS_BYTES + 1U] = colorData[1];
+    dest[1U + GP_MATRIX_BITMAP_ROWS_BYTES + 2U] = colorData[2];
+}
+
+static uint8_t GpLedAction_CanonicalizeLayeredAnimationFrame(uint8_t frameIndex,
+                                                             const uint8_t xdata *frameData,
+                                                             uint16_t length)
+{
+    uint8_t totalLayers;
+    const uint8_t xdata *layer0;
+    const uint8_t xdata *layer1;
+    const uint8_t xdata *bitmapData;
+    const uint8_t xdata *colorData;
+
+    if (GpLedAction_ValidateLayeredFrame(frameData, length) == 0U)
+    {
+        return 0U;
+    }
+
+    totalLayers = (uint8_t)(frameData[0] >> 4);
+    if (totalLayers == 1U)
+    {
+        bitmapData = frameData + GP_MATRIX_BITMAP_LAYER_HEADER_BYTES;
+        colorData = frameData + GP_MATRIX_BITMAP_LAYER_HEADER_BYTES + GP_MATRIX_BITMAP_LAYER_BITMAP_BYTES;
+        GpLedAction_CopyCanonicalLayerFrame(frameIndex, bitmapData, colorData);
+        return 1U;
+    }
+
+    if ((totalLayers != 2U) || (length != (uint16_t)(GP_MATRIX_BITMAP_LAYER_TOTAL_BYTES * 2U)))
+    {
+        return 0U;
+    }
+
+    layer0 = frameData;
+    layer1 = frameData + GP_MATRIX_BITMAP_LAYER_TOTAL_BYTES;
+    if (((layer0[0] & 0x0FU) != 0U) || ((layer1[0] & 0x0FU) != 1U))
+    {
+        return 0U;
+    }
+
+    bitmapData = layer0 + GP_MATRIX_BITMAP_LAYER_HEADER_BYTES;
+    colorData = layer0 + GP_MATRIX_BITMAP_LAYER_HEADER_BYTES + GP_MATRIX_BITMAP_LAYER_BITMAP_BYTES;
+    if ((GpLedAction_IsFullBitmapMask(bitmapData) == 0U) || (GpLedAction_IsBlackColorTriplet(colorData) == 0U))
+    {
+        return 0U;
+    }
+
+    bitmapData = layer1 + GP_MATRIX_BITMAP_LAYER_HEADER_BYTES;
+    colorData = layer1 + GP_MATRIX_BITMAP_LAYER_HEADER_BYTES + GP_MATRIX_BITMAP_LAYER_BITMAP_BYTES;
+    GpLedAction_CopyCanonicalLayerFrame(frameIndex, bitmapData, colorData);
+    return 1U;
+}
+
+static void GpLedAction_CanonicalizeRgb888AnimationFrame(uint8_t frameIndex,
+                                                         const uint8_t xdata *frameData)
+{
+    const uint8_t xdata *bitmapData;
+    const uint8_t xdata *colorData;
+
+    bitmapData = frameData;
+    colorData = frameData + GP_MATRIX_BITMAP_ROWS_BYTES;
+    GpLedAction_CopyCanonicalLayerFrame(frameIndex, bitmapData, colorData);
+}
+
+static uint8_t GpLedAction_StoreCanonicalAnimationFrame(uint8_t frameIndex,
+                                                        const uint8_t xdata *frameData,
+                                                        uint16_t length)
+{
+    if (g_gpLedAnimationFrameFormat == GP_MATRIX_PAYLOAD_FORMAT_BITMAP_LAYERED)
+    {
+        return GpLedAction_CanonicalizeLayeredAnimationFrame(frameIndex, frameData, length);
+    }
+
+    if (length != GP_MATRIX_BITMAP_RGB888_FRAME_SIZE)
+    {
+        return 0U;
+    }
+
+    GpLedAction_CanonicalizeRgb888AnimationFrame(frameIndex, frameData);
+    return 1U;
+}
+
 static void GpLedAction_BeginDirectFrame(void)
 {
     (void)WS2812DRV_SetDisplayMode(WS2812DRV_MODE_16X16);
@@ -194,29 +443,6 @@ static void GpLedAction_RenderRgb332Frame(const uint8_t xdata *frameData, uint8_
             g_gpLedTempG = GpLedAction_ScaleColor(g_gpLedTempG, brightness);
             g_gpLedTempB = GpLedAction_ScaleColor(g_gpLedTempB, brightness);
             WS2812DRV_SetPixelRgbFast(g_gpLedTempRow, g_gpLedTempCol, g_gpLedTempR, g_gpLedTempG, g_gpLedTempB);
-        }
-    }
-    GpLedAction_EndDirectFrame();
-}
-
-static void GpLedAction_RenderGlyphFrame(const uint8_t xdata *glyphData)
-{
-    GpLedAction_BeginDirectFrame();
-    for (g_gpLedTempRow = 0U; g_gpLedTempRow < GP_MATRIX_HEIGHT; ++g_gpLedTempRow)
-    {
-        g_gpLedTempRowMapped = (uint8_t)((GP_MATRIX_HEIGHT - 1U) - g_gpLedTempRow);
-        g_gpLedTempRowBits = (uint16_t)glyphData[(uint16_t)g_gpLedTempRow * 2U];
-        g_gpLedTempRowBits |= (uint16_t)glyphData[(uint16_t)g_gpLedTempRow * 2U + 1U] << 8;
-        for (g_gpLedTempCol = 0U; g_gpLedTempCol < GP_MATRIX_WIDTH; ++g_gpLedTempCol)
-        {
-            if ((g_gpLedTempRowBits & (uint16_t)(0x8000U >> g_gpLedTempCol)) != 0U)
-            {
-                WS2812DRV_SetPixelRgbFast(g_gpLedTempRowMapped, g_gpLedTempCol, 0xFFU, 0xFFU, 0xFFU);
-            }
-            else
-            {
-                WS2812DRV_SetPixelRgbFast(g_gpLedTempRowMapped, g_gpLedTempCol, 0x00U, 0x00U, 0x00U);
-            }
         }
     }
     GpLedAction_EndDirectFrame();
@@ -371,9 +597,37 @@ static uint8_t GpLedAction_ValidateLayeredFrame(const uint8_t xdata *frameData, 
     return 1U;
 }
 
+static GpMatrixStatusCode GpLedAction_ApplyLocalControlAction(uint8_t localControlAction)
+{
+    switch ((GpMatrixLocalControlAction)localControlAction)
+    {
+    case kGpMatrixLocalControlNextPattern:
+        APP_NextOfflinePattern();
+        return kGpMatrixStatusOk;
+    case kGpMatrixLocalControlShowTextScroll:
+        APP_ShowOfflineScrollText();
+        return kGpMatrixStatusOk;
+    case kGpMatrixLocalControlShowClock:
+        APP_ShowOfflineClock();
+        return kGpMatrixStatusOk;
+    case kGpMatrixLocalControlToggleTextClock:
+        APP_ToggleOfflineTextClock();
+        return kGpMatrixStatusOk;
+    case kGpMatrixLocalControlNextEffect:
+        APP_NextOfflineEffect();
+        return kGpMatrixStatusOk;
+    case kGpMatrixLocalControlNextColor:
+        APP_NextOfflineColor();
+        return kGpMatrixStatusOk;
+    case kGpMatrixLocalControlNone:
+    default:
+        return kGpMatrixStatusUnsupported;
+    }
+}
+
 static uint8_t GpLedAction_IsDisplayProfileValid(const GpLedDisplayProfile *profile)
 {
-    if (profile->effect > kGpMatrixEffectColorCycle)
+    if (profile->effect > kGpMatrixEffectGradientReveal)
     {
         return 0U;
     }
@@ -418,17 +672,30 @@ static void GpLedAction_LoadProfileFromAction(const GpMatrixActionPayload xdata 
     profile->animStep = payload->anim_step;
     profile->gradientSpan = payload->gradient_span;
     profile->actionFlags = payload->flags;
-    profile->frameIntervalMs = GP_MATRIX_ANIMATION_DEFAULT_INTERVAL_MS;
-    profile->timelineDurationMs = 0U;
-    profile->timelineRepeatDelayMs = 0U;
-    profile->timelineRepeatCount = 0U;
-    profile->timelinePath = GP_LED_TIMELINE_PATH_LINEAR;
-    profile->animationFlags = 0U;
-    profile->applyFlags = GP_LED_PROFILE_FLAG_APPLY_PATTERN | GP_LED_PROFILE_FLAG_APPLY_GLYPH;
+    profile->frameIntervalMs = GP_MATRIX_READ_LE16(&payload->frame_interval_ms_lo);
+    profile->timelineDurationMs = GP_MATRIX_READ_LE16(&payload->timeline_duration_ms_lo);
+    profile->timelineRepeatDelayMs = GP_MATRIX_READ_LE16(&payload->timeline_repeat_delay_ms_lo);
+    profile->timelineRepeatCount = payload->timeline_repeat_count;
+    profile->timelinePath = payload->timeline_path;
+    profile->animationFlags = payload->animation_flags;
+    profile->applyFlags = payload->apply_flags;
+
+    if (profile->frameIntervalMs == 0U)
+    {
+        profile->frameIntervalMs = DRAWDRV_FRAME_INTERVAL_MS_DEFAULT;
+    }
+    if (profile->timelinePath > GP_LED_TIMELINE_PATH_BREATH_CURVE)
+    {
+        profile->timelinePath = GP_LED_TIMELINE_PATH_LINEAR;
+    }
+    if (profile->applyFlags == 0U)
+    {
+        profile->applyFlags = GP_LED_PROFILE_FLAG_APPLY_PATTERN | GP_LED_PROFILE_FLAG_APPLY_GLYPH;
+    }
 }
 
 static void GpLedAction_ProfileToRenderConfig(const GpLedDisplayProfile xdata *profile,
-                                              DrawDrv_RenderConfig_t xdata *renderCfg)
+                                              DrawDrv_RenderConfig_t *renderCfg)
 {
     DrawDrv_GetRenderConfig(renderCfg);
 
@@ -455,6 +722,7 @@ static void GpLedAction_ProfileToRenderConfig(const GpLedDisplayProfile xdata *p
     renderCfg->gradientSpan = (profile->gradientSpan == 0U) ? 96U : profile->gradientSpan;
     renderCfg->scrollStep = (profile->scrollStep == 0U) ? 1U : profile->scrollStep;
     renderCfg->animStep = (profile->animStep == 0U) ? 1U : profile->animStep;
+    renderCfg->frameIntervalMs = DrawDrv_NormalizeFrameIntervalMs(profile->frameIntervalMs);
     renderCfg->timelineDurationMs = profile->timelineDurationMs;
     renderCfg->timelineRepeatDelayMs = profile->timelineRepeatDelayMs;
     renderCfg->timelineRepeatCount = profile->timelineRepeatCount;
@@ -478,10 +746,12 @@ void GpLedAction_Init(void)
 
 void GpLedAction_SetBrightness(uint8_t brightness)
 {
+    DrawDrv_RenderConfig_t *renderCfg;
+
     g_gpLedDefaultBrightness = brightness;
-    DrawDrv_GetRenderConfig(&g_gpLedRenderCfg);
-    g_gpLedRenderCfg.brightness = brightness;
-    DrawDrv_SetRenderConfig(&g_gpLedRenderCfg);
+    renderCfg = DrawDrv_GetRenderConfigStorage();
+    renderCfg->brightness = brightness;
+    DrawDrv_SetRenderConfig(renderCfg);
     if (g_gpLedDirectFrameActive == 0U)
     {
         DrawDrv_RequestRebuild();
@@ -679,8 +949,6 @@ GpMatrixStatusCode GpLedAction_StoreAnimationFrame(uint8_t frameIndex,
                                                    const uint8_t xdata *frameData,
                                                    uint16_t length)
 {
-    uint8_t byteIndex;
-
     if (GpLedAction_IsHostControlEnabled() == 0U)
     {
         return kGpMatrixStatusBusy;
@@ -710,10 +978,11 @@ GpMatrixStatusCode GpLedAction_StoreAnimationFrame(uint8_t frameIndex,
         }
     }
 
-    for (byteIndex = 0U; byteIndex < (uint8_t)length; ++byteIndex)
+    if (GpLedAction_StoreCanonicalAnimationFrame(frameIndex, frameData, length) == 0U)
     {
-        g_gpLedAnimationFrames[frameIndex][byteIndex] = frameData[byteIndex];
+        return kGpMatrixStatusUnsupported;
     }
+
     g_gpLedAnimationFrameValid[frameIndex] = 1U;
     return kGpMatrixStatusOk;
 }
@@ -746,6 +1015,8 @@ static GpMatrixStatusCode GpLedAction_ApplyDisplayProfileCore(const GpLedDisplay
                                                               uint8_t requireHostControl,
                                                               uint8_t markRemoteActive)
 {
+    DrawDrv_RenderConfig_t *renderCfg;
+
     if (profile == 0)
     {
         return kGpMatrixStatusInternalError;
@@ -768,25 +1039,37 @@ static GpMatrixStatusCode GpLedAction_ApplyDisplayProfileCore(const GpLedDisplay
     }
 
     /* Keep animation/mode switches in one control entry to avoid path drift between local and remote routes. */
-    GpLedAction_ProfileToRenderConfig(profile, &g_gpLedRenderCfg);
+    renderCfg = DrawDrv_GetRenderConfigStorage();
+    GpLedAction_ProfileToRenderConfig(profile, renderCfg);
     if (profile->content == kGpMatrixActionContentSolid)
     {
-        g_gpLedRenderCfg.contentType = DRAWDRV_CONTENT_SOLID;
-        DrawDrv_SetRenderConfig(&g_gpLedRenderCfg);
+        renderCfg->contentType = DRAWDRV_CONTENT_SOLID;
+        DrawDrv_SetRenderConfig(renderCfg);
     }
     else if (profile->content == kGpMatrixActionContentPattern)
     {
-        g_gpLedRenderCfg.contentType = DRAWDRV_CONTENT_PATTERN;
-        DrawDrv_SetRenderConfig(&g_gpLedRenderCfg);
+        renderCfg->contentType = DRAWDRV_CONTENT_PATTERN;
+        DrawDrv_SetRenderConfig(renderCfg);
         if ((profile->applyFlags & GP_LED_PROFILE_FLAG_APPLY_PATTERN) != 0U)
         {
-            DrawDrv_SetImageIndex((uint8_t)(profile->patternId % OfflinePattern_GetCount()));
+            DrawDrv_SetImageIndex(profile->patternId);
         }
     }
     else
     {
-        g_gpLedRenderCfg.contentType = DRAWDRV_CONTENT_GLYPH;
-        DrawDrv_SetRenderConfig(&g_gpLedRenderCfg);
+        renderCfg->contentType = DRAWDRV_CONTENT_GLYPH;
+        DrawDrv_SetRenderConfig(renderCfg);
+        if ((profile->actionFlags & GP_MATRIX_ACTION_FLAG_USE_UPLOADED_GLYPHS) != 0U)
+        {
+            if (DrawDrv_SelectCustomTextGlyphRows(1U) == 0U)
+            {
+                return kGpMatrixStatusBadSequence;
+            }
+        }
+        else
+        {
+            (void)DrawDrv_SelectCustomTextGlyphRows(0U);
+        }
         if (((profile->applyFlags & GP_LED_PROFILE_FLAG_APPLY_GLYPH) != 0U)
             && (DrawDrv_SetTextDisplayGlyph(profile->glyphId) == 0U))
         {
@@ -826,8 +1109,25 @@ GpMatrixStatusCode GpLedAction_ApplyAction(const GpMatrixActionPayload xdata *pa
         return kGpMatrixStatusInternalError;
     }
 
+    /* Keep local/offline scheme actions on the existing SetAction transport path without growing the payload. */
+    if ((payload->content == kGpMatrixActionContentState)
+        && (payload->animation_flags != (uint8_t)kGpMatrixLocalControlNone))
+    {
+        return GpLedAction_ApplyLocalControlAction(payload->animation_flags);
+    }
+
     GpLedAction_LoadProfileFromAction(payload, &g_gpLedProfile);
     return GpLedAction_ApplyDisplayProfile(&g_gpLedProfile);
+}
+
+GpMatrixStatusCode GpLedAction_SyncClockTime(const GpMatrixTimeSyncPayload xdata *payload)
+{
+    if (RtcClock_SyncTime(payload) == 0U)
+    {
+        return kGpMatrixStatusUnsupported;
+    }
+
+    return kGpMatrixStatusOk;
 }
 
 GpMatrixStatusCode GpLedAction_ApplyFrameRgb332(const uint8_t xdata *frameData, uint16_t length, GpMatrixMode mode)
@@ -848,6 +1148,14 @@ GpMatrixStatusCode GpLedAction_ApplyFrameRgb332(const uint8_t xdata *frameData, 
     }
 
     g_gpLedAnimationActive = 0U;
+    GpLedAction_CacheRemoteRgb332Frame(frameData);
+    if (DrawDrv_IsRemotePatternActive() != 0U)
+    {
+        GpLedAction_ReleaseRemoteMode();
+        DrawDrv_RequestRebuild();
+        return kGpMatrixStatusOk;
+    }
+
     GpLedAction_RenderRgb332Frame(frameData, g_gpLedDefaultBrightness);
 
     return kGpMatrixStatusOk;
@@ -875,6 +1183,24 @@ GpMatrixStatusCode GpLedAction_ApplyFrameBitmapRgb888(const uint8_t xdata *frame
         return kGpMatrixStatusUnsupported;
     }
 
+    g_gpLedAnimationActive = 0U;
+    GpLedAction_CacheRemoteBitmapFrameRgb888(frameData);
+    if (DrawDrv_IsRemotePatternActive() != 0U)
+    {
+        GpLedAction_ReleaseRemoteMode();
+        DrawDrv_RequestRebuild();
+        colorData = &frameData[GP_MATRIX_BITMAP_ROWS_BYTES];
+        printf("[GP_DRAW] bmp-cache len=%u fg=%02X%02X%02X bg=%02X%02X%02X\r\n",
+               (unsigned int)length,
+               (unsigned int)colorData[0],
+               (unsigned int)colorData[1],
+               (unsigned int)colorData[2],
+               (unsigned int)colorData[3],
+               (unsigned int)colorData[4],
+               (unsigned int)colorData[5]);
+        return kGpMatrixStatusOk;
+    }
+
     status = GpLedAction_BeginAnimationUpload(GP_MATRIX_PAYLOAD_FORMAT_BITMAP_RGB888,
                                               1U,
                                               GP_MATRIX_ANIMATION_DEFAULT_INTERVAL_MS,
@@ -887,6 +1213,24 @@ GpMatrixStatusCode GpLedAction_ApplyFrameBitmapRgb888(const uint8_t xdata *frame
     status = GpLedAction_StoreAnimationFrame(0U, frameData, length);
     if (status != kGpMatrixStatusOk)
     {
+        if (status == kGpMatrixStatusUnsupported)
+        {
+            GpLedAction_ResetAnimationState();
+            GpLedAction_RenderBitmapFrameRgb888(frameData, g_gpLedDefaultBrightness);
+            colorData = &frameData[GP_MATRIX_BITMAP_ROWS_BYTES];
+            printf("[GP_DRAW] bmp-direct len=%u fg=%02X%02X%02X bg=%02X%02X%02X bri=%u cols=%u\r\n",
+                   (unsigned int)length,
+                   (unsigned int)colorData[0],
+                   (unsigned int)colorData[1],
+                   (unsigned int)colorData[2],
+                   (unsigned int)colorData[3],
+                   (unsigned int)colorData[4],
+                   (unsigned int)colorData[5],
+                   (unsigned int)g_gpLedDefaultBrightness,
+                   (unsigned int)WS2812DRV_GetActiveCols());
+            return kGpMatrixStatusOk;
+        }
+
         return status;
     }
 
@@ -939,9 +1283,20 @@ GpMatrixStatusCode GpLedAction_ApplyFrameBitmapLayered(const uint8_t xdata *fram
 
     /* Stop any running animation so Tick1ms won't overwrite this static frame. */
     g_gpLedAnimationActive = 0U;
+    GpLedAction_CacheRemoteBitmapLayeredFrame(frameData, length);
+    totalLayers = (uint8_t)(frameData[0] >> 4);
+    if (DrawDrv_IsRemotePatternActive() != 0U)
+    {
+        GpLedAction_ReleaseRemoteMode();
+        DrawDrv_RequestRebuild();
+        printf("[GP_DRAW] layered-cache len=%u layers=%u\r\n",
+               (unsigned int)length,
+               (unsigned int)totalLayers);
+        return kGpMatrixStatusOk;
+    }
+
     GpLedAction_RenderBitmapLayeredFrame(frameData, length, g_gpLedDefaultBrightness);
 
-    totalLayers = (uint8_t)(frameData[0] >> 4);
     printf("[GP_DRAW] layered len=%u layers=%u bri=%u cols=%u\r\n",
            (unsigned int)length,
            (unsigned int)totalLayers,
@@ -966,7 +1321,7 @@ GpMatrixStatusCode GpLedAction_ApplyGlyphRows(const uint8_t xdata *glyphData,
     {
         return kGpMatrixStatusUnsupported;
     }
-    if ((glyphSpacing != 0U) && (glyphSpacing != TEST_SCROLL_GLYPH_SPACING))
+    if ((glyphSpacing != 0U) && (glyphSpacing != LOCALDISPLAY_SCROLL_GLYPH_SPACING))
     {
         return kGpMatrixStatusUnsupported;
     }
@@ -976,7 +1331,10 @@ GpMatrixStatusCode GpLedAction_ApplyGlyphRows(const uint8_t xdata *glyphData,
     }
 
     g_gpLedAnimationActive = 0U;
-    GpLedAction_RenderGlyphFrame(glyphData);
+    if (DrawDrv_LoadCustomTextGlyphRows(glyphData, length, glyphCount, glyphWidth, glyphSpacing) == 0U)
+    {
+        return kGpMatrixStatusBadLength;
+    }
 
     return kGpMatrixStatusOk;
 }

@@ -36,7 +36,7 @@ Use this skill for protocol tasks under `Project/Protocols/`:
 
 ## Common protocol flow
 
-- Host drawing contract -> `matrix_pattern_request` / `matrix_pattern_result`
+- Host drawing contract -> `matrix_pattern_request` / `matrix_pattern_result` / `matrix_action_result`
 - AI-side sender -> `gp_led_matrix_esp32.cc`
 - Wire packet layout and limits -> `gp_led_matrix_protocol.h`
 - LED-side parser/executor -> `Sources/drv/gp_led_matrix_ai8051u.c`
@@ -71,7 +71,9 @@ For protocol changes and protocol bug fixes:
 3. If protocol behavior changes, update both the shared header and the matching protocol docs in `Project/Protocols/`.
 4. If a protocol change affects script payload formats or MCP expectations, update the matching docs under
    `Project/Script/`.
-5. When choosing a protocol shape, prioritize unambiguous framing, integrity checks, extensibility, parsing efficiency,
+5. Keep native action contracts explicit: if the host now emits `matrix_action_result`, verify how `SetAction`, glyph
+  upload, and effect/timeline fields stay aligned across protocol docs and consumers.
+6. When choosing a protocol shape, prioritize unambiguous framing, integrity checks, extensibility, parsing efficiency,
   and reliable interaction.
-6. For the active V2 wire format, prefer header-first validation (`header_size` + CRC8), packet-type replies matched by
+7. For the active V2 wire format, prefer header-first validation (`header_size` + CRC8), packet-type replies matched by
   `reply_to_sequence`, and explicit byte offsets for staged frame or glyph chunks.

@@ -19,7 +19,9 @@ This document tracks the current `LED-side` refresh, animation, and scheduler op
 
 ### 2. Offline render and animation path
 
-- `DrawDrv_Task32ms()` advances local effect state and rebuilds one full frame when dirty.
+- `DrawDrv_Task()` advances local effect state and rebuilds one full frame when dirty.
+- Local draw cadence now comes from `DrawDrv_RenderConfig.frameIntervalMs`; the default fallback remains `32 ms`.
+- `scrollStep` and `animStep` remain per-step amplitude controls, while `frameIntervalMs` is the time base.
 - `DrawDrv_RebuildFrame()` writes the active image region into the WS2812 back buffer and then calls `WS2812DRV_EncodeAllRows()`.
 - Offline patterns are provided by `offline_pattern.c`.
 
@@ -28,6 +30,7 @@ This document tracks the current `LED-side` refresh, animation, and scheduler op
 - `Timer0` provides the 1 ms base tick.
 - `MidTask_Tick1ms()` updates software task counters.
 - `MidTask_Process()` runs due tasks from the main loop.
+- `app.c` keeps the cooperative local draw task period synchronized to the active `frameIntervalMs`.
 - `GpLedAction_Tick1ms()` keeps remote animation playback on raw 1 ms cadence.
 
 ## Problems found before optimization
@@ -65,10 +68,13 @@ This document tracks the current `LED-side` refresh, animation, and scheduler op
 - `DrawDrv_RebuildFrame()` now starts fast frame write directly.
 - `GpLedAction_BeginDirectFrame()` also skips pre-clear because direct-frame paths rewrite the complete `16x16` payload.
 
-### 3. Unified offline draw cadence to 32 ms
+### 3. Made offline draw cadence configurable with a 32 ms default
 
-- `app.c` draw-frame registration is now `32 ms`, matching `DRAWDRV_TASK_STEP_MS`.
-- This keeps local timeline, breath, gradient, and color-cycle progression aligned with actual scheduling.
+- `DrawDrv_RenderConfig.frameIntervalMs` is now the local effect time base.
+- `app.c` stores the draw-task id and uses `MidTask_SetPeriod()` to retune the cooperative task when `frameIntervalMs`
+  changes.
+- `draw_drv.c` now advances timeline-style effects by the active configured interval instead of a hard-coded `32 ms`.
+- `Timer1` row-scan timing remains independent; changing local effect speed must not change the physical scan interval.
 
 ### 4. Removed the no-op 500 ms draw task
 
@@ -86,13 +92,12 @@ This document tracks the current `LED-side` refresh, animation, and scheduler op
 - The current stable scheme again builds the dual-row DMA payload on demand inside `WS2812DRV_RefreshStep()` for both stable row-pair output and simpler diagnosis.
 - Analysis of the reverted code path showed that the cached DMA source buffers did not carry the same explicit even-address alignment guarantee as the legacy shared DMA buffer.
 
-### 7. Added DMA alignment guard and USB scan baseline logs
+### 7. Added DMA alignment guard and later removed always-on runtime diagnostics
 
 - `WS2812DRV_TriggerDualRowDma()` now records the last DMA source address and rejects odd-address sources instead of silently streaming corrupted PWM data.
 - The driver now keeps refresh-side counters for refresh-step executions, DMA triggers, DMA completions, DMA wait timeouts, and odd-address source rejects.
-- `app.c` prints one USB baseline every `1000 ms` through `printf`:
-  - `[LED_SCAN]` reports scan mode, active columns, configured row interval, and 1-second delta counters.
-  - `[LED_LAST]` reports the latest row pair, DMA length, source address, and Timer1 cycle progress.
+- The earlier always-on USB scan baseline (`[LED_SCAN]` / `[LED_LAST]`) and the 50 ms BT sniff task were removed from the default playback path after they proved unnecessary for steady-state local playback and added avoidable cooperative-scheduler and `printf` overhead.
+- Runtime diagnosis is now expected to be enabled explicitly when needed, rather than running continuously during local effect playback.
 
 ## Remaining hotspot
 
@@ -101,6 +106,7 @@ The largest remaining refresh-side hotspot is again the active dual-row assembly
 - `normal pair` mode has returned to on-demand dual-row DMA assembly inside `WS2812DRV_RefreshStep()`.
 - `legacy shift` mode still assembles the dual-row DMA payload on the refresh hot path.
 - Row-select blanking, settle delay, and DMA trigger setup are still paid on every refresh step.
+- Always-on debug task polling, baseline USB logging, and no-op row-switch debug hooks have been removed, so the remaining hotspot is now closer to the actual render/scan work instead of instrumentation overhead.
 - If later measurement shows these dominate scan time, the next optimization should focus on a properly aligned cache design, legacy-path reuse, row-switch policy, or further setup reduction inside `WS2812DRV_RefreshStep()`.
 
 ## Required workflow for future optimization tasks
@@ -125,5 +131,9 @@ This round was validated by Keil rebuilds:
 - `Project/Debug/build/keil_build_led_dma_revert_v1.log`
 - `Project/Debug/build/keil_build_led_dma_revert_v2.log`
 - `Project/Debug/build/keil_build_led_dma_revert_v3.log`
+
+Additional validation for the configurable local draw cadence:
+
+- Keil rebuild of `Project/STC51/ws2812_driver/ws2812_driver.uvproj` on `2026-05-11`
 
 Current result: `0 Error(s), 0 Warning(s)`.

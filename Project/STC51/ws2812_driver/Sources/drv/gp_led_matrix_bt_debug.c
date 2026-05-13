@@ -5,16 +5,13 @@
 
 #include "config.h"
 #include "gp_led_matrix_bt_debug.h"
-#include "gp_led_matrix_protocol.h"
 #include "port.h"
 
 #define GP_MATRIX_BT_COMMAND_BUFFER_SIZE 64U
 #define GP_MATRIX_BT_REPLY_BUFFER_SIZE   96U
 #define GP_MATRIX_BT_HEX_BUFFER_SIZE     (GP_MATRIX_BT_REPLY_BUFFER_SIZE * 3U + 1U)
-#define GP_MATRIX_BT_SNIFF_BUFFER_SIZE   96U
 #define GP_MATRIX_BT_REPLY_TIMEOUT_MS    800U
 #define GP_MATRIX_BT_REPLY_IDLE_MS       12U
-#define GP_MATRIX_BT_TASK_IDLE_TICKS     2U
 #define GP_MATRIX_BT_BAUD_SWITCH_DELAY_MS 120U
 #define GP_MATRIX_BT_COMMAND_GAP_MS      80U
 #define GP_MATRIX_BT_AT_RETRY_COUNT      3U
@@ -23,20 +20,15 @@ static char xdata g_gpMatrixBtCommand[GP_MATRIX_BT_COMMAND_BUFFER_SIZE];
 static char xdata g_gpMatrixBtReply[GP_MATRIX_BT_REPLY_BUFFER_SIZE];
 static char xdata g_gpMatrixBtAscii[GP_MATRIX_BT_REPLY_BUFFER_SIZE];
 static char xdata g_gpMatrixBtHex[GP_MATRIX_BT_HEX_BUFFER_SIZE];
-static uint8_t xdata g_gpMatrixBtSniff[GP_MATRIX_BT_SNIFF_BUFFER_SIZE];
 static uint8_t xdata g_gpMatrixBtLastTxOk = 0U;
 static uint8_t xdata g_gpMatrixBtLastRxBytes = 0U;
 static uint8_t xdata g_gpMatrixBtReady = 0U;
-static uint16_t xdata g_gpMatrixBtLastTotalRx = 0U;
-static uint8_t xdata g_gpMatrixBtRxIdleTicks = 0U;
 
 static uint8_t GpLedMatrixBtDebug_IsSpace(uint8_t value);
 static const char *GpLedMatrixBtDebug_SkipSpace(const char *text);
 static uint8_t GpLedMatrixBtDebug_MatchKeyword(const char *text, const char *keyword);
 static uint8_t GpLedMatrixBtDebug_CopyText(char *buffer, uint8_t bufferSize, const char *text, uint8_t reserveLength);
 static uint8_t GpLedMatrixBtDebug_AppendCrLf(char *buffer, uint8_t bufferSize, uint8_t textLength);
-static uint8_t GpLedMatrixBtDebug_IsLedDigit(const char *text);
-static void GpLedMatrixBtDebug_TrimTrailingSpace(char *text);
 static uint8_t GpLedMatrixBtDebug_IsAtCommand(const char *text);
 static uint8_t GpLedMatrixBtDebug_ParseTargetBaud(const char *text, uint32_t *baudrate);
 static void GpLedMatrixBtDebug_PrintUsage(void);
@@ -44,12 +36,10 @@ static void GpLedMatrixBtDebug_PrintStatus(const char *tag);
 static void GpLedMatrixBtDebug_FormatAscii(const char *replyBuffer, uint8_t replyLength);
 static void GpLedMatrixBtDebug_FormatHex(const char *replyBuffer, uint8_t replyLength);
 static uint8_t GpLedMatrixBtDebug_ReplyContainsOk(const char *replyBuffer, uint8_t replyLength);
-static void GpLedMatrixBtDebug_HandleReceivedText(char *text);
 static uint8_t GpLedMatrixBtDebug_ReadReply(char *replyBuffer, uint8_t maxLength, uint16_t timeoutMs);
 static void GpLedMatrixBtDebug_SendText(const char *payload);
 static uint8_t GpLedMatrixBtDebug_ProbeAtWithRetry(void);
 static void GpLedMatrixBtDebug_RunAutoSetup(void);
-static uint8_t GpLedMatrixBtDebug_ContainsProtocolPacket(const uint8_t *buffer, uint8_t length);
 
 static uint8_t GpLedMatrixBtDebug_IsSpace(uint8_t value)
 {
@@ -142,38 +132,6 @@ static uint8_t GpLedMatrixBtDebug_AppendCrLf(char *buffer, uint8_t bufferSize, u
     buffer[textLength] = '\0';
 
     return textLength;
-}
-
-static uint8_t GpLedMatrixBtDebug_IsLedDigit(const char *text)
-{
-    if ((text[0] >= '0') && (text[0] <= '7') && (text[1] == '\0'))
-    {
-        return 1U;
-    }
-
-    return 0U;
-}
-
-static void GpLedMatrixBtDebug_TrimTrailingSpace(char *text)
-{
-    uint8_t textLength;
-
-    textLength = 0U;
-    while (text[textLength] != '\0')
-    {
-        textLength++;
-    }
-
-    while (textLength > 0U)
-    {
-        if (GpLedMatrixBtDebug_IsSpace((uint8_t)text[textLength - 1U]) == 0U)
-        {
-            break;
-        }
-
-        textLength--;
-        text[textLength] = '\0';
-    }
 }
 
 static uint8_t GpLedMatrixBtDebug_IsAtCommand(const char *text)
@@ -318,65 +276,6 @@ static uint8_t GpLedMatrixBtDebug_ReplyContainsOk(const char *replyBuffer, uint8
     }
 
     return 0U;
-}
-
-static uint8_t GpLedMatrixBtDebug_ContainsProtocolPacket(const uint8_t *buffer, uint8_t length)
-{
-    uint8_t index;
-
-    if ((buffer == 0) || (length < 2U))
-    {
-        return 0U;
-    }
-
-    for (index = 0U; index + 1U < length; ++index)
-    {
-        if (buffer[index] == GP_MATRIX_PROTOCOL_MAGIC)
-        {
-            return 1U;
-        }
-    }
-
-    return 0U;
-}
-
-static void GpLedMatrixBtDebug_HandleReceivedText(char *text)
-{
-    const char *payload;
-
-    payload = GpLedMatrixBtDebug_SkipSpace(text);
-    if (*payload == '\0')
-    {
-        return;
-    }
-
-    if ((payload[0] != 'L') || (payload[1] != 'E') || (payload[2] != 'D'))
-    {
-        return;
-    }
-
-    payload += 3;
-    payload = GpLedMatrixBtDebug_SkipSpace(payload);
-    if ((payload[0] == 'C')
-        && (payload[1] == 'L')
-        && (payload[2] == 'E')
-        && (payload[3] == 'A')
-        && (payload[4] == 'R')
-        && (payload[5] == '\0'))
-    {
-        PORT2_ClearDebugLeds();
-        printf("[BT_ACT] led=clear\r\n");
-        return;
-    }
-
-    if (GpLedMatrixBtDebug_IsLedDigit(payload) != 0U)
-    {
-        PORT2_SetDebugLedDigit((uint8_t)(payload[0] - '0'));
-        printf("[BT_ACT] led=%c\r\n", payload[0]);
-        return;
-    }
-
-    printf("[BT_ACT] led_err=%s\r\n", payload);
 }
 
 static uint8_t GpLedMatrixBtDebug_ReadReply(char *replyBuffer, uint8_t maxLength, uint16_t timeoutMs)
@@ -646,76 +545,6 @@ void GpLedMatrixBtDebug_PrintInit(void)
            (unsigned long)UART2_GetBaudrate());
     GpLedMatrixBtDebug_PrintStatus("init");
     GpLedMatrixBtDebug_RunAutoSetup();
-}
-
-void GpLedMatrixBtDebug_Task(void)
-{
-    uint16_t totalRx;
-    uint8_t sniffLength;
-    uint8_t copyIndex;
-
-    if (g_gpMatrixBtReady == 0U)
-    {
-        return;
-    }
-
-    UART2_ServiceRx();
-
-    if (UART2_DebugHasRecentRx() == 0U)
-    {
-        g_gpMatrixBtRxIdleTicks = 0U;
-        return;
-    }
-
-    totalRx = UART2_GetRxTotalCount();
-    if (totalRx != g_gpMatrixBtLastTotalRx)
-    {
-        g_gpMatrixBtLastTotalRx = totalRx;
-        g_gpMatrixBtRxIdleTicks = 0U;
-        return;
-    }
-
-    if (g_gpMatrixBtRxIdleTicks < GP_MATRIX_BT_TASK_IDLE_TICKS)
-    {
-        g_gpMatrixBtRxIdleTicks++;
-        return;
-    }
-
-    sniffLength = UART2_DebugCopyRecentRx(g_gpMatrixBtSniff,
-                                          GP_MATRIX_BT_SNIFF_BUFFER_SIZE,
-                                          1U);
-    g_gpMatrixBtRxIdleTicks = 0U;
-    if (sniffLength == 0U)
-    {
-        return;
-    }
-
-    GpLedMatrixBtDebug_FormatAscii((const char *)g_gpMatrixBtSniff, sniffLength);
-    GpLedMatrixBtDebug_FormatHex((const char *)g_gpMatrixBtSniff, sniffLength);
-    if (sniffLength >= GP_MATRIX_BT_SNIFF_BUFFER_SIZE)
-    {
-        printf("[BT_MON] clip=1 cap=%u\r\n", (unsigned int)GP_MATRIX_BT_SNIFF_BUFFER_SIZE);
-    }
-    printf("[BT_MON] len=%u ascii=%s\r\n", (unsigned int)sniffLength, g_gpMatrixBtAscii);
-    printf("[BT_MON] hex=%s\r\n", g_gpMatrixBtHex);
-
-    if (GpLedMatrixBtDebug_ContainsProtocolPacket(g_gpMatrixBtSniff, sniffLength) != 0U)
-    {
-        return;
-    }
-
-    if (sniffLength >= GP_MATRIX_BT_COMMAND_BUFFER_SIZE)
-    {
-        sniffLength = (uint8_t)(GP_MATRIX_BT_COMMAND_BUFFER_SIZE - 1U);
-    }
-
-    for (copyIndex = 0U; copyIndex < sniffLength; ++copyIndex)
-    {
-        g_gpMatrixBtCommand[copyIndex] = (char)g_gpMatrixBtSniff[copyIndex];
-    }
-    g_gpMatrixBtCommand[sniffLength] = '\0';
-    GpLedMatrixBtDebug_TrimTrailingSpace(g_gpMatrixBtCommand);
-    GpLedMatrixBtDebug_HandleReceivedText(g_gpMatrixBtCommand);
 }
 
 void GpLedMatrixBtDebug_HandleUsbCommand(const uint8_t *commandBytes, uint8_t length)

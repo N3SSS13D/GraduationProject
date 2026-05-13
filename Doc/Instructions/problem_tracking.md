@@ -39,15 +39,27 @@
   - 当前已完成的低风险优化包括：去掉重复清屏、统一本地动画 32 ms 时基、删除空转 500 ms 绘图任务、把 `MidTask` 升级为 pending 计数。
   - `normal pair` 预构建双行 DMA 缓冲实验已回退；当前稳定方案重新使用刷新步内现组包，并在 DMA 入口增加了偶地址对齐保护，避免再次把奇地址源缓冲直接送入 PWMAT DMA。
   - 当前剩余的主要性能热点重新包括 `normal pair` 与 `legacy shift` 两条路径里的双行组包，以及每次刷新都要执行的行切换与 DMA 启动开销。
-  - 当前板级观测基线通过 USB `printf` 输出 `[LED_SCAN]` 与 `[LED_LAST]`，后续刷新优化应先基于这两类日志确认频率、长度、地址和异常计数，再决定是否继续缓存化。
+  - 常驻播放路径里的 USB `printf` 基线日志和 BT sniff 调试任务已移除；后续刷新优化若需要观测扫描计数，应采用按需、短时启用的诊断方式，避免把日志本身重新带入卡顿路径。
 - `AI端`
   - 蓝牙接收保持后台任务组包模型，避免回退成调用时轮询。
   - 预览、触摸和主机绘图转发主要在 `lichuang_dev_board.cc` 串起来，问题常常不只在 `gp_led_matrix_esp32.cc`。
+  - 主 websocket 的 `type:"custom"` 不再只用于显示调试 JSON；若 `payload.type` 或 `payload.action` 是 `matrix_pattern_result` / `matrix_action_result` / `matrix_animation_*`，应优先通过 `Board::HandleCustomPayload()` 复用板级解析，不要在 `Application` 再复制一套矩阵结果处理器。
+  - 语音触发 `matrix_pattern_request` 后会保留一个短暂 pending 窗口；若 TTS 提前结束，设备回到 `idle + pending 提示` 是“仍在等待矩阵结果”的表现，不应直接判成命令未执行。
+  - 主 websocket 与 debug websocket 并存时，websocket 分片接收状态必须按连接实例隔离，`Ping` 直接原连接回复；`AFE` 停止后要丢弃 late feed 并清空旧 PCM，避免再次触发 `AFE(FEED) ringbuffer full`。
+  - 当前 `AFE(FEED)` 溢出不再只按“stop 后晚到 feed”处理；当前稳定版本把 uplink 缓冲收敛为更保守的实时窗口：`4` 帧 PCM encode 队列和约 `3 s` 的 Opus send 缓冲，并继续提高 `AFE` 内部任务与外层 `fetch` / detection 任务优先级，用来吸收 `connecting -> listening` 阶段的短时发送回堵。
+  - 若发送侧持续慢于采集侧，不能继续依赖“无限等待 + 继续扩容”；当前稳定策略保留最新实时语音、丢弃最旧 backlog 帧，并输出累计 drop 告警，优先避免 `AFE fetch` 被下游队列反向卡死。
+  - `lichuang-dev` 的 debug preview HTTP server、debug websocket 和 debug command worker 已改为按需启动；不要再在 Wi-Fi 连上后默认常驻拉起这些调试资源，否则会重新压低 `listening` 阶段的可用内部 SRAM。
+  - 当 `tools/list` 进入最小预算档位时，MCP 会先隐藏项目额外增加的 `matrix local` 和 `preview/snapshot` 工具，优先保住主控制面和会话链路，而不是继续枚举所有调试工具。
+  - `AfeAudioProcessor` 与 `AfeWakeWord` 的外层 `fetch` / detection 任务已改为 `PSRAM` 栈的静态任务，并在分配或创建失败时输出 `free_sram + largest_internal`；若现场再次看到 `AFE(FEED)` 连续打满，应先看这些显式失败日志，而不是默认把问题归因到协议侧。
 - `协议`
   - 共享字段只允许以 `Project/Protocols/gp_led_matrix_protocol.h` 为源头，不能在两端各自扩展。
   - 若命令语义变化，必须同步更新协议说明和脚本契约说明。
 - `脚本`
   - MCP/绘图脚本的目标是 `AI端` 预览与转发接口，不应直接假定 `LED端` 原始串口发包细节。
+  - 主机桥对外工具使用 `self.screen.matrix_16x16.*`；`AI端` 本地直连调试工具统一使用 `self.screen.matrix_16x16.local.*`，文档与提示中不要混用两类命名。
+  - 当前已启用原生效果命令链路：`self.screen.matrix_16x16.show_effect` -> `matrix_action_result` -> `AI端` 字模上传/动作转发 -> `LED端` `SetAction`；默认主机桥继续走 debug websocket，但主会话 websocket 的 `type:"custom"` / `payload.type|action = matrix_*` 结果也应复用同一板级解析器。
+  - 当需求是“原始文本 + 横向滚动参数 + 图像序列传输”时，优先使用 `self.screen.matrix_16x16.show_scroll_subtitle`；只有已有显式帧序列或需要非横向多字效果时再使用 `draw_animation`。
+  - 多字文本的原生直连当前仅适用于 `text_scroll`、`scroll_left`、`scroll_right`；若是多字渐显、逐行显隐等效果，仍应使用 `draw_animation`。
 
 ### 5. Prompt / Skill 结构待解决问题
 

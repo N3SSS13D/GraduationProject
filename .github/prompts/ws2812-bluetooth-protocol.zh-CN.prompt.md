@@ -39,9 +39,10 @@ model: "GPT-5 (copilot)"
 2. 若包结构或语义变更，必须在同一任务同步更新协议文档。
 3. 保持 `AI端` 与 `LED端` 对字段和限制的消费一致。
 4. 若影响脚本输入/输出格式，必须同步更新脚本契约文档。
-5. 兼容性影响要可说明、可验证。
-6. 协议设计优先满足：唯一可识别性、数据完整性、结构可扩展性、解析高效性、双向交互可靠性。
-7. 对当前 V2 协议，优先采用“先校验 `header_size + header_crc8` 再信任 `payload_length`、以 `packet_type=Reply + reply_to_sequence` 匹配 ACK、分片使用显式字节偏移”的方案。
+5. 若主机侧 payload 新增了 `matrix_action_result` 这类原生动作对象，必须把 `SetAction` / 字模上传契约在协议文档和消费端校验里写清楚。
+6. 兼容性影响要可说明、可验证。
+7. 协议设计优先满足：唯一可识别性、数据完整性、结构可扩展性、解析高效性、双向交互可靠性。
+8. 对当前 V2 协议，优先采用“先校验 `header_size + header_crc8` 再信任 `payload_length`、以 `packet_type=Reply + reply_to_sequence` 匹配 ACK、分片使用显式字节偏移”的方案。
 
 ## 输出格式
 

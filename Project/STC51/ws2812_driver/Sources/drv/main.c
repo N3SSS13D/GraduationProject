@@ -16,7 +16,7 @@
 //<<AICUBE_USER_INCLUDE_BEGIN>>
 // 在此添加用户头文件包含  
 #include "hc595_drv.h"
-#include "test.h"
+#include "app.h"
 //<<AICUBE_USER_INCLUDE_END>>
 
 
@@ -37,20 +37,20 @@ static void SYS_ClockInit(void);
 void main(void)
 {
     //<<AICUBE_USER_MAIN_INITIAL_BEGIN>>
-    // 仅保留驱动测试路径：74HC595选通第一行 + Test例程。
+    // 仅保留驱动测试路径：74HC595选通第一行 + APP例程。
     SYS_Init();
     HC595_Init();
     HC595_SelectRows(0, 0xFF);
     //<<AICUBE_USER_MAIN_INITIAL_END>>
 
     //<<AICUBE_USER_MAIN_CODE_BEGIN>>
-    Test_Init();
+    APP_Init();
     //<<AICUBE_USER_MAIN_CODE_END>>
 
     while (1)
     {
         //<<AICUBE_USER_MAIN_LOOP_BEGIN>>
-        Test_TaskLoop();
+        APP_TaskLoop();
         //<<AICUBE_USER_MAIN_LOOP_END>>
     }
 }

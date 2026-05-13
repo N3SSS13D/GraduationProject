@@ -43,6 +43,11 @@ struct DebugPresetKeyword {
     std::array<const char*, 6> keywords;
 };
 
+struct LocalControlKeyword {
+    GpMatrixLocalControlAction action;
+    std::array<const char*, 8> keywords;
+};
+
 const DebugColorKeyword* MatchDebugColorKeyword(const std::string& text);
 bool HasBackgroundColorKeyword(const std::string& text);
 
@@ -110,10 +115,14 @@ const char* GetPresetLabel(GpColorDebugPreset preset) {
         return "diamond";
     case GpColorDebugPreset::kCross:
         return "cross";
+    case GpColorDebugPreset::kChecker:
+        return "checker";
+    case GpColorDebugPreset::kBorder:
+        return "border";
+    case GpColorDebugPreset::kDiagonalX:
+        return "diagonal_x";
     case GpColorDebugPreset::kJluEmblem:
         return "JLU_emblem";
-    case GpColorDebugPreset::kPythonDemo:
-        return "python_demo";
     case GpColorDebugPreset::kScrollSubtitle:
         return "scroll_subtitle";
     case GpColorDebugPreset::kSolid:
@@ -123,11 +132,13 @@ const char* GetPresetLabel(GpColorDebugPreset preset) {
 }
 
 const DebugPresetKeyword* MatchDebugPresetKeyword(const std::string& text) {
-    static const std::array<DebugPresetKeyword, 5> kPresets{{
+    static const std::array<DebugPresetKeyword, 7> kPresets{{
         {"diamond", GpColorDebugPreset::kDiamond, {"菱形", "diamond", "rhombus", "钻石", "菱", ""}},
+        {"diagonal_x", GpColorDebugPreset::kDiagonalX, {"对角叉", "斜叉", "对角x", "diagonal_x", "diagonal x", "diag x"}},
         {"cross", GpColorDebugPreset::kCross, {"十字", "cross", "plus", "叉", "crosshair", ""}},
+        {"checker", GpColorDebugPreset::kChecker, {"棋盘", "棋盘格", "checker", "checkerboard", "格子", ""}},
+        {"border", GpColorDebugPreset::kBorder, {"边框", "边框图案", "border", "frame", "方框", "外框"}},
         {"JLU_emblem", GpColorDebugPreset::kJluEmblem, {"吉林大学校徽", "吉大校徽", "校徽", "jlu_emblem", "jlu emblem", "emblem"}},
-        {"python_demo", GpColorDebugPreset::kPythonDemo, {"python_demo", "python demo", "像素图", "16x16", "16*16", "图案画板"}},
         {"scroll_subtitle", GpColorDebugPreset::kScrollSubtitle, {"字幕", "滚动字幕", "scroll", "text", "marquee", "滚动"}},
     }};
 
@@ -145,6 +156,38 @@ const DebugPresetKeyword* MatchDebugPresetKeyword(const std::string& text) {
     return nullptr;
 }
 
+std::optional<GpMatrixLocalControlAction> MatchLocalControlActionKeyword(const std::string& text) {
+    static const std::array<LocalControlKeyword, 6> kLocalControls{{
+        {kGpMatrixLocalControlNextPattern,
+         {"下一个本地图案", "切换本地图案", "下一个离线图案", "切换离线图案", "next local pattern", "next offline pattern", "switch local pattern", "switch offline pattern"}},
+        {kGpMatrixLocalControlShowTextScroll,
+         {"显示本地字幕", "显示离线字幕", "本地滚动字幕", "离线滚动字幕", "show local text", "show offline text", "show local scroll text", "show offline scroll text"}},
+        {kGpMatrixLocalControlShowClock,
+         {"显示本地时钟", "显示离线时钟", "本地时钟", "离线时钟", "show local clock", "show offline clock", "local clock", "offline clock"}},
+        {kGpMatrixLocalControlToggleTextClock,
+         {"切换本地字幕时钟", "切换离线字幕时钟", "本地字幕时钟切换", "离线字幕时钟切换", "toggle local text clock", "toggle offline text clock", "switch local text clock", "switch offline text clock"}},
+        {kGpMatrixLocalControlNextEffect,
+         {"下一个本地效果", "切换本地效果", "下一个离线效果", "切换离线效果", "next local effect", "next offline effect", "switch local effect", "switch offline effect"}},
+        {kGpMatrixLocalControlNextColor,
+         {"下一个本地颜色", "切换本地颜色", "下一个离线颜色", "切换离线颜色", "next local color", "next offline color", "switch local color", "switch offline color"}},
+    }};
+
+    const std::string lowered = ToAsciiLower(text);
+
+    for (const auto& local_control : kLocalControls) {
+        for (const char* keyword : local_control.keywords) {
+            if ((keyword == nullptr) || (keyword[0] == '\0')) {
+                continue;
+            }
+            if ((text.find(keyword) != std::string::npos) || (lowered.find(keyword) != std::string::npos)) {
+                return local_control.action;
+            }
+        }
+    }
+
+    return std::nullopt;
+}
+
 void ApplyColorDebugToMatrix(const GpColorDebugState& state) {
     auto* matrix_led = dynamic_cast<GpLedMatrixEsp32*>(Board::GetInstance().GetLed());
     if (matrix_led == nullptr) {
@@ -152,6 +195,41 @@ void ApplyColorDebugToMatrix(const GpColorDebugState& state) {
     }
 
     (void)matrix_led->ShowDebugState(state);
+}
+
+const char* GetLocalControlActionLabel(GpMatrixLocalControlAction action) {
+    switch (action) {
+    case kGpMatrixLocalControlNextPattern:
+        return "offline pattern";
+    case kGpMatrixLocalControlShowTextScroll:
+        return "offline text";
+    case kGpMatrixLocalControlShowClock:
+        return "offline clock";
+    case kGpMatrixLocalControlToggleTextClock:
+        return "offline text/clock";
+    case kGpMatrixLocalControlNextEffect:
+        return "offline effect";
+    case kGpMatrixLocalControlNextColor:
+        return "offline color";
+    case kGpMatrixLocalControlNone:
+    default:
+        return "offline";
+    }
+}
+
+bool TryApplyLocalControlAction(Display* display, GpMatrixLocalControlAction action) {
+    auto* matrix_led = dynamic_cast<GpLedMatrixEsp32*>(Board::GetInstance().GetLed());
+
+    if ((matrix_led == nullptr) || !matrix_led->SendLocalControlAction(action)) {
+        return false;
+    }
+
+    if (display != nullptr) {
+        const std::string notification = std::string("Matrix local: ") + GetLocalControlActionLabel(action);
+        display->ShowNotification(notification.c_str(), 1800);
+    }
+
+    return true;
 }
 
 std::string FormatRgb888(uint32_t rgb) {
@@ -243,11 +321,26 @@ bool IsVoiceColorIntent(const std::string& transcript) {
     return ContainsAnyKeyword(transcript, {"圆点", "颜色", "渐变", "动画", "背景", "底色", "rgb", "dot", "color", "gradient", "pulse", "breath", "background", "菱形", "十字", "字幕", "图案", "scroll", "pattern", "python", "16x16", "16*16", "像素图"});
 }
 
+bool IsMatrixTextAnimationIntent(const std::string& transcript) {
+    const bool has_text_target = ContainsAnyKeyword(transcript,
+                                                    {"字幕", "滚动字幕", "跑马灯", "marquee", "subtitle", "caption", "文字", "文本", "text"});
+    const bool has_scroll_motion = ContainsAnyKeyword(transcript,
+                                                      {"滚动", "滚屏", "scroll", "scrolling", "跑马灯", "marquee", "左移", "右移", "loop"});
+
+    if (!has_text_target || !has_scroll_motion) {
+        return false;
+    }
+    if (HasBackgroundColorKeyword(transcript)) {
+        return false;
+    }
+    return true;
+}
+
 bool IsMatrixPatternIntent(const std::string& transcript) {
     const bool has_draw_verb = ContainsAnyKeyword(transcript,
                                                   {"画", "绘", "draw", "render", "show", "显示", "生成", "写"});
     const bool has_matrix_target = ContainsAnyKeyword(transcript,
-                                                      {"图案", "图形", "像素", "像素图", "pixel", "matrix", "16x16", "16*16", "bitmap", "文字", "文本", "字母", "text", "glyph", "logo", "图标", "笑脸", "心形", "箭头"});
+                                                      {"图案", "图形", "像素", "像素图", "pixel", "matrix", "16x16", "16*16", "bitmap", "文字", "文本", "字母", "text", "glyph", "logo", "图标", "笑脸", "心形", "箭头", "字幕", "滚动字幕", "跑马灯", "subtitle", "caption", "marquee"});
 
     if (!has_draw_verb) {
         return false;
@@ -278,6 +371,30 @@ uint16_t MatchDotSize(const std::string& transcript) {
 }
 
 GpColorDebugAnimation MatchAnimation(const std::string& transcript, bool has_secondary) {
+    if (ContainsAnyKeyword(transcript, {"逐行显示", "行显", "row reveal", "reveal rows"})) {
+        return GpColorDebugAnimation::kRowReveal;
+    }
+    if (ContainsAnyKeyword(transcript, {"逐行消失", "行隐", "row hide", "hide rows"})) {
+        return GpColorDebugAnimation::kRowHide;
+    }
+    if (ContainsAnyKeyword(transcript, {"渐变显示", "gradient reveal", "渐变显现"})) {
+        return GpColorDebugAnimation::kGradientReveal;
+    }
+    if (ContainsAnyKeyword(transcript, {"左滚", "向左滚动", "scroll left", "left scroll"})) {
+        return GpColorDebugAnimation::kScrollLeft;
+    }
+    if (ContainsAnyKeyword(transcript, {"右滚", "向右滚动", "scroll right", "right scroll"})) {
+        return GpColorDebugAnimation::kScrollRight;
+    }
+    if (ContainsAnyKeyword(transcript, {"渐显", "淡入", "fade in"})) {
+        return GpColorDebugAnimation::kFadeIn;
+    }
+    if (ContainsAnyKeyword(transcript, {"渐隐", "淡出", "fade out"})) {
+        return GpColorDebugAnimation::kFadeOut;
+    }
+    if (ContainsAnyKeyword(transcript, {"颜色循环", "色彩循环", "color cycle", "cycle color", "彩色循环"})) {
+        return GpColorDebugAnimation::kColorCycle;
+    }
     if (ContainsAnyKeyword(transcript, {"渐变", "gradient", "彩虹", "过渡"})) {
         return GpColorDebugAnimation::kGradient;
     }
@@ -386,8 +503,24 @@ std::optional<GpColorDebugState> ParseRemoteColorState(const cJSON* payload) {
         const std::string animation_name = ToAsciiLower(animation->valuestring);
         if (animation_name == "gradient") {
             state.animation = GpColorDebugAnimation::kGradient;
-        } else if (animation_name == "pulse") {
+        } else if (animation_name == "pulse" || animation_name == "breath") {
             state.animation = GpColorDebugAnimation::kPulse;
+        } else if (animation_name == "scroll_left") {
+            state.animation = GpColorDebugAnimation::kScrollLeft;
+        } else if (animation_name == "scroll_right") {
+            state.animation = GpColorDebugAnimation::kScrollRight;
+        } else if (animation_name == "fade_in") {
+            state.animation = GpColorDebugAnimation::kFadeIn;
+        } else if (animation_name == "fade_out") {
+            state.animation = GpColorDebugAnimation::kFadeOut;
+        } else if (animation_name == "color_cycle") {
+            state.animation = GpColorDebugAnimation::kColorCycle;
+        } else if (animation_name == "row_reveal") {
+            state.animation = GpColorDebugAnimation::kRowReveal;
+        } else if (animation_name == "row_hide") {
+            state.animation = GpColorDebugAnimation::kRowHide;
+        } else if (animation_name == "gradient_reveal") {
+            state.animation = GpColorDebugAnimation::kGradientReveal;
         } else {
             state.animation = GpColorDebugAnimation::kSolid;
         }
@@ -413,12 +546,16 @@ std::optional<GpColorDebugState> ParseRemoteColorState(const cJSON* payload) {
         const std::string preset_name = ToAsciiLower(preset->valuestring);
         if (preset_name == "diamond") {
             state.preset = GpColorDebugPreset::kDiamond;
+        } else if (preset_name == "checker" || preset_name == "checkerboard") {
+            state.preset = GpColorDebugPreset::kChecker;
+        } else if (preset_name == "border" || preset_name == "frame") {
+            state.preset = GpColorDebugPreset::kBorder;
+        } else if (preset_name == "diagonal_x" || preset_name == "diagonal x" || preset_name == "diag x") {
+            state.preset = GpColorDebugPreset::kDiagonalX;
         } else if (preset_name == "cross") {
             state.preset = GpColorDebugPreset::kCross;
         } else if (preset_name == "jlu_emblem" || preset_name == "jlu emblem" || preset_name == "jilin university emblem") {
             state.preset = GpColorDebugPreset::kJluEmblem;
-        } else if (preset_name == "python_demo" || preset_name == "python demo" || preset_name == "16x16") {
-            state.preset = GpColorDebugPreset::kPythonDemo;
         } else if (preset_name == "scroll_subtitle" || preset_name == "scroll") {
             state.preset = GpColorDebugPreset::kScrollSubtitle;
         }
@@ -466,8 +603,12 @@ std::string BuildColorAnalyzePayload(const std::string& transcript, std::string_
     cJSON_AddStringToObject(format, "primary_rgb888", "#RRGGBB");
     cJSON_AddStringToObject(format, "secondary_rgb888", "#RRGGBB or empty");
     cJSON_AddStringToObject(format, "background_rgb888", "#RRGGBB or empty");
-    cJSON_AddStringToObject(format, "animation", "solid|gradient|pulse");
-    cJSON_AddStringToObject(format, "preset", "solid|diamond|cross|python_demo|scroll_subtitle");
+    cJSON_AddStringToObject(format,
+                            "animation",
+                            "solid|gradient|pulse|scroll_left|scroll_right|fade_in|fade_out|color_cycle|row_reveal|row_hide|gradient_reveal");
+    cJSON_AddStringToObject(format,
+                            "preset",
+                            "solid|diamond|cross|checker|border|diagonal_x|jlu_emblem|scroll_subtitle");
     cJSON_AddNumberToObject(format, "size", 36);
     cJSON_AddNumberToObject(format, "duration_ms", 1400);
     cJSON_AddStringToObject(format, "label", "teal");
@@ -489,8 +630,10 @@ std::string BuildMatrixPatternRequestPayload(const std::string& transcript, std:
     cJSON* target = cJSON_CreateObject();
     cJSON* transport = cJSON_CreateObject();
     cJSON* service_hints = cJSON_CreateObject();
+    cJSON* animation_guidance = nullptr;
     char* json_text = nullptr;
     std::string result = "{}";
+    const bool prefers_scroll_subtitle = IsMatrixTextAnimationIntent(transcript);
 
     cJSON_AddStringToObject(payload, "action", std::string(kMatrixPatternRequestAction).c_str());
     cJSON_AddStringToObject(payload, "source", std::string(source).c_str());
@@ -510,8 +653,25 @@ std::string BuildMatrixPatternRequestPayload(const std::string& transcript, std:
     cJSON_AddStringToObject(service_hints, "mcp_render_tool", "self.screen.matrix_16x16.render_prompt");
     cJSON_AddStringToObject(service_hints, "mcp_frame_tool", "self.screen.matrix_16x16.draw_frame");
     cJSON_AddStringToObject(service_hints, "mcp_drawing_tool", "self.screen.matrix_16x16.draw_python");
+    cJSON_AddStringToObject(service_hints, "mcp_animation_tool", "self.screen.matrix_16x16.draw_animation");
     cJSON_AddStringToObject(service_hints, "mcp_text_tool", "self.screen.matrix_16x16.show_text");
+    cJSON_AddStringToObject(service_hints, "mcp_scroll_subtitle_tool", "self.screen.matrix_16x16.show_scroll_subtitle");
+    cJSON_AddStringToObject(service_hints, "mcp_effect_tool", "self.screen.matrix_16x16.show_effect");
     cJSON_AddStringToObject(service_hints, "http_control_endpoint", "/control/matrix_prompt_16x16");
+
+    if (prefers_scroll_subtitle) {
+        cJSON_AddStringToObject(service_hints, "preferred_mcp_tool", "self.screen.matrix_16x16.show_scroll_subtitle");
+
+        animation_guidance = cJSON_CreateObject();
+        cJSON_AddStringToObject(animation_guidance, "mode", "scroll_subtitle");
+        cJSON_AddStringToObject(animation_guidance, "transport_preference", "frame_sequence_plus_effect");
+        cJSON_AddStringToObject(animation_guidance, "text_source", "extract_from_transcript");
+        cJSON_AddStringToObject(animation_guidance, "recommended_effect", "text_scroll");
+        cJSON_AddNumberToObject(animation_guidance, "recommended_step", 1);
+        cJSON_AddNumberToObject(animation_guidance, "recommended_frame_interval_ms", 96);
+        cJSON_AddItemToObject(payload, "animation_guidance", animation_guidance);
+    }
+
     cJSON_AddItemToObject(payload, "service_hints", service_hints);
 
     json_text = cJSON_PrintUnformatted(payload);
@@ -524,14 +684,28 @@ std::string BuildMatrixPatternRequestPayload(const std::string& transcript, std:
 }
 
 void HandleVoiceColorDebugFromStt(Application* app, Display* display, const std::string& transcript) {
+    const auto local_control_action = MatchLocalControlActionKeyword(transcript);
+    const bool is_local_control_intent = local_control_action.has_value();
     const bool is_color_intent = IsVoiceColorIntent(transcript);
-    const bool is_matrix_pattern_intent = IsMatrixPatternIntent(transcript);
+    const bool is_matrix_text_animation_intent = IsMatrixTextAnimationIntent(transcript);
+    const bool is_matrix_pattern_intent = is_matrix_text_animation_intent || IsMatrixPatternIntent(transcript);
 
-    if (!is_color_intent && !is_matrix_pattern_intent) {
+    if (!is_color_intent && !is_matrix_pattern_intent && !is_local_control_intent) {
         return;
     }
 
     if (TryApplyBackgroundColorCommand(display, transcript)) {
+        return;
+    }
+
+    if (is_local_control_intent && TryApplyLocalControlAction(display, *local_control_action)) {
+        return;
+    }
+
+    /* Subtitle scroll phrases overlap with local color-debug keywords, so route them
+     * into matrix generation before local preset fallback can consume them. */
+    if (is_matrix_text_animation_intent) {
+        app->SendMatrixPatternRequest(transcript, "stt");
         return;
     }
 
@@ -763,11 +937,25 @@ void Application::Run() {
             HandleStopListeningEvent();
         }
 
-        if (bits & MAIN_EVENT_SEND_AUDIO) {
+        if ((bits & MAIN_EVENT_SEND_AUDIO) && protocol_) {
+            bool rearmed = false;
             while (auto packet = audio_service_.PopPacketFromSendQueue()) {
-                if (protocol_ && !protocol_->SendAudio(std::move(packet))) {
+                if (!protocol_->SendAudio(std::move(packet))) {
+                    if (!rearmed && audio_service_.HasPendingSendPackets()) {
+                        xEventGroupSetBits(event_group_, MAIN_EVENT_SEND_AUDIO);
+                        rearmed = true;
+                    }
                     break;
                 }
+            }
+        }
+
+        if (bits & MAIN_EVENT_SCHEDULE) {
+            std::unique_lock<std::mutex> lock(mutex_);
+            auto tasks = std::move(main_tasks_);
+            lock.unlock();
+            for (auto& task : tasks) {
+                task();
             }
         }
 
@@ -782,23 +970,18 @@ void Application::Run() {
             }
         }
 
-        if (bits & MAIN_EVENT_SCHEDULE) {
-            std::unique_lock<std::mutex> lock(mutex_);
-            auto tasks = std::move(main_tasks_);
-            lock.unlock();
-            for (auto& task : tasks) {
-                task();
-            }
-        }
-
         if (bits & MAIN_EVENT_CLOCK_TICK) {
             clock_ticks_++;
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
-        
+
             // Print debug info every 10 seconds
             if (clock_ticks_ % 10 == 0) {
                 SystemInfo::PrintHeapStats();
+            }
+
+            if (protocol_ && audio_service_.HasPendingSendPackets()) {
+                xEventGroupSetBits(event_group_, MAIN_EVENT_SEND_AUDIO);
             }
         }
     }
@@ -1077,6 +1260,17 @@ void Application::InitializeProtocol() {
                     if (GetDeviceState() == kDeviceStateSpeaking) {
                         if (listening_mode_ == kListeningModeManualStop) {
                             SetDeviceState(kDeviceStateIdle);
+                        } else if (HasPendingMatrixCommand()) {
+                            auto* display = Board::GetInstance().GetDisplay();
+
+                            /* Keep the voice turn from dropping straight back into listening while the draw result is still in flight. */
+                            SetDeviceState(kDeviceStateIdle);
+                            if (pending_matrix_command_result_ready_.load()) {
+                                ClearPendingMatrixCommand();
+                            }
+                            if (display != nullptr) {
+                                display->ShowNotification("Matrix command pending", 1500);
+                            }
                         } else {
                             SetDeviceState(kDeviceStateListening);
                         }
@@ -1146,6 +1340,9 @@ void Application::InitializeProtocol() {
             }
             if (cJSON_IsObject(payload)) {
                 if (HandleVoiceColorDebugFromCustom(display, payload)) {
+                    return;
+                }
+                if (Board::GetInstance().HandleCustomPayload(payload)) {
                     return;
                 }
                 char* payload_dump = cJSON_PrintUnformatted(payload);
@@ -1824,6 +2021,8 @@ void Application::SendMatrixPatternRequest(const std::string& transcript, const 
         return;
     }
 
+    MarkPendingMatrixCommand();
+
     Schedule([transcript]() {
         auto* display = Board::GetInstance().GetDisplay();
 
@@ -1833,6 +2032,43 @@ void Application::SendMatrixPatternRequest(const std::string& transcript, const 
         }
     });
     SendCustomMessage(BuildMatrixPatternRequestPayload(transcript, source));
+}
+
+void Application::MarkPendingMatrixCommand(uint32_t timeout_ms) {
+    const uint64_t timeout_us = static_cast<uint64_t>(timeout_ms) * 1000U;
+
+    pending_matrix_command_result_ready_.store(false);
+    pending_matrix_command_deadline_us_.store(static_cast<uint64_t>(esp_timer_get_time()) + timeout_us);
+}
+
+void Application::CompletePendingMatrixCommand() {
+    /* If the matrix result finishes while TTS is still speaking, keep the pending guard
+       until the current voice turn lands in idle instead of bouncing back to listening. */
+    if (HasPendingMatrixCommand() && (GetDeviceState() == kDeviceStateSpeaking)) {
+        pending_matrix_command_result_ready_.store(true);
+        return;
+    }
+
+    ClearPendingMatrixCommand();
+}
+
+void Application::ClearPendingMatrixCommand() {
+    pending_matrix_command_result_ready_.store(false);
+    pending_matrix_command_deadline_us_.store(0U);
+}
+
+bool Application::HasPendingMatrixCommand() {
+    const uint64_t deadline_us = pending_matrix_command_deadline_us_.load();
+    const uint64_t now_us = static_cast<uint64_t>(esp_timer_get_time());
+
+    if ((deadline_us == 0U) || (now_us >= deadline_us)) {
+        if (deadline_us != 0U) {
+            ClearPendingMatrixCommand();
+        }
+        return false;
+    }
+
+    return true;
 }
 
 void Application::SetAecMode(AecMode mode) {

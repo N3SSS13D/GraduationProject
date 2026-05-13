@@ -44,9 +44,6 @@ static volatile uint16_t g_ws2812DmaTimeoutCount = 0U;
 static volatile uint16_t g_ws2812DmaOddAddrCount = 0U;
 static volatile uint16_t g_ws2812LastTxAddr = 0U;
 
-extern void Test_DebugMarkRowSwitchStart(void);
-extern void Test_DebugMarkPwmSendDone(void);
-
 static bit WS2812DRV_M2MCopy(uint8_t xdata *dst, const uint8_t xdata *src, uint16_t len)
 {
 	uint16_t waitCnt;
@@ -237,7 +234,7 @@ static void WS2812DRV_EncodeRowToPwmBuffer(uint8_t bufIdx, uint8_t row)
     uint8_t activeCols;
     uint16_t activePwmNum;
 
-    activeCols = g_ws2812ActiveCols;
+	activeCols = g_ws2812ActiveCols;
     activePwmNum = WS2812DRV_GetActivePwmNum();
 
 	/* Reserve reset low window before each row payload to improve decoding stability. */
@@ -537,9 +534,6 @@ uint8_t xdata *WS2812DRV_GetDualRowPwmBuffer(void)
 
 void WS2812DRV_SelectRows(uint8_t rowA, uint8_t rowB)
 {
-	/* Debug timestamp at exact row-switch start. */
-	Test_DebugMarkRowSwitchStart();
-
 	/* New policy: full blank before each row-select update. */
 	WS2812DRV_BlankOutputs();
 	delay_us(WS2812DRV_LINE_DISCHARGE_US);
@@ -735,9 +729,6 @@ void WS2812DRV_RefreshStep(void)
 
 void WS2812DRV_OnDmaIsr(void)
 {
-	/* Debug timestamp at PWM+DMA transfer completion. */
-	Test_DebugMarkPwmSendDone();
-
 	g_ws2812DmaBusy = 0;
 	g_ws2812DmaDoneCount++;
 	DMA_PWMAT_STA = 0;
