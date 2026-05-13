@@ -187,6 +187,18 @@ AnimationEnd(0x15) → [frame_count:1]
 - `row_hide`
 - `gradient_reveal`
 
+本次协议约定补充：当 `SetAction` 的 `content = state` 且 `animation_flags` 携带 `GpMatrixLocalControlAction` 时，
+`LED端` 不再把该包解释为颜色/图案状态，而是直接执行本地离线方案动作：
+
+- `next_pattern`
+- `show_text_scroll`
+- `show_clock`
+- `toggle_text_clock`
+- `next_effect`
+- `next_color`
+
+该分支继续复用同一个 `28` 字节 `GpMatrixActionPayload`，不新增串口命令字；此时 `apply_flags` 与常规渲染字段可保持 `0`。
+
 当主机侧通过 `matrix_action_result` 请求字幕滚动或自定义字模效果时，应先完成 `ScrollGlyphStart + ScrollGlyphChunk + ScrollGlyphCommit` 字模上传，再发送带 `USE_UPLOADED_GLYPHS` 标志位的 `SetAction`。当前共享协议头允许最多 `256` 字节字模上传，等价于最多 `8` 个 `16x16` 字模。
 
 #### 时间同步负载（`SetTime`, `0x08`）

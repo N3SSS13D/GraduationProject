@@ -40,6 +40,9 @@
 3. `LED端` 解析相同字段并执行
 4. 若协议语义变化，文档与两端实现必须同步更新
 
+当前 `SetAction` 附加约定：当 `content=state` 且 `animation_flags` 携带 `GpMatrixLocalControlAction` 时，`LED端` 直接执行
+离线本地方案动作（`next_pattern / show_text_scroll / show_clock / toggle_text_clock / next_effect / next_color`），不新增命令字，也不改变 `28` 字节动作负载长度。
+
 ## Consumer entry points
 
 - `AI端` 发送侧：`Project/xiaozhi-esp32/main/gp_port/gp_led_matrix_esp32.cc`

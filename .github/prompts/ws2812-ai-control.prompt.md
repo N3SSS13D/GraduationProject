@@ -59,6 +59,15 @@ For implementation, integration, or bug-fix tasks:
 1. Reuse existing action objects such as `voice_color_result` when possible.
 2. If the task involves debug-menu input or preset-based color/effect updates, reuse the existing
    `voice_color_analyze -> voice_color_result` analysis path and allow `source` to be either `stt` or `touch`.
+  Keep the AI-side local preset names aligned with the LED-side offline pattern set when touch or local voice
+  switching is involved: `diamond`, `cross`, `checker`, `border`, `diagonal_x`, `jlu_emblem`.
+  Keep the touch-side effect cycle aligned with the LED-side local manual effects and preserve direct RGB slider
+  control for the primary color: `solid`, `pulse`, `gradient`, `scroll_left`, `scroll_right`, `fade_in`,
+  `fade_out`, `color_cycle`, `row_reveal`, `row_hide`, `gradient_reveal`.
+  Preserve the explicit LED-side local/offline action entry points in the touch UI and local voice path:
+  `next_pattern`, `show_text_scroll`, `show_clock`, `toggle_text_clock`, `next_effect`, `next_color`.
+  Route those explicit local/offline actions directly through the local matrix transport instead of re-entering
+  `voice_color_analyze`, `voice_color_result`, or `matrix_pattern_request`.
 3. For freeform `16x16` draw requests from `stt` that do not map cleanly to an existing local preset, route them
    through the existing `matrix_pattern_request` path so voice-only drawing does not depend on a prior debug-menu
    `Draw` tap.
@@ -71,9 +80,11 @@ For implementation, integration, or bug-fix tasks:
    `AT+BIND` with fixed slave address `98:D3:02:96:A2:B1` on the AI side, then make `AT+RESET` and the local switch
    to `460800` the final two steps, with reply logging visible in monitor.
 9. Preserve the existing touch-to-Bluetooth path for direct LED-side state updates, but do not route debug-menu touch
-   actions through `SendColorDebugAnalyze(..., "touch")` or other MCP/LLM-only paths when a local debug transport is
-   required. For touch-triggered preview/data exchange, prefer a board-local debug websocket client and keep the path
-   bounded and monitor-visible.
+  actions through `SendColorDebugAnalyze(..., "touch")` or other MCP/LLM-only paths when a local debug transport is
+  required. Explicit local/offline action buttons may use a parallel bounded path such as
+  `GpDebugLcdDisplay -> QueueLocalControlAction -> SendLocalControlAction -> SetAction` as long as they remain local,
+  traceable, and monitor-visible. For touch-triggered preview/data exchange, prefer a board-local debug websocket
+  client and keep the path bounded and monitor-visible.
 10. Preserve the event-driven UART receive model in `main/gp_port/transport/`; do not reintroduce per-call polling
     reads in `ReadPacket()`.
 11. For `16x16` pattern preview tasks, prefer the host-side debug websocket path: the local Python script should run
@@ -134,6 +145,15 @@ For implementation, integration, or bug-fix tasks:
 25. When both the main websocket and the debug websocket can exist at the same time, keep websocket fragmentation
   receive state per connection instance and reply to `Ping` inline on the same connection. Avoid detached per-ping
   threads and avoid shared static frame-assembly state.
+26. Treat the `lichuang-dev` debug preview HTTP server, debug websocket, and debug command worker as on-demand debug
+  facilities. Do not reintroduce auto-start on Wi-Fi connect unless the task explicitly requires always-on debug
+  plumbing and you can justify the added internal-SRAM cost.
+27. For the current stable audio path, assume the uplink backlog should stay bounded to a modest realtime window
+  instead of growing indefinitely. Keep the drop-oldest realtime semantics, and if `AFE(FEED)` still overflows,
+  inspect the outer ESP-SR fetch/detection task creation path before expanding queues again.
+28. On this board profile, when low internal-memory pressure is already visible, prefer suppressing project-only
+  matrix-local and preview/snapshot MCP tools from `tools/list` over shrinking baseline common tools. If the AFE
+  outer tasks need extra stack, prefer PSRAM-backed static task stacks with explicit failure logs.
 
 ## Common read bundles
 

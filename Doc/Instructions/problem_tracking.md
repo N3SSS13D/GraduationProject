@@ -46,6 +46,11 @@
   - 主 websocket 的 `type:"custom"` 不再只用于显示调试 JSON；若 `payload.type` 或 `payload.action` 是 `matrix_pattern_result` / `matrix_action_result` / `matrix_animation_*`，应优先通过 `Board::HandleCustomPayload()` 复用板级解析，不要在 `Application` 再复制一套矩阵结果处理器。
   - 语音触发 `matrix_pattern_request` 后会保留一个短暂 pending 窗口；若 TTS 提前结束，设备回到 `idle + pending 提示` 是“仍在等待矩阵结果”的表现，不应直接判成命令未执行。
   - 主 websocket 与 debug websocket 并存时，websocket 分片接收状态必须按连接实例隔离，`Ping` 直接原连接回复；`AFE` 停止后要丢弃 late feed 并清空旧 PCM，避免再次触发 `AFE(FEED) ringbuffer full`。
+  - 当前 `AFE(FEED)` 溢出不再只按“stop 后晚到 feed”处理；当前稳定版本把 uplink 缓冲收敛为更保守的实时窗口：`4` 帧 PCM encode 队列和约 `3 s` 的 Opus send 缓冲，并继续提高 `AFE` 内部任务与外层 `fetch` / detection 任务优先级，用来吸收 `connecting -> listening` 阶段的短时发送回堵。
+  - 若发送侧持续慢于采集侧，不能继续依赖“无限等待 + 继续扩容”；当前稳定策略保留最新实时语音、丢弃最旧 backlog 帧，并输出累计 drop 告警，优先避免 `AFE fetch` 被下游队列反向卡死。
+  - `lichuang-dev` 的 debug preview HTTP server、debug websocket 和 debug command worker 已改为按需启动；不要再在 Wi-Fi 连上后默认常驻拉起这些调试资源，否则会重新压低 `listening` 阶段的可用内部 SRAM。
+  - 当 `tools/list` 进入最小预算档位时，MCP 会先隐藏项目额外增加的 `matrix local` 和 `preview/snapshot` 工具，优先保住主控制面和会话链路，而不是继续枚举所有调试工具。
+  - `AfeAudioProcessor` 与 `AfeWakeWord` 的外层 `fetch` / detection 任务已改为 `PSRAM` 栈的静态任务，并在分配或创建失败时输出 `free_sram + largest_internal`；若现场再次看到 `AFE(FEED)` 连续打满，应先看这些显式失败日志，而不是默认把问题归因到协议侧。
 - `协议`
   - 共享字段只允许以 `Project/Protocols/gp_led_matrix_protocol.h` 为源头，不能在两端各自扩展。
   - 若命令语义变化，必须同步更新协议说明和脚本契约说明。

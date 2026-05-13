@@ -26,6 +26,18 @@ bool IsPriorityToolName(const std::string& name) {
     return name.rfind("self.screen.matrix_16x16.", 0) == 0;
 }
 
+bool IsLowMemoryOptionalToolName(const std::string& name) {
+    if (name.rfind("self.screen.matrix_16x16.local.", 0) == 0) {
+        return true;
+    }
+
+    if (name == "self.screen.preview_image.fetch_http") {
+        return true;
+    }
+
+    return name.rfind("self.screen.debug_snapshot.", 0) == 0;
+}
+
 void ReorderPriorityToolsToFront(std::vector<McpTool*>& tools) {
     std::stable_partition(tools.begin(),
                           tools.end(),
@@ -486,21 +498,25 @@ void McpServer::GetToolsList(int id, const std::string& cursor, bool list_user_o
     auto it = tools_.begin();
     std::string next_cursor = "";
     bool has_matrix_tool_in_page = false;
+    bool suppress_optional_tools = false;
+    bool hit_payload_limit = false;
 
     if ((free_sram_bytes < 12000U) || (largest_internal_block_bytes < 6000U)) {
         max_payload_size = 700U;
         max_tools_per_page = 1U;
+        suppress_optional_tools = true;
     } else if ((free_sram_bytes < 20000U) || (largest_internal_block_bytes < 12000U)) {
         max_payload_size = 900U;
         max_tools_per_page = 1U;
     }
 
     ESP_LOGI(TAG,
-             "tools/list budget=%u max_tools=%u free_sram=%u largest_internal=%u",
+             "tools/list budget=%u max_tools=%u free_sram=%u largest_internal=%u suppress_optional=%s",
              static_cast<unsigned int>(max_payload_size),
              static_cast<unsigned int>(max_tools_per_page),
              static_cast<unsigned int>(free_sram_bytes),
-             static_cast<unsigned int>(largest_internal_block_bytes));
+             static_cast<unsigned int>(largest_internal_block_bytes),
+             suppress_optional_tools ? "true" : "false");
 
     size_t tools_in_page = 0U;
 
@@ -519,6 +535,11 @@ void McpServer::GetToolsList(int id, const std::string& cursor, bool list_user_o
             ++it;
             continue;
         }
+
+        if (suppress_optional_tools && IsLowMemoryOptionalToolName((*it)->name())) {
+            ++it;
+            continue;
+        }
         
         // 添加tool前检查大小
         std::string tool_json = (*it)->to_json() + ",";
@@ -526,6 +547,7 @@ void McpServer::GetToolsList(int id, const std::string& cursor, bool list_user_o
             || ((tools_in_page > 0U) && (json.length() + tool_json.length() + 30U > max_payload_size))) {
             // 如果添加这个tool会超出大小限制，设置next_cursor并退出循环
             next_cursor = (*it)->name();
+            hit_payload_limit = true;
             break;
         }
 
@@ -541,7 +563,7 @@ void McpServer::GetToolsList(int id, const std::string& cursor, bool list_user_o
         json.pop_back();
     }
     
-    if (json.back() == '[' && !tools_.empty()) {
+    if ((json.back() == '[') && hit_payload_limit) {
         // 如果没有添加任何tool，返回错误
         ESP_LOGE(TAG, "tools/list: Failed to add tool %s because of payload size limit", next_cursor.c_str());
         ReplyError(id, "Failed to add tool " + next_cursor + " because of payload size limit");

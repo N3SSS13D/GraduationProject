@@ -1,4 +1,5 @@
 #include "config.h"
+#include "app.h"
 #include "draw_drv.h"
 #include "offline_pattern.h"
 #include "gp_led_action.h"
@@ -52,6 +53,7 @@ static GpLedDisplayProfile xdata g_gpLedProfile;
 static void GpLedAction_RenderBitmapFrameRgb888(const uint8_t xdata *frameData, uint8_t brightness);
 static void GpLedAction_RenderBitmapLayeredFrame(const uint8_t xdata *frameData, uint16_t length, uint8_t brightness);
 static uint8_t GpLedAction_ValidateLayeredFrame(const uint8_t xdata *frameData, uint16_t length);
+static GpMatrixStatusCode GpLedAction_ApplyLocalControlAction(uint8_t localControlAction);
 static GpMatrixStatusCode GpLedAction_ApplyDisplayProfileCore(const GpLedDisplayProfile xdata *profile,
                                                               uint8_t requireHostControl,
                                                               uint8_t markRemoteActive);
@@ -595,6 +597,34 @@ static uint8_t GpLedAction_ValidateLayeredFrame(const uint8_t xdata *frameData, 
     return 1U;
 }
 
+static GpMatrixStatusCode GpLedAction_ApplyLocalControlAction(uint8_t localControlAction)
+{
+    switch ((GpMatrixLocalControlAction)localControlAction)
+    {
+    case kGpMatrixLocalControlNextPattern:
+        APP_NextOfflinePattern();
+        return kGpMatrixStatusOk;
+    case kGpMatrixLocalControlShowTextScroll:
+        APP_ShowOfflineScrollText();
+        return kGpMatrixStatusOk;
+    case kGpMatrixLocalControlShowClock:
+        APP_ShowOfflineClock();
+        return kGpMatrixStatusOk;
+    case kGpMatrixLocalControlToggleTextClock:
+        APP_ToggleOfflineTextClock();
+        return kGpMatrixStatusOk;
+    case kGpMatrixLocalControlNextEffect:
+        APP_NextOfflineEffect();
+        return kGpMatrixStatusOk;
+    case kGpMatrixLocalControlNextColor:
+        APP_NextOfflineColor();
+        return kGpMatrixStatusOk;
+    case kGpMatrixLocalControlNone:
+    default:
+        return kGpMatrixStatusUnsupported;
+    }
+}
+
 static uint8_t GpLedAction_IsDisplayProfileValid(const GpLedDisplayProfile *profile)
 {
     if (profile->effect > kGpMatrixEffectGradientReveal)
@@ -1077,6 +1107,13 @@ GpMatrixStatusCode GpLedAction_ApplyAction(const GpMatrixActionPayload xdata *pa
     if (payload == 0)
     {
         return kGpMatrixStatusInternalError;
+    }
+
+    /* Keep local/offline scheme actions on the existing SetAction transport path without growing the payload. */
+    if ((payload->content == kGpMatrixActionContentState)
+        && (payload->animation_flags != (uint8_t)kGpMatrixLocalControlNone))
+    {
+        return GpLedAction_ApplyLocalControlAction(payload->animation_flags);
     }
 
     GpLedAction_LoadProfileFromAction(payload, &g_gpLedProfile);

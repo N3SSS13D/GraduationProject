@@ -53,6 +53,9 @@ public:
     /* Convert one GP debug-menu state object into a matrix action and send it. */
     bool ShowDebugState(const GpColorDebugState& state);
 
+    /* Trigger one LED-side local/offline scheme action without entering state de-duplication. */
+    bool SendLocalControlAction(GpMatrixLocalControlAction action);
+
     /* Send one already-built matrix action payload to the AI8051U side. */
     bool ShowAction(const GpMatrixActionPayload& action);
 

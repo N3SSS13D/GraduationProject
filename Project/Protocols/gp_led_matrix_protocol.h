@@ -143,6 +143,16 @@ typedef enum GpMatrixActionContent {
     kGpMatrixActionContentFrame = 0x04,
 } GpMatrixActionContent;
 
+typedef enum GpMatrixLocalControlAction {
+    kGpMatrixLocalControlNone = 0x00,
+    kGpMatrixLocalControlNextPattern = 0x01,
+    kGpMatrixLocalControlShowTextScroll = 0x02,
+    kGpMatrixLocalControlShowClock = 0x03,
+    kGpMatrixLocalControlToggleTextClock = 0x04,
+    kGpMatrixLocalControlNextEffect = 0x05,
+    kGpMatrixLocalControlNextColor = 0x06,
+} GpMatrixLocalControlAction;
+
 typedef enum GpMatrixEffect {
     kGpMatrixEffectStatic = 0x00,
     kGpMatrixEffectBreath = 0x01,
@@ -288,6 +298,7 @@ typedef struct GpMatrixActionPayload {
     uint8_t timeline_repeat_delay_ms_hi;
     uint8_t timeline_repeat_count;
     uint8_t timeline_path;
+    /* For SetAction + content=State, this byte carries GpMatrixLocalControlAction. */
     uint8_t animation_flags;
     uint8_t apply_flags;
 } GpMatrixActionPayload;

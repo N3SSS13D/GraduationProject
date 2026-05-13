@@ -478,8 +478,32 @@ GpColorDebugAnimation ParseAnimationName(const std::string& text) {
     if (lowered == "gradient") {
         return GpColorDebugAnimation::kGradient;
     }
-    if (lowered == "pulse") {
+    if (lowered == "pulse" || lowered == "breath") {
         return GpColorDebugAnimation::kPulse;
+    }
+    if (lowered == "scroll_left") {
+        return GpColorDebugAnimation::kScrollLeft;
+    }
+    if (lowered == "scroll_right") {
+        return GpColorDebugAnimation::kScrollRight;
+    }
+    if (lowered == "fade_in") {
+        return GpColorDebugAnimation::kFadeIn;
+    }
+    if (lowered == "fade_out") {
+        return GpColorDebugAnimation::kFadeOut;
+    }
+    if (lowered == "color_cycle") {
+        return GpColorDebugAnimation::kColorCycle;
+    }
+    if (lowered == "row_reveal") {
+        return GpColorDebugAnimation::kRowReveal;
+    }
+    if (lowered == "row_hide") {
+        return GpColorDebugAnimation::kRowHide;
+    }
+    if (lowered == "gradient_reveal") {
+        return GpColorDebugAnimation::kGradientReveal;
     }
     return GpColorDebugAnimation::kSolid;
 }
@@ -490,6 +514,22 @@ const char* ToAnimationName(GpColorDebugAnimation animation) {
         return "gradient";
     case GpColorDebugAnimation::kPulse:
         return "pulse";
+    case GpColorDebugAnimation::kScrollLeft:
+        return "scroll_left";
+    case GpColorDebugAnimation::kScrollRight:
+        return "scroll_right";
+    case GpColorDebugAnimation::kFadeIn:
+        return "fade_in";
+    case GpColorDebugAnimation::kFadeOut:
+        return "fade_out";
+    case GpColorDebugAnimation::kColorCycle:
+        return "color_cycle";
+    case GpColorDebugAnimation::kRowReveal:
+        return "row_reveal";
+    case GpColorDebugAnimation::kRowHide:
+        return "row_hide";
+    case GpColorDebugAnimation::kGradientReveal:
+        return "gradient_reveal";
     case GpColorDebugAnimation::kSolid:
     default:
         return "solid";
@@ -502,10 +542,14 @@ const char* ToPresetName(GpColorDebugPreset preset) {
         return "diamond";
     case GpColorDebugPreset::kCross:
         return "cross";
+    case GpColorDebugPreset::kChecker:
+        return "checker";
+    case GpColorDebugPreset::kBorder:
+        return "border";
+    case GpColorDebugPreset::kDiagonalX:
+        return "diagonal_x";
     case GpColorDebugPreset::kJluEmblem:
         return "jlu_emblem";
-    case GpColorDebugPreset::kPythonDemo:
-        return "python_demo";
     case GpColorDebugPreset::kScrollSubtitle:
         return "scroll_subtitle";
     case GpColorDebugPreset::kSolid:
@@ -670,10 +714,12 @@ private:
             kApplyMatrixState = 0,
             kCaptureSnapshot = 1,
             kSendDebugWebsocketMessage = 2,
+            kSendLocalControlAction = 3,
         };
 
         Type type = Type::kApplyMatrixState;
         GpColorDebugState state;
+        GpMatrixLocalControlAction local_control_action = kGpMatrixLocalControlNone;
         int quality = 50;
         std::string text;
     };
@@ -959,6 +1005,17 @@ private:
         return httpd_resp_sendstr(req, "{\"accepted\":true}");
     }
 
+    void CloseDebugPreviewHttpServer() {
+        if (debug_preview_http_server_ == nullptr) {
+            return;
+        }
+
+        httpd_stop(debug_preview_http_server_);
+        debug_preview_http_server_ = nullptr;
+        UpdateDebugPreviewStatus(false, "HTTP preview idle");
+        ESP_LOGI(TAG, "[DBG_HTTP] preview server stopped");
+    }
+
     void EnsureDebugPreviewHttpServer() {
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
         httpd_uri_t preview_uri = {};
@@ -1152,6 +1209,10 @@ private:
     }
 
     bool SendDebugWebsocketMessage(const std::string& message) {
+        /* Start the local preview receiver only when a debug websocket exchange is actually
+         * requested, so the HTTP server does not occupy memory for normal voice sessions. */
+        EnsureDebugPreviewHttpServer();
+
         if (!EnsureDebugWebsocketConnected()) {
             return false;
         }
@@ -2088,6 +2149,12 @@ cleanup:
             case DebugCommand::Type::kSendDebugWebsocketMessage:
                 self->SendDebugWebsocketMessage(command->text);
                 break;
+            case DebugCommand::Type::kSendLocalControlAction:
+                if ((self->led_matrix_ != nullptr)
+                    && (command->local_control_action != kGpMatrixLocalControlNone)) {
+                    self->led_matrix_->SendLocalControlAction(command->local_control_action);
+                }
+                break;
             default:
                 break;
             }
@@ -2097,7 +2164,7 @@ cleanup:
     bool EnqueueDebugCommand(std::unique_ptr<DebugCommand> command) {
         DebugCommand* raw_command = nullptr;
 
-        if ((debug_command_queue_ == nullptr) || (command == nullptr)) {
+        if ((command == nullptr) || !EnsureDebugCommandTask()) {
             return false;
         }
 
@@ -2116,6 +2183,14 @@ cleanup:
 
         command->type = DebugCommand::Type::kApplyMatrixState;
         command->state = state;
+        return EnqueueDebugCommand(std::move(command));
+    }
+
+    bool QueueLocalControlAction(GpMatrixLocalControlAction action) {
+        auto command = std::make_unique<DebugCommand>();
+
+        command->type = DebugCommand::Type::kSendLocalControlAction;
+        command->local_control_action = action;
         return EnqueueDebugCommand(std::move(command));
     }
 
@@ -2172,13 +2247,17 @@ cleanup:
         return request_pattern_draw ? "Debug WS draw request queued" : "Debug WS state queued";
     }
 
-    void InitializeDebugCommandTask() {
+    bool EnsureDebugCommandTask() {
         BaseType_t task_created;
+
+        if (debug_command_queue_ != nullptr) {
+            return true;
+        }
 
         debug_command_queue_ = xQueueCreate(kDebugCommandQueueLength, sizeof(DebugCommand*));
         if (debug_command_queue_ == nullptr) {
             ESP_LOGW(TAG, "Failed to create debug command queue");
-            return;
+            return false;
         }
 
         task_created = xTaskCreate(
@@ -2192,7 +2271,10 @@ cleanup:
             vQueueDelete(debug_command_queue_);
             debug_command_queue_ = nullptr;
             ESP_LOGW(TAG, "Failed to create debug command task");
+            return false;
         }
+
+        return true;
     }
 
     void ShowSerialCommandNotification(const std::string& text) {
@@ -2858,6 +2940,9 @@ cleanup:
         debug_display->SetMatrixDebugStateCallback([this](const GpColorDebugState& state) {
             return QueueMatrixDebugState(state);
         });
+        debug_display->SetLocalControlActionCallback([this](GpMatrixLocalControlAction action) {
+            return QueueLocalControlAction(action);
+        });
         debug_display->SetDebugSnapshotCallback([this]() {
             return QueueDebugSnapshotCapture(50);
         });
@@ -2880,30 +2965,35 @@ public:
         InitializeTouch();
         InitializeButtons();
         InitializeCamera();
-        InitializeDebugCommandTask();
         InitializeTools();
         InitializeLedMatrix();
         InitializeSerialDebugCommands();
-        UpdateDebugPreviewStatus(false, "HTTP preview waiting for Wi-Fi");
+        UpdateDebugPreviewStatus(false, "HTTP preview idle");
+        UpdateDebugWebsocketStatus(false, "Debug WS idle");
         LogDebugWebsocketStatus("boot");
         SetNetworkEventCallback([this](NetworkEvent event, const std::string& data) {
             (void)data;
 
             switch (event) {
             case NetworkEvent::Connected:
-                Application::GetInstance().Schedule([this]() {
-                    EnsureDebugPreviewHttpServer();
-                    EnsureDebugWebsocketConnected();
-                });
+                UpdateDebugPreviewStatus(false, "HTTP preview idle");
+                UpdateDebugWebsocketStatus(false, "Debug WS ready on demand");
                 break;
             case NetworkEvent::Connecting:
                 UpdateDebugPreviewStatus(false, "HTTP preview waiting for Wi-Fi");
+                UpdateDebugWebsocketStatus(false, "Debug WS waiting for Wi-Fi");
                 break;
             case NetworkEvent::Disconnected:
+                CloseDebugPreviewHttpServer();
+                CloseDebugWebsocket();
                 UpdateDebugPreviewStatus(false, "HTTP preview Wi-Fi disconnected");
+                UpdateDebugWebsocketStatus(false, "Debug WS Wi-Fi disconnected");
                 break;
             case NetworkEvent::WifiConfigModeEnter:
+                CloseDebugPreviewHttpServer();
+                CloseDebugWebsocket();
                 UpdateDebugPreviewStatus(false, "HTTP preview Wi-Fi config mode");
+                UpdateDebugWebsocketStatus(false, "Debug WS Wi-Fi config mode");
                 break;
             default:
                 break;

@@ -34,24 +34,9 @@ constexpr size_t kReplyMinPayloadBytes = 1U;
 constexpr uint8_t kMatrixDebugPatternDiamond = 0;
 constexpr uint8_t kMatrixDebugPatternCross = 1;
 constexpr uint8_t kMatrixDebugPatternJluEmblem = 2;
-constexpr uint8_t kPythonDemoFrame[GP_MATRIX_RGB332_FRAME_SIZE] = {
-    0x00, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x00, 0x00,
-    0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00,
-    0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00,
-    0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00,
-    0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x03, 0x03, 0x03, 0x03,
-    0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x03, 0x03, 0x00, 0x03, 0x03, 0x00, 0x00,
-    0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x03, 0x00, 0x03, 0x03, 0x00, 0x00, 0x03,
-    0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x03, 0x00, 0x03, 0x03, 0x00, 0x00, 0x03, 0x00,
-    0x00, 0x00, 0x03, 0x03, 0x00, 0x00, 0x03, 0x03, 0x00, 0x03, 0x03, 0x03, 0x03, 0x03, 0x00, 0x00,
-    0x00, 0x03, 0x00, 0x00, 0x03, 0x03, 0x00, 0x00, 0x03, 0x03, 0x03, 0x03, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00,
-    0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00,
-    0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x03, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x03, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x03, 0x03, 0x00, 0x00, 0x00, 0x03, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x03, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-};
+constexpr uint8_t kMatrixDebugPatternChecker = 3;
+constexpr uint8_t kMatrixDebugPatternBorder = 4;
+constexpr uint8_t kMatrixDebugPatternDiagonalX = 5;
 
 uint8_t ExtractRgb888Channel(uint32_t rgb, uint8_t shift) {
     return static_cast<uint8_t>((rgb >> shift) & 0xFFU);
@@ -274,10 +259,8 @@ bool GpLedMatrixEsp32::SyncClockTime(bool force) {
 bool GpLedMatrixEsp32::ShowDebugState(const GpColorDebugState& state) {
     GpMatrixActionPayload action = {};
     const uint32_t background_rgb888 = ResolveMatrixBackgroundRgb888(state);
-
-    if (state.preset == GpColorDebugPreset::kPythonDemo) {
-        return ShowRgb332FramePreset(state.preset);
-    }
+    const bool use_gradient_secondary = (state.animation == GpColorDebugAnimation::kGradient)
+        || (state.animation == GpColorDebugAnimation::kGradientReveal);
 
     action.source = kGpMatrixActionSourceLocal;
     action.direction = kGpMatrixDirectionNormal;
@@ -313,6 +296,12 @@ bool GpLedMatrixEsp32::ShowDebugState(const GpColorDebugState& state) {
         action.content = kGpMatrixActionContentPattern;
         if (state.preset == GpColorDebugPreset::kCross) {
             action.pattern_id = kMatrixDebugPatternCross;
+        } else if (state.preset == GpColorDebugPreset::kChecker) {
+            action.pattern_id = kMatrixDebugPatternChecker;
+        } else if (state.preset == GpColorDebugPreset::kBorder) {
+            action.pattern_id = kMatrixDebugPatternBorder;
+        } else if (state.preset == GpColorDebugPreset::kDiagonalX) {
+            action.pattern_id = kMatrixDebugPatternDiagonalX;
         } else if (state.preset == GpColorDebugPreset::kJluEmblem) {
             action.pattern_id = kMatrixDebugPatternJluEmblem;
         } else {
@@ -320,19 +309,100 @@ bool GpLedMatrixEsp32::ShowDebugState(const GpColorDebugState& state) {
         }
     }
 
-    if ((state.animation == GpColorDebugAnimation::kGradient) && state.has_secondary) {
+    if (state.animation == GpColorDebugAnimation::kGradient) {
         action.effect = kGpMatrixEffectGradient;
         action.color_mode = kGpMatrixColorModeGradient;
         action.flags |= GP_MATRIX_ACTION_FLAG_USE_SECONDARY;
     } else if (state.animation == GpColorDebugAnimation::kPulse) {
         action.effect = kGpMatrixEffectBreath;
         action.color_mode = kGpMatrixColorModeSolid;
+    } else if (state.animation == GpColorDebugAnimation::kScrollLeft) {
+        action.effect = kGpMatrixEffectScrollLeft;
+        action.color_mode = kGpMatrixColorModeSolid;
+    } else if (state.animation == GpColorDebugAnimation::kScrollRight) {
+        action.effect = kGpMatrixEffectScrollRight;
+        action.color_mode = kGpMatrixColorModeSolid;
+    } else if (state.animation == GpColorDebugAnimation::kFadeIn) {
+        action.effect = kGpMatrixEffectFadeIn;
+        action.color_mode = kGpMatrixColorModeSolid;
+    } else if (state.animation == GpColorDebugAnimation::kFadeOut) {
+        action.effect = kGpMatrixEffectFadeOut;
+        action.color_mode = kGpMatrixColorModeSolid;
+    } else if (state.animation == GpColorDebugAnimation::kColorCycle) {
+        action.effect = kGpMatrixEffectColorCycle;
+        action.color_mode = kGpMatrixColorModeSolid;
+    } else if (state.animation == GpColorDebugAnimation::kRowReveal) {
+        action.effect = kGpMatrixEffectRowReveal;
+        action.color_mode = kGpMatrixColorModeSolid;
+    } else if (state.animation == GpColorDebugAnimation::kRowHide) {
+        action.effect = kGpMatrixEffectRowHide;
+        action.color_mode = kGpMatrixColorModeSolid;
+    } else if (state.animation == GpColorDebugAnimation::kGradientReveal) {
+        action.effect = kGpMatrixEffectGradientReveal;
+        action.color_mode = kGpMatrixColorModeGradient;
+        action.flags |= GP_MATRIX_ACTION_FLAG_USE_SECONDARY;
     } else {
         action.effect = kGpMatrixEffectStatic;
         action.color_mode = kGpMatrixColorModeSolid;
     }
 
+    if (use_gradient_secondary && !state.has_secondary) {
+        action.flags |= GP_MATRIX_ACTION_FLAG_USE_SECONDARY;
+    }
+
     return ShowAction(action);
+}
+
+bool GpLedMatrixEsp32::SendLocalControlAction(GpMatrixLocalControlAction action) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    GpMatrixActionPayload payload = {};
+
+    if (action == kGpMatrixLocalControlNone) {
+        return false;
+    }
+
+    payload.source = kGpMatrixActionSourceLocal;
+    payload.content = kGpMatrixActionContentState;
+    payload.animation_flags = static_cast<uint8_t>(action);
+
+    const uint8_t packet[GP_MATRIX_ACTION_PAYLOAD_BYTES] = {
+        payload.source,
+        payload.content,
+        payload.effect,
+        payload.direction,
+        payload.color_mode,
+        payload.brightness,
+        payload.primary_r,
+        payload.primary_g,
+        payload.primary_b,
+        payload.secondary_r,
+        payload.secondary_g,
+        payload.secondary_b,
+        payload.pattern_id,
+        payload.glyph_id,
+        payload.scroll_step,
+        payload.anim_step,
+        payload.gradient_span,
+        payload.flags,
+        payload.frame_interval_ms_lo,
+        payload.frame_interval_ms_hi,
+        payload.timeline_duration_ms_lo,
+        payload.timeline_duration_ms_hi,
+        payload.timeline_repeat_delay_ms_lo,
+        payload.timeline_repeat_delay_ms_hi,
+        payload.timeline_repeat_count,
+        payload.timeline_path,
+        payload.animation_flags,
+        payload.apply_flags,
+    };
+    const bool sent = SendCommand(kGpMatrixCommandSetAction, packet, sizeof(packet), true);
+
+    if (sent) {
+        has_last_state_ = false;
+        remote_override_active_ = false;
+    }
+
+    return sent;
 }
 
 bool GpLedMatrixEsp32::ShowAction(const GpMatrixActionPayload& action) {
@@ -1359,8 +1429,6 @@ void GpLedMatrixEsp32::DrawBars(Rgb332Frame& frame, uint8_t first, uint8_t secon
 
 const uint8_t* GpLedMatrixEsp32::ResolveFramePreset(GpColorDebugPreset preset) {
     switch (preset) {
-    case GpColorDebugPreset::kPythonDemo:
-        return kPythonDemoFrame;
     default:
         return nullptr;
     }

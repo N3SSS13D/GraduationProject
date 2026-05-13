@@ -1,11 +1,20 @@
 #include "afe_wake_word.h"
 #include "audio_service.h"
+
+#include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <sstream>
 
 #define DETECTION_RUNNING_EVENT 1
 
 #define TAG "AfeWakeWord"
+
+namespace {
+constexpr int kAfeDetectionTaskStackSize = 4096;
+constexpr int kAfeWorkerCore = 1;
+constexpr int kAfeWorkerPriority = 5;
+constexpr int kAfeRingBufferFrames = 50;
+}
 
 AfeWakeWord::AfeWakeWord()
     : afe_data_(nullptr),
@@ -26,6 +35,14 @@ AfeWakeWord::~AfeWakeWord() {
 
     if (wake_word_encode_task_buffer_ != nullptr) {
         heap_caps_free(wake_word_encode_task_buffer_);
+    }
+
+    if (detection_task_buffer_ != nullptr) {
+        heap_caps_free(detection_task_buffer_);
+    }
+
+    if (detection_task_stack_ != nullptr) {
+        heap_caps_free(detection_task_stack_);
     }
 
     if (models_ != nullptr) {
@@ -73,18 +90,83 @@ bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
     afe_config_t* afe_config = afe_config_init(input_format.c_str(), models_, AFE_TYPE_SR, AFE_MODE_HIGH_PERF);
     afe_config->aec_init = codec_->input_reference();
     afe_config->aec_mode = AEC_MODE_SR_HIGH_PERF;
-    afe_config->afe_perferred_core = 1;
-    afe_config->afe_perferred_priority = 1;
+    afe_config->afe_perferred_core = kAfeWorkerCore;
+    afe_config->afe_perferred_priority = kAfeWorkerPriority;
+    afe_config->afe_ringbuf_size = kAfeRingBufferFrames;
     afe_config->memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM;
     
     afe_iface_ = esp_afe_handle_from_config(afe_config);
     afe_data_ = afe_iface_->create_from_config(afe_config);
+    afe_config_free(afe_config);
 
-    xTaskCreate([](void* arg) {
+    if ((afe_iface_ == nullptr) || (afe_data_ == nullptr)) {
+        ESP_LOGE(TAG, "Failed to create AFE wake-word instance");
+        afe_iface_ = nullptr;
+        afe_data_ = nullptr;
+        return false;
+    }
+
+    if (detection_task_stack_ == nullptr) {
+        detection_task_stack_ = static_cast<StackType_t*>(
+            heap_caps_malloc(kAfeDetectionTaskStackSize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    }
+
+    if (detection_task_buffer_ == nullptr) {
+        detection_task_buffer_ = static_cast<StaticTask_t*>(
+            heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    }
+
+    if ((detection_task_stack_ == nullptr) || (detection_task_buffer_ == nullptr)) {
+        ESP_LOGE(TAG,
+                 "Failed to allocate AFE detection task stack/buffer (free_sram=%u largest_internal=%u)",
+                 static_cast<unsigned int>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                 static_cast<unsigned int>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
+        if (detection_task_buffer_ != nullptr) {
+            heap_caps_free(detection_task_buffer_);
+            detection_task_buffer_ = nullptr;
+        }
+        if (detection_task_stack_ != nullptr) {
+            heap_caps_free(detection_task_stack_);
+            detection_task_stack_ = nullptr;
+        }
+        afe_iface_->destroy(afe_data_);
+        afe_data_ = nullptr;
+        afe_iface_ = nullptr;
+        return false;
+    }
+
+#if CONFIG_FREERTOS_NUMBER_OF_CORES > 1
+    detection_task_ = xTaskCreateStaticPinnedToCore([](void* arg) {
         auto this_ = (AfeWakeWord*)arg;
         this_->AudioDetectionTask();
         vTaskDelete(NULL);
-    }, "audio_detection", 4096, this, 3, nullptr);
+    }, "audio_detection", kAfeDetectionTaskStackSize, this, kAfeWorkerPriority,
+       detection_task_stack_, detection_task_buffer_, kAfeWorkerCore);
+#else
+    detection_task_ = xTaskCreateStatic([](void* arg) {
+        auto this_ = (AfeWakeWord*)arg;
+        this_->AudioDetectionTask();
+        vTaskDelete(NULL);
+    }, "audio_detection", kAfeDetectionTaskStackSize, this, kAfeWorkerPriority,
+       detection_task_stack_, detection_task_buffer_);
+#endif
+
+    if (detection_task_ == nullptr) {
+        ESP_LOGE(TAG,
+                 "Failed to create AFE detection task (free_sram=%u largest_internal=%u)",
+                 static_cast<unsigned int>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                 static_cast<unsigned int>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
+        heap_caps_free(detection_task_buffer_);
+        heap_caps_free(detection_task_stack_);
+        detection_task_buffer_ = nullptr;
+        detection_task_stack_ = nullptr;
+        afe_iface_->destroy(afe_data_);
+        afe_data_ = nullptr;
+        afe_iface_ = nullptr;
+        return false;
+    }
+
+    ESP_LOGI(TAG, "AFE detection task created with PSRAM stack, size=%d", kAfeDetectionTaskStackSize);
 
     return true;
 }

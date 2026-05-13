@@ -19,6 +19,8 @@ The service operates on three primary tasks to handle the different stages of th
 2.  **`AudioOutputTask`**: Responsible for playing audio. It retrieves decoded PCM data from the `audio_playback_queue_` and sends it to the `AudioCodec` to be played on the speaker.
 3.  **`OpusCodecTask`**: A worker task that handles both encoding and decoding. It fetches raw audio from `audio_encode_queue_`, encodes it into Opus packets, and places them in the `audio_send_queue_`. Concurrently, it fetches Opus packets from `audio_decode_queue_`, decodes them into PCM, and places the result in the `audio_playback_queue_`.
 
+`AfeAudioProcessor` and `AfeWakeWord` each also own an outer ESP-SR `fetch` / detection task. In the current stable version these task stacks are created with static allocation and placed in PSRAM-backed memory, so the `connecting -> listening` handoff no longer depends on finding another large internal-SRAM stack block at runtime.
+
 ## Data Flow
 
 There are two primary data flows: audio input (uplink) and audio output (downlink).
@@ -54,6 +56,9 @@ graph TD
 -   The processed PCM data is pushed into the `audio_encode_queue_`.
 -   The `OpusCodecTask` picks up the PCM data, encodes it into Opus format, and pushes the resulting packet to the `audio_send_queue_`.
 -   The application can then retrieve these Opus packets and send them over the network.
+-   The uplink path intentionally keeps a modest realtime buffer window (currently `4` PCM encode frames and about `3 s` of Opus send buffering) so short `connecting -> listening` back-pressure does not stall AFE `fetch()` and refill the ESP-SR `AFE(FEED)` ringbuffer.
+-   If that back-pressure persists beyond the buffered window, the uplink path now drops the oldest queued realtime PCM/Opus frames and keeps the newest speech moving forward instead of blocking `fetch()` until the ESP-SR FEED ringbuffer overflows.
+-   If AFE task allocation or creation still fails under memory pressure, the current implementation now emits explicit logs with `free_sram` and `largest_internal` instead of failing silently and leaving the FEED ringbuffer to fill from session start.
 
 ### 2. Audio Output (Downlink) Flow
 
