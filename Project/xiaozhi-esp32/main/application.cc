@@ -1265,6 +1265,9 @@ void Application::InitializeProtocol() {
 
                             /* Keep the voice turn from dropping straight back into listening while the draw result is still in flight. */
                             SetDeviceState(kDeviceStateIdle);
+                            if (pending_matrix_command_result_ready_.load()) {
+                                ClearPendingMatrixCommand();
+                            }
                             if (display != nullptr) {
                                 display->ShowNotification("Matrix command pending", 1500);
                             }
@@ -1340,7 +1343,6 @@ void Application::InitializeProtocol() {
                     return;
                 }
                 if (Board::GetInstance().HandleCustomPayload(payload)) {
-                    ClearPendingMatrixCommand();
                     return;
                 }
                 char* payload_dump = cJSON_PrintUnformatted(payload);
@@ -2035,10 +2037,23 @@ void Application::SendMatrixPatternRequest(const std::string& transcript, const 
 void Application::MarkPendingMatrixCommand(uint32_t timeout_ms) {
     const uint64_t timeout_us = static_cast<uint64_t>(timeout_ms) * 1000U;
 
+    pending_matrix_command_result_ready_.store(false);
     pending_matrix_command_deadline_us_.store(static_cast<uint64_t>(esp_timer_get_time()) + timeout_us);
 }
 
+void Application::CompletePendingMatrixCommand() {
+    /* If the matrix result finishes while TTS is still speaking, keep the pending guard
+       until the current voice turn lands in idle instead of bouncing back to listening. */
+    if (HasPendingMatrixCommand() && (GetDeviceState() == kDeviceStateSpeaking)) {
+        pending_matrix_command_result_ready_.store(true);
+        return;
+    }
+
+    ClearPendingMatrixCommand();
+}
+
 void Application::ClearPendingMatrixCommand() {
+    pending_matrix_command_result_ready_.store(false);
     pending_matrix_command_deadline_us_.store(0U);
 }
 
@@ -2048,7 +2063,7 @@ bool Application::HasPendingMatrixCommand() {
 
     if ((deadline_us == 0U) || (now_us >= deadline_us)) {
         if (deadline_us != 0U) {
-            pending_matrix_command_deadline_us_.store(0U);
+            ClearPendingMatrixCommand();
         }
         return false;
     }

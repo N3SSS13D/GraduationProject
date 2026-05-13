@@ -100,6 +100,16 @@ MATRIX_DEFAULT_GRADIENT_SPAN = 160
 MATRIX_DEFAULT_ANIM_INTERVAL_MS = 64
 MATRIX_DEFAULT_SCROLL_INTERVAL_MS = 96
 MATRIX_DEFAULT_COLOR_INTERVAL_MS = 80
+MATRIX_DEFAULT_SCROLL_GLYPH_SPACING = 1
+MATRIX_SCROLL_SPACE_WIDTH_MIN = 4
+MATRIX_GLYPH_RENDER_CANVAS_SIZE = MATRIX_WIDTH * 4
+MATRIX_GLYPH_RENDER_MARGIN = MATRIX_WIDTH // 2
+MATRIX_GLYPH_THRESHOLD = 72
+MATRIX_ASCII_GLYPH_MAX_WIDTH = 12
+MATRIX_ASCII_GLYPH_MAX_HEIGHT = 13
+MATRIX_WIDE_GLYPH_MAX_WIDTH = MATRIX_WIDTH - 1
+MATRIX_WIDE_GLYPH_MAX_HEIGHT = MATRIX_HEIGHT - 1
+MATRIX_ASCII_SCROLL_SIDE_PADDING = 1
 
 MAX_DRAWING_SOURCE_CHARS = 4000
 MAX_DRAWING_AST_NODES = 512
@@ -1154,7 +1164,9 @@ def normalize_bitmap_rows_hex_value(bitmap_rows_hex: Any, field_name: str) -> st
     raise ValueError(
         f"{field_name} must contain either exactly {MATRIX_BITMAP_HEX_CHARS} hex characters "
         f"or {MATRIX_HEIGHT} row tokens of 1-4 hex digits (16 rows x 16 bits = {MATRIX_BITMAP_BYTES} bytes). "
-        "Shorthand compact hex patterns are also accepted when length is a multiple of 4 and will be repeated to 16 rows"
+        "Shorthand compact hex patterns are also accepted when length is a multiple of 4 and will be repeated to 16 rows. "
+        "Use bitmap_ascii for 16x16 ASCII art or draw_python ops/python_source for generated shapes; do not send "
+        "frame_rgb332_hex, PIL image objects, or other full-color image blobs here"
     )
 
 
@@ -1592,6 +1604,11 @@ def validate_matrix_python_source(python_source: str) -> ast.Module:
         if node_count > MAX_DRAWING_AST_NODES:
             raise ValueError(f"python_source is too complex; keep it under {MAX_DRAWING_AST_NODES} AST nodes")
 
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            raise ValueError(
+                "Do not use import or PIL in python_source; use draw.<method>(...), helper functions, or ops instead"
+            )
+
         if not isinstance(node, ALLOWED_DRAW_AST_NODE_TYPES):
             raise ValueError(f"Unsupported Python construct: {type(node).__name__}")
 
@@ -1603,6 +1620,10 @@ def validate_matrix_python_source(python_source: str) -> ast.Module:
             raise ValueError("Only simple for-loop targets are allowed in python_source")
 
         if isinstance(node, ast.Attribute):
+            if isinstance(node.value, ast.Name) and node.value.id in {"Image", "ImageDraw", "ImageFont", "PIL"}:
+                raise ValueError(
+                    "Do not use PIL objects in python_source; the bridge already provides a 16x16 canvas via draw"
+                )
             if not isinstance(node.value, ast.Name) or node.value.id != "draw":
                 raise ValueError("Only draw.<method>(...) attribute access is allowed in python_source")
             if node.attr not in ALLOWED_DRAW_METHOD_NAMES:
@@ -1637,6 +1658,10 @@ def validate_matrix_eval_source(eval_source: str) -> ast.Expression:
             raise ValueError(f"Unsupported eval Python construct: {type(node).__name__}")
 
         if isinstance(node, ast.Attribute):
+            if isinstance(node.value, ast.Name) and node.value.id in {"Image", "ImageDraw", "ImageFont", "PIL"}:
+                raise ValueError(
+                    "Do not use PIL objects in eval_source; the bridge already provides a 16x16 canvas via draw"
+                )
             if not isinstance(node.value, ast.Name) or node.value.id != "draw":
                 raise ValueError("Only draw.<method>(...) attribute access is allowed in eval_source")
             if node.attr not in ALLOWED_DRAW_METHOD_NAMES:
@@ -1900,50 +1925,115 @@ def render_bitmap_animation_frame_sequence(
     return result
 
 
+def is_ascii_matrix_glyph(glyph: str) -> bool:
+    return glyph.isascii() and glyph.isprintable() and not glyph.isspace()
+
+
+def fit_rendered_glyph_mask_to_matrix(mask_image: Image.Image, *, max_width: int, max_height: int) -> Image.Image:
+    fitted_image = Image.new("1", (MATRIX_WIDTH, MATRIX_HEIGHT), 0)
+    glyph_bbox = mask_image.getbbox()
+
+    if glyph_bbox is None:
+        return fitted_image
+
+    cropped_mask = mask_image.crop(glyph_bbox).convert("L")
+    scale = min(
+        max_width / max(1, cropped_mask.width),
+        max_height / max(1, cropped_mask.height),
+    )
+    resized_width = max(1, min(MATRIX_WIDTH, int(round(cropped_mask.width * scale))))
+    resized_height = max(1, min(MATRIX_HEIGHT, int(round(cropped_mask.height * scale))))
+    resized_mask = cropped_mask.resize((resized_width, resized_height), Image.BILINEAR)
+    thresholded_mask = resized_mask.point(
+        lambda value: 255 if value >= MATRIX_GLYPH_THRESHOLD else 0
+    ).convert("1")
+    paste_x = max(0, (MATRIX_WIDTH - thresholded_mask.width) // 2)
+    paste_y = max(0, (MATRIX_HEIGHT - thresholded_mask.height) // 2)
+
+    fitted_image.paste(thresholded_mask, (paste_x, paste_y))
+    return fitted_image
+
+
 def render_text_glyph_to_mask_image(glyph: str) -> Image.Image:
     if len(glyph) != 1:
         raise ValueError("Each glyph must be exactly one character long")
 
-    glyph_image = Image.new("1", (MATRIX_WIDTH, MATRIX_HEIGHT), 0)
     if glyph.isspace():
-        return glyph_image
+        return Image.new("1", (MATRIX_WIDTH, MATRIX_HEIGHT), 0)
 
-    draw_context = ImageDraw.Draw(glyph_image)
     font_paths = [font_path for font_path in MATRIX_TEXT_FONT_CANDIDATES if os.path.isfile(font_path)]
+    max_width = MATRIX_ASCII_GLYPH_MAX_WIDTH if is_ascii_matrix_glyph(glyph) else MATRIX_WIDE_GLYPH_MAX_WIDTH
+    max_height = MATRIX_ASCII_GLYPH_MAX_HEIGHT if is_ascii_matrix_glyph(glyph) else MATRIX_WIDE_GLYPH_MAX_HEIGHT
 
-    for font_size in range(16, 7, -1):
+    # Render onto a larger grayscale canvas first, then fit back into 16x16.
+    # This keeps thin strokes and adds room for Latin side bearings.
+    for font_size in range(MATRIX_GLYPH_RENDER_CANVAS_SIZE, 11, -2):
         for font_path in font_paths:
             try:
                 font = ImageFont.truetype(font_path, size=font_size)
             except OSError:
                 continue
 
-            bbox = draw_context.textbbox((0, 0), glyph, font=font)
+            render_image = Image.new(
+                "L",
+                (MATRIX_GLYPH_RENDER_CANVAS_SIZE, MATRIX_GLYPH_RENDER_CANVAS_SIZE),
+                0,
+            )
+            render_draw = ImageDraw.Draw(render_image)
+            bbox = render_draw.textbbox(
+                (MATRIX_GLYPH_RENDER_MARGIN, MATRIX_GLYPH_RENDER_MARGIN),
+                glyph,
+                font=font,
+            )
             if bbox is None:
                 continue
 
             glyph_width = bbox[2] - bbox[0]
             glyph_height = bbox[3] - bbox[1]
-            if glyph_width <= 0 or glyph_height <= 0 or glyph_width > MATRIX_WIDTH or glyph_height > MATRIX_HEIGHT:
+            if glyph_width <= 0 or glyph_height <= 0:
+                continue
+            if (
+                glyph_width > (MATRIX_GLYPH_RENDER_CANVAS_SIZE - (MATRIX_GLYPH_RENDER_MARGIN * 2))
+                or glyph_height > (MATRIX_GLYPH_RENDER_CANVAS_SIZE - (MATRIX_GLYPH_RENDER_MARGIN * 2))
+            ):
                 continue
 
-            x_pos = (MATRIX_WIDTH - glyph_width) / 2 - bbox[0]
-            y_pos = (MATRIX_HEIGHT - glyph_height) / 2 - bbox[1]
-            draw_context.text((x_pos, y_pos), glyph, fill=1, font=font)
+            render_draw.text(
+                (MATRIX_GLYPH_RENDER_MARGIN - bbox[0], MATRIX_GLYPH_RENDER_MARGIN - bbox[1]),
+                glyph,
+                fill=255,
+                font=font,
+            )
+            glyph_image = fit_rendered_glyph_mask_to_matrix(
+                render_image,
+                max_width=max_width,
+                max_height=max_height,
+            )
             if glyph_image.getbbox() is not None:
                 return glyph_image
-            draw_context.rectangle((0, 0, MATRIX_WIDTH - 1, MATRIX_HEIGHT - 1), fill=0)
 
     fallback_font = ImageFont.load_default()
-    fallback_bbox = draw_context.textbbox((0, 0), glyph, font=fallback_font)
-    if fallback_bbox is not None:
-        glyph_width = fallback_bbox[2] - fallback_bbox[0]
-        glyph_height = fallback_bbox[3] - fallback_bbox[1]
-        x_pos = (MATRIX_WIDTH - glyph_width) / 2 - fallback_bbox[0]
-        y_pos = (MATRIX_HEIGHT - glyph_height) / 2 - fallback_bbox[1]
-        draw_context.text((x_pos, y_pos), glyph, fill=1, font=fallback_font)
+    fallback_image = Image.new("L", (MATRIX_GLYPH_RENDER_CANVAS_SIZE, MATRIX_GLYPH_RENDER_CANVAS_SIZE), 0)
+    fallback_draw = ImageDraw.Draw(fallback_image)
+    fallback_bbox = fallback_draw.textbbox(
+        (MATRIX_GLYPH_RENDER_MARGIN, MATRIX_GLYPH_RENDER_MARGIN),
+        glyph,
+        font=fallback_font,
+    )
+    if fallback_bbox is None:
+        return Image.new("1", (MATRIX_WIDTH, MATRIX_HEIGHT), 0)
 
-    return glyph_image
+    fallback_draw.text(
+        (MATRIX_GLYPH_RENDER_MARGIN - fallback_bbox[0], MATRIX_GLYPH_RENDER_MARGIN - fallback_bbox[1]),
+        glyph,
+        fill=255,
+        font=fallback_font,
+    )
+    return fit_rendered_glyph_mask_to_matrix(
+        fallback_image,
+        max_width=max_width,
+        max_height=max_height,
+    )
 
 
 def render_text_to_matrix_frame_sequence(
@@ -2040,6 +2130,14 @@ def build_text_strip_mask_image(
                 glyph_image = Image.new("1", (max(1, space_width), MATRIX_HEIGHT), 0)
             else:
                 glyph_image = glyph_image.crop((glyph_bbox[0], 0, glyph_bbox[2], MATRIX_HEIGHT))
+                if is_ascii_matrix_glyph(glyph):
+                    padded_glyph_image = Image.new(
+                        "1",
+                        (glyph_image.width + (MATRIX_ASCII_SCROLL_SIDE_PADDING * 2), MATRIX_HEIGHT),
+                        0,
+                    )
+                    padded_glyph_image.paste(glyph_image, (MATRIX_ASCII_SCROLL_SIDE_PADDING, 0))
+                    glyph_image = padded_glyph_image
 
         glyph_images.append(glyph_image)
         total_width += glyph_image.width
@@ -2102,10 +2200,13 @@ def render_scroll_subtitle_animation(
     effect_name = normalize_scroll_subtitle_effect_name(effect_config.get("name", "text_scroll"))
     step = max(1, int(effect_config.get("step", 1)))
     frame_count = max(0, int(effect_config.get("frame_count", 0)))
-    glyph_spacing = max(0, int(effect_config.get("glyph_spacing", 1)))
+    glyph_spacing = max(0, int(effect_config.get("glyph_spacing", MATRIX_DEFAULT_SCROLL_GLYPH_SPACING)))
     leading_padding = max(0, int(effect_config.get("leading_padding", MATRIX_WIDTH)))
     trailing_padding = max(0, int(effect_config.get("trailing_padding", MATRIX_WIDTH)))
-    space_width = max(1, int(effect_config.get("space_width", max(3, glyph_spacing + 2))))
+    space_width = max(
+        1,
+        int(effect_config.get("space_width", max(MATRIX_SCROLL_SPACE_WIDTH_MIN, glyph_spacing + 2))),
+    )
 
     # Render the whole subtitle into one off-screen strip, then sample 16x16 windows for transport.
     strip_image = build_text_strip_mask_image(
@@ -2966,7 +3067,7 @@ def build_tool_list() -> list[Dict[str, Any]]:
         },
         {
             "name": "self.screen.matrix_16x16.draw_frame",
-            "description": "Draw one 16x16 matrix frame via layered bitmap format. Provide bitmap_rows_hex (64 hex chars = 16x16 bitmap) plus primary_rgb888 and optional background_rgb888. Internally converts to the layered bitmap protocol (BITMAP_LAYERED).",
+            "description": "Draw a single 16x16 image on the LED matrix display. Use this when the user asks to show a specific pre-computed bitmap or ASCII art pattern on the LED screen. Provide bitmap_rows_hex (64 hex chars = 16x16 bitmap) plus primary_rgb888 and optional background_rgb888. For generating new shapes from user descriptions, prefer self.screen.matrix_16x16.draw_python instead.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -2991,17 +3092,17 @@ def build_tool_list() -> list[Dict[str, Any]]:
         },
         {
             "name": "self.screen.matrix_16x16.draw_python",
-            "description": "Primary LLM drawing tool. Execute restricted Pillow ImageDraw-style Python statements, evaluate restricted Python expressions with eval(), and return one unified 16x16 frame payload.",
+            "description": "Draw shapes, patterns, or pictures on the 16x16 LED matrix display. Call this tool whenever the user asks to draw, paint, create, or display geometric shapes (squares, circles, triangles, rectangles, polygons, lines), patterns, simple icons, or any visual content on the LED screen. The canvas is 16 pixels wide by 16 pixels tall. Use ops for declarative drawing, python_source/eval_source for algorithmic patterns. For text display use show_text or show_scroll_subtitle instead. For animation sequences use draw_animation.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "python_source": {
                         "type": "string",
-                        "description": "Restricted Python drawing statements. Use draw.point, draw.line, draw.rectangle, draw.ellipse, draw.polygon, helper functions like line(...), fill_rectangle(...), fill_circle(...), or eval(\"<expression>\") for nested dynamic drawing.",
+                        "description": "Restricted Python drawing statements on the pre-created 16x16 canvas. Allowed: draw.point/line/rectangle/ellipse/polygon, helper functions like line(...), fill_rectangle(...), fill_circle(...), or eval(\"<expression>\"). Forbidden: import, from PIL, Image.new, ImageDraw.Draw, or file/network access.",
                     },
                     "eval_source": {
                         "type": "string",
-                        "description": "Restricted Python expression evaluated with eval(). Prefer this for comprehensions, conditional expressions, or other dynamic draw patterns. If both python_source and eval_source are provided, python_source runs first.",
+                        "description": "Restricted Python expression evaluated with eval(). Prefer this for comprehensions, conditional expressions, or other dynamic draw patterns. Same sandbox as python_source: no import, no PIL objects, no Image.new. If both python_source and eval_source are provided, python_source runs first.",
                     },
                     "ops": build_draw_python_ops_schema(),
                     "primary_rgb888": {
@@ -3024,7 +3125,7 @@ def build_tool_list() -> list[Dict[str, Any]]:
         },
         {
             "name": "self.screen.matrix_16x16.show_text",
-            "description": "Convert text into a one-glyph-per-frame 16x16 sequence and deliver each frame to the AI preview through the debug websocket when available.",
+            "description": "Display text on the 16x16 LED matrix, rendering each character as a separate frame. Call this tool when the user asks to show text, letters, or words on the LED display (NOT for scrolling subtitles — use show_scroll_subtitle for that).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -3048,7 +3149,7 @@ def build_tool_list() -> list[Dict[str, Any]]:
         },
         {
             "name": "self.screen.matrix_16x16.show_scroll_subtitle",
-            "description": "Preferred host-side tool for scrolling subtitles when you explicitly need frame-sequence transport. It rasterizes the full text into an off-screen bitmap strip, then emits a matrix_frame_sequence_v2 animation using effect parameters.",
+            "description": "Display scrolling subtitles/marquee text on the LED matrix. Call this tool when the user asks for scrolling text, running messages, or marquee-style subtitles on the LED display. It rasterizes the full text into an off-screen bitmap strip, then emits a matrix_frame_sequence_v2 animation using effect parameters. For static (non-scrolling) text, use show_text. For drawing shapes, use draw_python.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -3085,7 +3186,7 @@ def build_tool_list() -> list[Dict[str, Any]]:
         },
         {
             "name": "self.screen.matrix_16x16.show_effect",
-            "description": "Send one native LED-side effect command instead of redrawing frames. Supports solid color, built-in local patterns, and direct text scroll/glyph effects through uploaded glyph rows. If the request explicitly needs frame-sequence subtitle transport, prefer self.screen.matrix_16x16.show_scroll_subtitle.",
+            "description": "Apply a native LED-side effect or display a built-in pattern on the LED matrix. Call this tool when the user asks to change the display mode, apply effects (breath, gradient, fade, scroll, color cycle), switch to a built-in pattern (diamond, cross, border, checker, diagonal, jlu_emblem), or set the LED screen to a solid color. For drawing custom shapes, prefer self.screen.matrix_16x16.draw_python. For scrolling subtitles, prefer self.screen.matrix_16x16.show_scroll_subtitle.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -3132,7 +3233,7 @@ def build_tool_list() -> list[Dict[str, Any]]:
         },
         {
             "name": "self.screen.matrix_16x16.draw_animation",
-            "description": "Transmit a compact 16x16 bitmap animation sequence for LED-side buffered playback. Each frame is a 32-byte 1-bit bitmap plus foreground/background RGB888, for a total compact frame size of 38 bytes. The LED side buffers 32 frames; if more frames are supplied, the bridge resamples them to 32 and scales frame_interval_ms to preserve the overall duration. Do not implement timing in python_source with sleep/yield style logic; animation timing is controlled only by frame_interval_ms. For raw subtitle text plus horizontal scroll parameters, prefer self.screen.matrix_16x16.show_scroll_subtitle. For native LED-side effects on solid/pattern/text content, prefer self.screen.matrix_16x16.show_effect.",
+            "description": "Play an animation sequence on the LED matrix display. Call this tool when the user asks for animated content, motion effects, or multi-frame sequences. Transmits compact 16x16 bitmap frames for LED-side buffered playback (max 32 frames). Each frame is a 32-byte 1-bit bitmap plus foreground/background RGB888. If more frames are supplied, the bridge resamples them to 32 and scales frame_interval_ms to preserve the overall duration. Do not implement timing in python_source with sleep/yield style logic; animation timing is controlled only by frame_interval_ms. For single-frame drawings, prefer self.screen.matrix_16x16.draw_python. For scrolling text, prefer self.screen.matrix_16x16.show_scroll_subtitle. For static effects on solid/pattern content, prefer self.screen.matrix_16x16.show_effect.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

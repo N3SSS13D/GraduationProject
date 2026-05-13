@@ -1184,7 +1184,11 @@ private:
             this->HandleDebugWebsocketMessage(data, len, binary);
         });
         debug_websocket_->OnDisconnected([this]() {
-            UpdateDebugWebsocketStatus(false, "Debug WS disconnected");
+            UpdateDebugWebsocketStatus(false, "Debug WS disconnected, will retry");
+            Application::GetInstance().Schedule([this]() {
+                CloseDebugWebsocket();
+                EnsureDebugWebsocketConnected();
+            });
         });
 
         ESP_LOGI(TAG, "[DBG_WS] connecting url=%s", url.c_str());
@@ -1448,7 +1452,6 @@ private:
                 : (GP_MATRIX_APPLY_FLAG_PATTERN | GP_MATRIX_APPLY_FLAG_GLYPH));
 
             const std::string transcript_text = cJSON_IsString(transcript) ? transcript->valuestring : "";
-            Application::GetInstance().ClearPendingMatrixCommand();
             cJSON_Delete(root);
 
             Application::GetInstance().Schedule([this,
@@ -1490,6 +1493,8 @@ private:
                         display_->SetChatMessage("system", transcript_text.c_str());
                     }
                 }
+
+                Application::GetInstance().CompletePendingMatrixCommand();
             });
             UpdateDebugWebsocketStatus(true, "Debug WS action received");
             return;
@@ -1514,7 +1519,6 @@ private:
 
             const size_t scheduled_frame_count = static_cast<size_t>(frame_count->valueint);
             const std::string transcript_text = cJSON_IsString(transcript) ? transcript->valuestring : "";
-            Application::GetInstance().ClearPendingMatrixCommand();
             Application::GetInstance().Schedule([this,
                                                  scheduled_frame_count,
                                                  scheduled_interval_ms,
@@ -1557,7 +1561,6 @@ private:
             const std::string background_color = cJSON_IsString(background_rgb888) ? background_rgb888->valuestring : "#000000";
             const size_t scheduled_frame_count = static_cast<size_t>(frame_count->valueint);
             const int array_size = cJSON_GetArraySize(frames_array);
-                Application::GetInstance().ClearPendingMatrixCommand();
 
             /* Decode frames on the WebSocket thread so the scheduled task only keeps
                one compact copy per frame instead of duplicating JSON strings. */
@@ -1709,6 +1712,7 @@ private:
                     }
                 }
                 ResetPendingMatrixAnimation();
+                Application::GetInstance().CompletePendingMatrixCommand();
             });
             UpdateDebugWebsocketStatus(true, "Debug WS animation batch received");
             return;
@@ -1756,7 +1760,6 @@ private:
             const int scheduled_frame_index = cJSON_IsNumber(frame_index) ? frame_index->valueint : -1;
             const int scheduled_frame_count = cJSON_IsNumber(frame_count) ? frame_count->valueint : 0;
             const std::string transcript_text = cJSON_IsString(transcript) ? transcript->valuestring : "";
-            Application::GetInstance().ClearPendingMatrixCommand();
 
             Application::GetInstance().Schedule([this,
                                                  scheduled_rows,
@@ -1825,6 +1828,8 @@ private:
                         display_->SetChatMessage("system", transcript_text.c_str());
                     }
                 }
+
+                Application::GetInstance().CompletePendingMatrixCommand();
             });
             UpdateDebugWebsocketStatus(true, "Debug WS pattern received");
             cJSON_Delete(root);
@@ -1843,7 +1848,6 @@ private:
 
             const size_t scheduled_frame_count = static_cast<size_t>(frame_count->valueint);
             const std::string transcript_text = cJSON_IsString(transcript) ? transcript->valuestring : "";
-            Application::GetInstance().ClearPendingMatrixCommand();
             Application::GetInstance().Schedule([this, scheduled_frame_count, transcript_text]() {
                 auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display_);
                 auto* matrix_led = led_matrix_.get();
@@ -1880,6 +1884,7 @@ private:
                 }
 
                 ResetPendingMatrixAnimation();
+                Application::GetInstance().CompletePendingMatrixCommand();
             });
             UpdateDebugWebsocketStatus(true, "Debug WS animation end received");
             cJSON_Delete(root);
@@ -2977,7 +2982,10 @@ public:
             switch (event) {
             case NetworkEvent::Connected:
                 UpdateDebugPreviewStatus(false, "HTTP preview idle");
-                UpdateDebugWebsocketStatus(false, "Debug WS ready on demand");
+                UpdateDebugWebsocketStatus(false, "Debug WS connecting on Wi-Fi ready");
+                Application::GetInstance().Schedule([this]() {
+                    EnsureDebugWebsocketConnected();
+                });
                 break;
             case NetworkEvent::Connecting:
                 UpdateDebugPreviewStatus(false, "HTTP preview waiting for Wi-Fi");
