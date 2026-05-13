@@ -43,12 +43,17 @@
 - `AI端`
   - 蓝牙接收保持后台任务组包模型，避免回退成调用时轮询。
   - 预览、触摸和主机绘图转发主要在 `lichuang_dev_board.cc` 串起来，问题常常不只在 `gp_led_matrix_esp32.cc`。
+  - 主 websocket 的 `type:"custom"` 不再只用于显示调试 JSON；若 `payload.type` 或 `payload.action` 是 `matrix_pattern_result` / `matrix_action_result` / `matrix_animation_*`，应优先通过 `Board::HandleCustomPayload()` 复用板级解析，不要在 `Application` 再复制一套矩阵结果处理器。
+  - 语音触发 `matrix_pattern_request` 后会保留一个短暂 pending 窗口；若 TTS 提前结束，设备回到 `idle + pending 提示` 是“仍在等待矩阵结果”的表现，不应直接判成命令未执行。
+  - 主 websocket 与 debug websocket 并存时，websocket 分片接收状态必须按连接实例隔离，`Ping` 直接原连接回复；`AFE` 停止后要丢弃 late feed 并清空旧 PCM，避免再次触发 `AFE(FEED) ringbuffer full`。
 - `协议`
   - 共享字段只允许以 `Project/Protocols/gp_led_matrix_protocol.h` 为源头，不能在两端各自扩展。
   - 若命令语义变化，必须同步更新协议说明和脚本契约说明。
 - `脚本`
   - MCP/绘图脚本的目标是 `AI端` 预览与转发接口，不应直接假定 `LED端` 原始串口发包细节。
-  - 当前已启用原生效果命令链路：`self.screen.matrix_16x16.show_effect` -> debug websocket `matrix_action_result` -> `AI端` 字模上传/动作转发 -> `LED端` `SetAction`。
+  - 主机桥对外工具使用 `self.screen.matrix_16x16.*`；`AI端` 本地直连调试工具统一使用 `self.screen.matrix_16x16.local.*`，文档与提示中不要混用两类命名。
+  - 当前已启用原生效果命令链路：`self.screen.matrix_16x16.show_effect` -> `matrix_action_result` -> `AI端` 字模上传/动作转发 -> `LED端` `SetAction`；默认主机桥继续走 debug websocket，但主会话 websocket 的 `type:"custom"` / `payload.type|action = matrix_*` 结果也应复用同一板级解析器。
+  - 当需求是“原始文本 + 横向滚动参数 + 图像序列传输”时，优先使用 `self.screen.matrix_16x16.show_scroll_subtitle`；只有已有显式帧序列或需要非横向多字效果时再使用 `draw_animation`。
   - 多字文本的原生直连当前仅适用于 `text_scroll`、`scroll_left`、`scroll_right`；若是多字渐显、逐行显隐等效果，仍应使用 `draw_animation`。
 
 ### 5. Prompt / Skill 结构待解决问题

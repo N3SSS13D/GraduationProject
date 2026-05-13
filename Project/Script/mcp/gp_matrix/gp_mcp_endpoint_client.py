@@ -115,10 +115,12 @@ DRAW_FRAME_TOOL_NAMES = frozenset({
 PROMPT_RENDER_TOOL_NAMES = frozenset({"self.screen.matrix_16x16.render_prompt"})
 PYTHON_DRAW_TOOL_NAMES = frozenset({"self.screen.matrix_16x16.draw_python"})
 TEXT_SEQUENCE_TOOL_NAMES = frozenset({"self.screen.matrix_16x16.show_text"})
+SCROLL_SUBTITLE_TOOL_NAMES = frozenset({"self.screen.matrix_16x16.show_scroll_subtitle"})
 ANIMATION_SEQUENCE_TOOL_NAMES = frozenset({"self.screen.matrix_16x16.draw_animation"})
 EFFECT_COMMAND_TOOL_NAMES = frozenset({"self.screen.matrix_16x16.show_effect"})
 DEBUG_WS_DELIVERY_TOOL_NAMES = (
-    DRAW_FRAME_TOOL_NAMES | PYTHON_DRAW_TOOL_NAMES | TEXT_SEQUENCE_TOOL_NAMES | ANIMATION_SEQUENCE_TOOL_NAMES
+    DRAW_FRAME_TOOL_NAMES | PYTHON_DRAW_TOOL_NAMES | TEXT_SEQUENCE_TOOL_NAMES | SCROLL_SUBTITLE_TOOL_NAMES
+    | ANIMATION_SEQUENCE_TOOL_NAMES
     | EFFECT_COMMAND_TOOL_NAMES
 )
 HTTP_PREVIEW_FALLBACK_TOOL_NAMES = DRAW_FRAME_TOOL_NAMES | PYTHON_DRAW_TOOL_NAMES
@@ -2005,6 +2007,150 @@ def render_text_to_matrix_frame_sequence(
     }
 
 
+def normalize_scroll_subtitle_effect_name(effect_name: Any) -> str:
+    normalized_effect_name = normalize_native_effect_name(effect_name or "text_scroll")
+
+    if normalized_effect_name == "text_scroll":
+        return "scroll_left"
+    if normalized_effect_name in {"scroll_left", "scroll_right"}:
+        return normalized_effect_name
+
+    raise ValueError(
+        "scroll subtitle effect must be one of text_scroll, scroll_left, scroll_right, marquee_left, or marquee_right"
+    )
+
+
+def build_text_strip_mask_image(
+    text: str,
+    glyph_spacing: int,
+    leading_padding: int,
+    trailing_padding: int,
+    space_width: int,
+) -> Image.Image:
+    glyph_images: list[Image.Image] = []
+    total_width = max(0, leading_padding) + max(0, trailing_padding)
+
+    for glyph in text:
+        if glyph.isspace():
+            glyph_image = Image.new("1", (max(1, space_width), MATRIX_HEIGHT), 0)
+        else:
+            glyph_image = render_text_glyph_to_mask_image(glyph)
+            glyph_bbox = glyph_image.getbbox()
+            if glyph_bbox is None:
+                glyph_image = Image.new("1", (max(1, space_width), MATRIX_HEIGHT), 0)
+            else:
+                glyph_image = glyph_image.crop((glyph_bbox[0], 0, glyph_bbox[2], MATRIX_HEIGHT))
+
+        glyph_images.append(glyph_image)
+        total_width += glyph_image.width
+
+    if len(glyph_images) > 1:
+        total_width += glyph_spacing * (len(glyph_images) - 1)
+
+    strip_image = Image.new("1", (max(MATRIX_WIDTH, total_width), MATRIX_HEIGHT), 0)
+    cursor_x = max(0, leading_padding)
+
+    for glyph_index, glyph_image in enumerate(glyph_images):
+        strip_image.paste(glyph_image, (cursor_x, 0))
+        cursor_x += glyph_image.width
+        if glyph_index + 1 < len(glyph_images):
+            cursor_x += glyph_spacing
+
+    return strip_image
+
+
+def build_scroll_subtitle_positions(total_shift: int, step: int, frame_count: int) -> list[int]:
+    if total_shift <= 0:
+        return [0] * max(1, frame_count or 1)
+
+    if frame_count > 0:
+        if frame_count == 1:
+            return [0]
+
+        return [
+            min(total_shift, int(round((frame_index * total_shift) / (frame_count - 1))))
+            for frame_index in range(frame_count)
+        ]
+
+    positions = list(range(0, total_shift + 1, max(1, step)))
+    if positions[-1] != total_shift:
+        positions.append(total_shift)
+    return positions
+
+
+def render_scroll_subtitle_animation(
+    text: str,
+    effect: Optional[Dict[str, Any]] = None,
+    primary_rgb888: str = "",
+    background_rgb888: str = "",
+    frame_interval_ms: int = MATRIX_DEFAULT_SCROLL_INTERVAL_MS,
+    source: str = "mcp_scroll_subtitle",
+    transcript: str = "",
+) -> Dict[str, Any]:
+    text_input = text
+    effect_config = dict(effect or {})
+
+    if not text_input.strip():
+        raise ValueError("text is required")
+    if len(text_input) > MAX_TEXT_FRAME_COUNT:
+        raise ValueError(f"text is too long; keep it under {MAX_TEXT_FRAME_COUNT} characters")
+    if frame_interval_ms < ANIMATION_FRAME_INTERVAL_MIN_MS or frame_interval_ms > ANIMATION_FRAME_INTERVAL_MAX_MS:
+        raise ValueError(
+            f"frame_interval_ms must be between {ANIMATION_FRAME_INTERVAL_MIN_MS} and {ANIMATION_FRAME_INTERVAL_MAX_MS}"
+        )
+
+    effect_name = normalize_scroll_subtitle_effect_name(effect_config.get("name", "text_scroll"))
+    step = max(1, int(effect_config.get("step", 1)))
+    frame_count = max(0, int(effect_config.get("frame_count", 0)))
+    glyph_spacing = max(0, int(effect_config.get("glyph_spacing", 1)))
+    leading_padding = max(0, int(effect_config.get("leading_padding", MATRIX_WIDTH)))
+    trailing_padding = max(0, int(effect_config.get("trailing_padding", MATRIX_WIDTH)))
+    space_width = max(1, int(effect_config.get("space_width", max(3, glyph_spacing + 2))))
+
+    # Render the whole subtitle into one off-screen strip, then sample 16x16 windows for transport.
+    strip_image = build_text_strip_mask_image(
+        text=text_input,
+        glyph_spacing=glyph_spacing,
+        leading_padding=leading_padding,
+        trailing_padding=trailing_padding,
+        space_width=space_width,
+    )
+    positions = build_scroll_subtitle_positions(
+        total_shift=max(0, strip_image.width - MATRIX_WIDTH),
+        step=step,
+        frame_count=frame_count,
+    )
+    if effect_name == "scroll_right":
+        positions = list(reversed(positions))
+
+    bitmap_rows_hex_list: list[str] = []
+    for position in positions:
+        window_image = strip_image.crop((position, 0, position + MATRIX_WIDTH, MATRIX_HEIGHT))
+        bitmap_rows_hex_list.append(bitmap_rows_to_hex(build_bitmap_rows_from_mask_image(window_image)))
+
+    animation_result = render_bitmap_animation_frame_sequence(
+        bitmap_rows_hex_list=bitmap_rows_hex_list,
+        primary_rgb888=primary_rgb888,
+        background_rgb888=background_rgb888,
+        frame_interval_ms=frame_interval_ms,
+        source=source,
+        transcript=transcript or text_input,
+    )
+    animation_result["tool_name"] = "self.screen.matrix_16x16.show_scroll_subtitle"
+    animation_result["text"] = text_input
+    animation_result["effect"] = {
+        "name": effect_name,
+        "step": step,
+        "frame_count": frame_count or len(positions),
+        "glyph_spacing": glyph_spacing,
+        "leading_padding": leading_padding,
+        "trailing_padding": trailing_padding,
+        "space_width": space_width,
+    }
+    animation_result["effect_mode"] = "text_strip_scroll"
+    return animation_result
+
+
 def normalize_native_effect_name(effect_name: Any) -> str:
     normalized = str(effect_name).strip().lower()
     alias_map = {
@@ -2878,7 +3024,7 @@ def build_tool_list() -> list[Dict[str, Any]]:
         },
         {
             "name": "self.screen.matrix_16x16.show_text",
-            "description": "Convert text into a 16x16 frame sequence and deliver each frame to the AI preview through the debug websocket when available.",
+            "description": "Convert text into a one-glyph-per-frame 16x16 sequence and deliver each frame to the AI preview through the debug websocket when available.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -2901,8 +3047,45 @@ def build_tool_list() -> list[Dict[str, Any]]:
             },
         },
         {
+            "name": "self.screen.matrix_16x16.show_scroll_subtitle",
+            "description": "Preferred host-side tool for scrolling subtitles when you explicitly need frame-sequence transport. It rasterizes the full text into an off-screen bitmap strip, then emits a matrix_frame_sequence_v2 animation using effect parameters.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "Required subtitle text. The bridge renders the full string into one off-screen strip before extracting 16x16 animation frames.",
+                    },
+                    "effect": {
+                        "type": "object",
+                        "description": "Optional horizontal scroll effect config. Supported names: text_scroll, scroll_left, scroll_right, marquee_left, marquee_right. Omit to use text_scroll defaults.",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "step": {"type": "integer", "minimum": 1, "maximum": 8},
+                            "frame_count": {"type": "integer", "minimum": 2, "maximum": 96},
+                            "glyph_spacing": {"type": "integer", "minimum": 0, "maximum": 8},
+                            "leading_padding": {"type": "integer", "minimum": 0, "maximum": 32},
+                            "trailing_padding": {"type": "integer", "minimum": 0, "maximum": 32},
+                            "space_width": {"type": "integer", "minimum": 1, "maximum": 16}
+                        }
+                    },
+                    "frame_interval_ms": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 65535,
+                        "description": "Delay between consecutive animation frames in milliseconds. 96 ms is a good default for readable subtitle scroll.",
+                    },
+                    "primary_rgb888": {"type": "string"},
+                    "background_rgb888": {"type": "string"},
+                    "source": {"type": "string"},
+                    "transcript": {"type": "string"}
+                },
+                "required": ["text"],
+            },
+        },
+        {
             "name": "self.screen.matrix_16x16.show_effect",
-            "description": "Send one native LED-side effect command instead of redrawing frames. Supports solid color, built-in local patterns, and direct text scroll/glyph effects through uploaded glyph rows.",
+            "description": "Send one native LED-side effect command instead of redrawing frames. Supports solid color, built-in local patterns, and direct text scroll/glyph effects through uploaded glyph rows. If the request explicitly needs frame-sequence subtitle transport, prefer self.screen.matrix_16x16.show_scroll_subtitle.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -2949,7 +3132,7 @@ def build_tool_list() -> list[Dict[str, Any]]:
         },
         {
             "name": "self.screen.matrix_16x16.draw_animation",
-            "description": "Transmit a compact 16x16 bitmap animation sequence for LED-side buffered playback. Each frame is a 32-byte 1-bit bitmap plus foreground/background RGB888, for a total compact frame size of 38 bytes. The LED side buffers 32 frames; if more frames are supplied, the bridge resamples them to 32 and scales frame_interval_ms to preserve the overall duration. Do not implement timing in python_source with sleep/yield style logic; animation timing is controlled only by frame_interval_ms. For native LED-side effects on solid/pattern/text content, prefer self.screen.matrix_16x16.show_effect.",
+            "description": "Transmit a compact 16x16 bitmap animation sequence for LED-side buffered playback. Each frame is a 32-byte 1-bit bitmap plus foreground/background RGB888, for a total compact frame size of 38 bytes. The LED side buffers 32 frames; if more frames are supplied, the bridge resamples them to 32 and scales frame_interval_ms to preserve the overall duration. Do not implement timing in python_source with sleep/yield style logic; animation timing is controlled only by frame_interval_ms. For raw subtitle text plus horizontal scroll parameters, prefer self.screen.matrix_16x16.show_scroll_subtitle. For native LED-side effects on solid/pattern/text content, prefer self.screen.matrix_16x16.show_effect.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -3517,6 +3700,25 @@ def handle_local_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Dict[st
             background_rgb888=str(arguments.get("background_rgb888", "#000000")),
             frame_interval_ms=int(arguments.get("frame_interval_ms", DEFAULT_TEXT_FRAME_INTERVAL_MS)),
             source=str(arguments.get("source", "mcp_text")),
+            transcript=str(arguments.get("transcript", "")),
+        )
+
+    if tool_name in SCROLL_SUBTITLE_TOOL_NAMES:
+        effect_argument = arguments.get("effect")
+        if effect_argument in (None, "", []):
+            effect_config: Dict[str, Any] = {}
+        elif isinstance(effect_argument, dict):
+            effect_config = effect_argument
+        else:
+            effect_config = {"name": effect_argument}
+
+        return render_scroll_subtitle_animation(
+            text=str(arguments.get("text", "")),
+            effect=effect_config,
+            primary_rgb888=str(arguments.get("primary_rgb888", "#F5F5F5")),
+            background_rgb888=str(arguments.get("background_rgb888", "#000000")),
+            frame_interval_ms=int(arguments.get("frame_interval_ms", MATRIX_DEFAULT_SCROLL_INTERVAL_MS)),
+            source=str(arguments.get("source", "mcp_scroll_subtitle")),
             transcript=str(arguments.get("transcript", "")),
         )
 

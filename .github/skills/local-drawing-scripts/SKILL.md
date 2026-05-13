@@ -71,16 +71,21 @@ For script, MCP, and tooling tasks:
 
 1. Keep LLM-facing tool names and argument names self-descriptive.
 2. Keep payload and animation docs consistent with the active protocol docs under `Project/Protocols/`.
-3. Do not move script-specific rules into the top-level prompt; keep them in this category or the matching script docs.
-4. If script workflow changes affect current usage guidance, update `Project/Script/README.md` and the nearest script
+3. Keep the host bridge tool namespace on `self.screen.matrix_16x16.*`; reserve `self.screen.matrix_16x16.local.*`
+  for AI-side local debug helpers only, and do not present those local tool names as host-callable MCP tools.
+4. Do not move script-specific rules into the top-level prompt; keep them in this category or the matching script docs.
+5. If script workflow changes affect current usage guidance, update `Project/Script/README.md` and the nearest script
    doc.
-5. When a requested display can be represented by an LED-side native solid/pattern/text effect, prefer the dedicated
+6. When a requested display can be represented by an LED-side native solid/pattern/text effect, prefer the dedicated
    `show_effect` / `matrix_action_result` path over synthesizing a bitmap animation.
-6. Keep the default auto-debug chain strictly ordered as:
+7. When the input is raw subtitle text plus horizontal scroll parameters and the transport must stay frame-sequence-based,
+  prefer `show_scroll_subtitle`; use `draw_animation` only when frames are already explicit or the subtitle effect is
+  beyond the dedicated scroll helper.
+8. Keep the default auto-debug chain strictly ordered as:
   - Keil rebuild only for `Project/STC51/ws2812_driver/ws2812_driver.uvproj`
   - delay `20s`, then open AI8051U serial monitor (`COM15` default)
   - ESP-IDF `build flash monitor` for `Project/xiaozhi-esp32`
-7. Validate tool roots before execution and expose configurable overrides:
+9. Validate tool roots before execution and expose configurable overrides:
   - `S:\Embedded\Keil`
   - `S:\Embedded\ESP\v5.4.3\esp-idf`
 8. Remove legacy script references whenever automation entry changes to avoid dead docs and stale task bindings.

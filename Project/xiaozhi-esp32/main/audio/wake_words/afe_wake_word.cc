@@ -108,6 +108,14 @@ void AfeWakeWord::Feed(const std::vector<int16_t>& data) {
     if (afe_data_ == nullptr) {
         return;
     }
+
+    /* The audio service may still have one outer wake-word bit set while this AFE instance
+     * has already stopped fetching after a detection event. Drop late feed blocks so the
+     * ESP-SR FEED ringbuffer cannot refill with stale PCM during the handoff to listening. */
+    if ((xEventGroupGetBits(event_group_) & DETECTION_RUNNING_EVENT) == 0) {
+        return;
+    }
+
     afe_iface_->feed(afe_data_, data.data());
 }
 

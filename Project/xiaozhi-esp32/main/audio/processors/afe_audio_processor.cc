@@ -92,6 +92,13 @@ void AfeAudioProcessor::Feed(std::vector<int16_t>&& data) {
     if (afe_data_ == nullptr) {
         return;
     }
+
+    /* Ignore late feed blocks after Stop() so the fetch task does not wake up to a refilled
+     * FEED ringbuffer from the previous voice-processing session. */
+    if (!IsRunning()) {
+        return;
+    }
+
     afe_iface_->feed(afe_data_, data.data());
 }
 
@@ -101,7 +108,11 @@ void AfeAudioProcessor::Start() {
 
 void AfeAudioProcessor::Stop() {
     xEventGroupClearBits(event_group_, PROCESSOR_RUNNING);
+    output_buffer_.clear();
+    is_speaking_ = false;
+
     if (afe_data_ != nullptr) {
+        /* Drop any buffered PCM immediately so the next session does not inherit stale AFE data. */
         afe_iface_->reset_buffer(afe_data_);
     }
 }

@@ -46,6 +46,7 @@ using NetworkEventCallback = std::function<void(NetworkEvent event, const std::s
 void* create_board();
 class AudioCodec;
 class Display;
+struct cJSON;
 class Board {
 private:
     Board(const Board&) = delete; // 禁用拷贝构造函数
@@ -82,6 +83,10 @@ public:
     virtual void SetPowerSaveLevel(PowerSaveLevel level) = 0;
     virtual std::string GetBoardJson() = 0;
     virtual std::string GetDeviceStatusJson() = 0;
+    virtual bool HandleCustomPayload(const cJSON* payload) {
+        (void)payload;
+        return false;
+    }
 };
 
 #define DECLARE_BOARD(BOARD_CLASS_NAME) \

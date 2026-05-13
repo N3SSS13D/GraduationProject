@@ -22,6 +22,13 @@ python Project/Script/mcp/gp_matrix/gp_display_mcp_bridge.py
 | `gp_bridge_mcp_service.py` | MCP Schema 辅助块 |
 | `gp_bridge_transport_service.py` | 传输与运行时参数解析 |
 
+## 0.1 主机桥工具与 AI 端本地工具边界
+
+- 主机脚本桥接对外暴露的 MCP 工具命名空间是 `self.screen.matrix_16x16.*`。
+- `self.screen.matrix_16x16.local.*` 是 `AI端` 板内本地调试工具，只能用于设备本地直连绘制，不属于主机脚本桥的可调用工具集合。
+- 允许在主机侧输出的工具包括：`draw_frame`、`draw_python`、`show_text`、`show_scroll_subtitle`、`show_effect`、`draw_animation`、`render_prompt`。
+- 禁止在主机 MCP 请求、协议说明或滚动字幕模板中使用 `self.screen.matrix_16x16.local.draw`、`self.screen.matrix_16x16.local.draw_frame` 这类本地工具名。
+
 ## 1. 全局约束（始终生效）
 
 - Matrix resolution is always `16x16`.
@@ -56,15 +63,17 @@ python Project/Script/mcp/gp_matrix/gp_display_mcp_bridge.py
    - Use `self.screen.matrix_16x16.draw_python`.
 2. Need one LED-side native effect on solid color, built-in pattern, or direct subtitle text:
   - Use `self.screen.matrix_16x16.show_effect`.
-3. Need scrolling or per-character text sequence as frame playback:
-   - Use `self.screen.matrix_16x16.show_text`.
-4. Need buffered LED-side animation sequence:
+3. Need scrolling subtitle with `图像序列 + 效果参数` transport:
+  - Use `self.screen.matrix_16x16.show_scroll_subtitle`.
+4. Need per-character text sequence:
+  - Use `self.screen.matrix_16x16.show_text`.
+5. Need buffered LED-side animation sequence from existing frames or a base image:
    - Use `self.screen.matrix_16x16.draw_animation`.
    - For per-frame drawing control, use `ops_sequence` mode.
    - For simple effect from one base image, use `image + effect` mode.
-5. Already have one final bitmap or full RGB332 frame:
+6. Already have one final bitmap or full RGB332 frame:
    - Use `self.screen.matrix_16x16.draw_frame`.
-6. Only have vague natural language prompt and no explicit draw plan:
+7. Only have vague natural language prompt and no explicit draw plan:
    - Use `self.screen.matrix_16x16.render_prompt`.
 
 ## 3. 工具详细约定
@@ -162,8 +171,41 @@ Use when each character should become one frame.
 
 - One character -> one `16x16` frame.
 - `frame_interval_ms` controls sequence playback interval.
+- 如果目标是连续滚动字幕，而不是逐字翻页，请改用 `self.screen.matrix_16x16.show_scroll_subtitle`。
 
-### 3.2.1 `self.screen.matrix_16x16.show_effect` — LED 端原生效果命令
+### 3.2.1 `self.screen.matrix_16x16.show_scroll_subtitle` — 滚动字幕序列
+
+Use when the input is raw subtitle text and the transport must stay `matrix_frame_sequence_v2` instead of one native `matrix_action_v2` effect command.
+
+#### Input
+
+```json
+{
+  "text": "吉林大学欢迎你",
+  "effect": {
+    "name": "text_scroll",
+    "step": 1,
+    "glyph_spacing": 1,
+    "leading_padding": 16,
+    "trailing_padding": 16
+  },
+  "frame_interval_ms": 96,
+  "primary_rgb888": "#00FFAA",
+  "background_rgb888": "#000000",
+  "source": "mcp_scroll_subtitle",
+  "transcript": "滚动字幕 吉林大学欢迎你"
+}
+```
+
+#### Rules
+
+- 主机桥会先把整段文字光栅化为一条离屏位图带，再截取连续 `16x16` 窗口生成动画帧。
+- `effect.name` 仅支持横向滚动别名：`text_scroll`、`scroll_left`、`scroll_right`、`marquee_left`、`marquee_right`。
+- `step` 是每帧平移的像素步长；若省略 `frame_count`，桥会按完整滚动路径自动生成足够帧数，再按 `32` 帧上限重采样。
+- 若任务只需要 `LED端` 原生字幕滚动，不要求图像序列传输，优先使用 `self.screen.matrix_16x16.show_effect`。
+- 若你已经有明确帧列表，或需要多字淡入淡出、逐行显隐等非横向滚动效果，再使用 `self.screen.matrix_16x16.draw_animation`。
+
+### 3.2.2 `self.screen.matrix_16x16.show_effect` — LED 端原生效果命令
 
 Use when the task can be represented by one LED-side native action instead of a pre-rendered frame sequence.
 
@@ -214,11 +256,13 @@ Use when the task can be represented by one LED-side native action instead of a 
   - `row_reveal` / `row_hide` / `gradient_reveal`: `frame_interval_ms = 64`, `timeline = 960 / 120 / linear`
   - `color_cycle`: `frame_interval_ms = 80`
 - Transport shape: the bridge emits `matrix_action_result`; if `text` is present, it also includes `glyph_rows_hex` for AI-side glyph upload before `SetAction`.
-- If the desired text effect cannot be expressed by the native sequence path, fall back to `draw_animation`.
+- If the request explicitly needs subtitle frame-sequence transport, fall back to `show_scroll_subtitle`; if the desired text effect still cannot be expressed there, fall back to `draw_animation`.
 
 ### 3.3 `self.screen.matrix_16x16.draw_animation` — 多帧动画
 
 Use for multi-frame buffered animation when native `show_effect` cannot express the required result.
+
+- 若输入只有“文本 + 横向滚动参数”，优先使用 `self.screen.matrix_16x16.show_scroll_subtitle`，不要手工展开字幕位图帧。
 
 #### Input mode A: `bitmap_rows_hex_list`
 
@@ -392,6 +436,7 @@ If `image + effect` is used, bridge synthesizes frames on AI-side path before LE
 - Do not call `time.sleep(...)`.
 - Do not write any `import` statements in drawing code.
 - Do not split one frame into `16` items in `bitmap_rows_hex_list` unless each item is full `64`-hex frame.
+- Do not manually rasterize raw subtitle text into `bitmap_rows_hex_list` when `show_scroll_subtitle` already matches the request.
 
 ### 3.4 `self.screen.matrix_16x16.draw_frame` — 直接提交位图帧
 
@@ -585,6 +630,29 @@ All templates below are safe defaults for direct LLM use.
 }
 ```
 
+### 4.7 模板：滚动字幕序列
+
+```json
+{
+  "tool": "self.screen.matrix_16x16.show_scroll_subtitle",
+  "arguments": {
+    "text": "吉林大学欢迎你",
+    "effect": {
+      "name": "text_scroll",
+      "step": 1,
+      "glyph_spacing": 1,
+      "leading_padding": 16,
+      "trailing_padding": 16
+    },
+    "frame_interval_ms": 96,
+    "primary_rgb888": "#FFD60A",
+    "background_rgb888": "#000000",
+    "source": "mcp_scroll_subtitle",
+    "transcript": "显示滚动字幕 吉林大学欢迎你"
+  }
+}
+```
+
 ## 5. 灵活动画模式
 
 ### 5.1 随机绘制模式 (`draw_random_pattern_request`)
@@ -607,12 +675,18 @@ Every random draw session includes a 20% chance of showing "吉林大学" scroll
 To explicitly trigger a JLU scroll:
 ```json
 {
-  "tool": "self.screen.matrix_16x16.draw_animation",
+  "tool": "self.screen.matrix_16x16.show_scroll_subtitle",
   "arguments": {
-    "bitmap_rows_hex_list": ["<glyph_frames...>"],
+    "text": "吉林大学",
+    "effect": {
+      "name": "text_scroll",
+      "step": 1,
+      "leading_padding": 16,
+      "trailing_padding": 16
+    },
     "primary_rgb888": "#FFD60A",
     "background_rgb888": "#000000",
-    "frame_interval_ms": 160,
+    "frame_interval_ms": 96,
     "transcript": "吉林大学"
   }
 }

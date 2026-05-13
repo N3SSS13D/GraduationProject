@@ -243,11 +243,26 @@ bool IsVoiceColorIntent(const std::string& transcript) {
     return ContainsAnyKeyword(transcript, {"圆点", "颜色", "渐变", "动画", "背景", "底色", "rgb", "dot", "color", "gradient", "pulse", "breath", "background", "菱形", "十字", "字幕", "图案", "scroll", "pattern", "python", "16x16", "16*16", "像素图"});
 }
 
+bool IsMatrixTextAnimationIntent(const std::string& transcript) {
+    const bool has_text_target = ContainsAnyKeyword(transcript,
+                                                    {"字幕", "滚动字幕", "跑马灯", "marquee", "subtitle", "caption", "文字", "文本", "text"});
+    const bool has_scroll_motion = ContainsAnyKeyword(transcript,
+                                                      {"滚动", "滚屏", "scroll", "scrolling", "跑马灯", "marquee", "左移", "右移", "loop"});
+
+    if (!has_text_target || !has_scroll_motion) {
+        return false;
+    }
+    if (HasBackgroundColorKeyword(transcript)) {
+        return false;
+    }
+    return true;
+}
+
 bool IsMatrixPatternIntent(const std::string& transcript) {
     const bool has_draw_verb = ContainsAnyKeyword(transcript,
                                                   {"画", "绘", "draw", "render", "show", "显示", "生成", "写"});
     const bool has_matrix_target = ContainsAnyKeyword(transcript,
-                                                      {"图案", "图形", "像素", "像素图", "pixel", "matrix", "16x16", "16*16", "bitmap", "文字", "文本", "字母", "text", "glyph", "logo", "图标", "笑脸", "心形", "箭头"});
+                                                      {"图案", "图形", "像素", "像素图", "pixel", "matrix", "16x16", "16*16", "bitmap", "文字", "文本", "字母", "text", "glyph", "logo", "图标", "笑脸", "心形", "箭头", "字幕", "滚动字幕", "跑马灯", "subtitle", "caption", "marquee"});
 
     if (!has_draw_verb) {
         return false;
@@ -489,8 +504,10 @@ std::string BuildMatrixPatternRequestPayload(const std::string& transcript, std:
     cJSON* target = cJSON_CreateObject();
     cJSON* transport = cJSON_CreateObject();
     cJSON* service_hints = cJSON_CreateObject();
+    cJSON* animation_guidance = nullptr;
     char* json_text = nullptr;
     std::string result = "{}";
+    const bool prefers_scroll_subtitle = IsMatrixTextAnimationIntent(transcript);
 
     cJSON_AddStringToObject(payload, "action", std::string(kMatrixPatternRequestAction).c_str());
     cJSON_AddStringToObject(payload, "source", std::string(source).c_str());
@@ -510,8 +527,25 @@ std::string BuildMatrixPatternRequestPayload(const std::string& transcript, std:
     cJSON_AddStringToObject(service_hints, "mcp_render_tool", "self.screen.matrix_16x16.render_prompt");
     cJSON_AddStringToObject(service_hints, "mcp_frame_tool", "self.screen.matrix_16x16.draw_frame");
     cJSON_AddStringToObject(service_hints, "mcp_drawing_tool", "self.screen.matrix_16x16.draw_python");
+    cJSON_AddStringToObject(service_hints, "mcp_animation_tool", "self.screen.matrix_16x16.draw_animation");
     cJSON_AddStringToObject(service_hints, "mcp_text_tool", "self.screen.matrix_16x16.show_text");
+    cJSON_AddStringToObject(service_hints, "mcp_scroll_subtitle_tool", "self.screen.matrix_16x16.show_scroll_subtitle");
+    cJSON_AddStringToObject(service_hints, "mcp_effect_tool", "self.screen.matrix_16x16.show_effect");
     cJSON_AddStringToObject(service_hints, "http_control_endpoint", "/control/matrix_prompt_16x16");
+
+    if (prefers_scroll_subtitle) {
+        cJSON_AddStringToObject(service_hints, "preferred_mcp_tool", "self.screen.matrix_16x16.show_scroll_subtitle");
+
+        animation_guidance = cJSON_CreateObject();
+        cJSON_AddStringToObject(animation_guidance, "mode", "scroll_subtitle");
+        cJSON_AddStringToObject(animation_guidance, "transport_preference", "frame_sequence_plus_effect");
+        cJSON_AddStringToObject(animation_guidance, "text_source", "extract_from_transcript");
+        cJSON_AddStringToObject(animation_guidance, "recommended_effect", "text_scroll");
+        cJSON_AddNumberToObject(animation_guidance, "recommended_step", 1);
+        cJSON_AddNumberToObject(animation_guidance, "recommended_frame_interval_ms", 96);
+        cJSON_AddItemToObject(payload, "animation_guidance", animation_guidance);
+    }
+
     cJSON_AddItemToObject(payload, "service_hints", service_hints);
 
     json_text = cJSON_PrintUnformatted(payload);
@@ -525,13 +559,21 @@ std::string BuildMatrixPatternRequestPayload(const std::string& transcript, std:
 
 void HandleVoiceColorDebugFromStt(Application* app, Display* display, const std::string& transcript) {
     const bool is_color_intent = IsVoiceColorIntent(transcript);
-    const bool is_matrix_pattern_intent = IsMatrixPatternIntent(transcript);
+    const bool is_matrix_text_animation_intent = IsMatrixTextAnimationIntent(transcript);
+    const bool is_matrix_pattern_intent = is_matrix_text_animation_intent || IsMatrixPatternIntent(transcript);
 
     if (!is_color_intent && !is_matrix_pattern_intent) {
         return;
     }
 
     if (TryApplyBackgroundColorCommand(display, transcript)) {
+        return;
+    }
+
+    /* Subtitle scroll phrases overlap with local color-debug keywords, so route them
+     * into matrix generation before local preset fallback can consume them. */
+    if (is_matrix_text_animation_intent) {
+        app->SendMatrixPatternRequest(transcript, "stt");
         return;
     }
 
@@ -1086,6 +1128,14 @@ void Application::InitializeProtocol() {
                     if (GetDeviceState() == kDeviceStateSpeaking) {
                         if (listening_mode_ == kListeningModeManualStop) {
                             SetDeviceState(kDeviceStateIdle);
+                        } else if (HasPendingMatrixCommand()) {
+                            auto* display = Board::GetInstance().GetDisplay();
+
+                            /* Keep the voice turn from dropping straight back into listening while the draw result is still in flight. */
+                            SetDeviceState(kDeviceStateIdle);
+                            if (display != nullptr) {
+                                display->ShowNotification("Matrix command pending", 1500);
+                            }
                         } else {
                             SetDeviceState(kDeviceStateListening);
                         }
@@ -1155,6 +1205,10 @@ void Application::InitializeProtocol() {
             }
             if (cJSON_IsObject(payload)) {
                 if (HandleVoiceColorDebugFromCustom(display, payload)) {
+                    return;
+                }
+                if (Board::GetInstance().HandleCustomPayload(payload)) {
+                    ClearPendingMatrixCommand();
                     return;
                 }
                 char* payload_dump = cJSON_PrintUnformatted(payload);
@@ -1833,6 +1887,8 @@ void Application::SendMatrixPatternRequest(const std::string& transcript, const 
         return;
     }
 
+    MarkPendingMatrixCommand();
+
     Schedule([transcript]() {
         auto* display = Board::GetInstance().GetDisplay();
 
@@ -1842,6 +1898,30 @@ void Application::SendMatrixPatternRequest(const std::string& transcript, const 
         }
     });
     SendCustomMessage(BuildMatrixPatternRequestPayload(transcript, source));
+}
+
+void Application::MarkPendingMatrixCommand(uint32_t timeout_ms) {
+    const uint64_t timeout_us = static_cast<uint64_t>(timeout_ms) * 1000U;
+
+    pending_matrix_command_deadline_us_.store(static_cast<uint64_t>(esp_timer_get_time()) + timeout_us);
+}
+
+void Application::ClearPendingMatrixCommand() {
+    pending_matrix_command_deadline_us_.store(0U);
+}
+
+bool Application::HasPendingMatrixCommand() {
+    const uint64_t deadline_us = pending_matrix_command_deadline_us_.load();
+    const uint64_t now_us = static_cast<uint64_t>(esp_timer_get_time());
+
+    if ((deadline_us == 0U) || (now_us >= deadline_us)) {
+        if (deadline_us != 0U) {
+            pending_matrix_command_deadline_us_.store(0U);
+        }
+        return false;
+    }
+
+    return true;
 }
 
 void Application::SetAecMode(AecMode mode) {

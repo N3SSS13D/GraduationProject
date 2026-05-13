@@ -77,7 +77,7 @@ model: "GPT-5 (copilot)"
 9. 若任务涉及 Wi-Fi 图片预览链路，先从 `AI端` monitor 日志 `WiFi STA IP: ...` 获取设备地址，再优先使用主机脚本
    `/control/device_preview` 将本地 PNG/JPEG 发送到 `http://<device_ip>:8781/debug/preview_image`；设备侧应复用现有预览路径，并同步显示到调试二级菜单预览卡片中
 10. 面向 LLM 的 MCP 桥接脚本、工具名和参数名必须尽量自解释，优先使用一眼可懂的命名，例如
-    `gp_display_mcp_bridge.py`、`draw_python`、`show_text`、`python_source`、`eval_source`、
+  `gp_display_mcp_bridge.py`、`draw_python`、`show_text`、`show_scroll_subtitle`、`python_source`、`eval_source`、
     `frame_interval_ms`、`text`
 11. 若任务涉及 `16x16` 图案预览，优先维持当前固定布局：左侧中心为圆点，右侧中心为预览区域；不要再让预览区域依赖首次绘制后才出现
 12. 当 `AI端` 需要把 `16x16` 图案通过蓝牙转发到 `LED端` 时，优先使用紧凑 `bitmap_rows + RGB888` 传输，而不是先展开成
@@ -100,6 +100,19 @@ model: "GPT-5 (copilot)"
 18. 如果任务需要验证 `LED端` 是否能持续稳定接收协议包，而不仅是回一条短 ACK，优先让 `AI端` 创建 `1s` 周期任务，但只在链路空闲窗口内发送 GP 协议调试 LED 命令；该后台探测应采用尽力发送且不等待 ACK，避免干扰前台整帧传输
 19. 当 `SetAction` 这类短包能工作、而 `FrameChunk` 这类长包上传失败时，应先检查 `LED端` UART2 接收节奏与组包时机，再考虑修改位图渲染逻辑
 20. `LED端` 显示通过蓝牙传输的图像后，应保持最后一帧显示，直到显式释放远程模式或本地切换控制模式；不能仅因为通信活动超时就自动清空
+21. 若任务涉及 `lichuang-dev` 的主机侧调试 `websocket / snapshot` 地址切换，默认优先复用 `AI端` 串口命令
+  `mcp_host set <ip_or_host>` 一次性改写 `debug_ws` 与 `snap_url`；只有在端口或路径也要变化时，才分别使用
+  `debug_ws set <url>` 与 `snap_url set <url>`
+22. 当 `stt` 文本明确描述“字幕 / 跑马灯 / scroll”时，优先把它路由到 `matrix_pattern_request`，不要先被本地颜色预设消化。
+  同时在请求 payload 里把 `show_scroll_subtitle` 作为“字幕走图像序列传输”时的首选主机工具，并与现有的
+  `show_effect`、`draw_animation` 提示一起暴露给上游。
+23. 当矩阵结果经主会话 websocket 以 `type:"custom"` 返回时，优先把 `custom.payload` 委托给板级钩子处理，
+    并把 `payload.type` 或 `payload.action` 中的 `matrix_pattern_result`、`matrix_action_result`、
+    `matrix_animation_*` 统一归一化到现有板级解析器；不要在 `Application` 内再复制一套矩阵结果解析逻辑。
+24. 若语音触发的矩阵请求在 TTS 结束时仍未收到结果，交互层应进入一个短暂的 pending/idle 状态并给出等待提示，
+    而不是立刻回到 `listening`，避免把“结果仍在路上”误判成“命令没有执行”。
+25. 当主 websocket 与 debug websocket 可能同时存在时，websocket 分片接收状态必须按连接实例保存，`Ping`
+    直接在原连接回复；不要再为每个 `Ping` 派生 detached 线程，也不要复用共享静态组包状态。
 
 ## 常用阅读集
 

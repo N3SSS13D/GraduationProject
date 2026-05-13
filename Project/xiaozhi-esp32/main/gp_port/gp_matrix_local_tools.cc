@@ -318,8 +318,10 @@ void RegisterGpMatrixLocalMcpTools(McpServer& server,
             });
     };
 
-    register_matrix_frame_tool("self.screen.matrix_16x16.draw_frame");
-    register_matrix_frame_tool("self.screen.matrix_16x16.draw");
+    /* Keep AI-side local draw helpers under one explicit namespace so they do not collide
+     * with the host script MCP tools that expose the remote drawing bridge. */
+    register_matrix_frame_tool("self.screen.matrix_16x16.local.draw_frame");
+    register_matrix_frame_tool("self.screen.matrix_16x16.local.draw");
 
     server.AddTool("self.screen.matrix_16x16.local.pattern",
         "Draw a built-in local 16x16 pattern directly on AI side without external script. "

@@ -49,12 +49,17 @@ constexpr const char* kSnapshotSettingsNamespace = "debug_snapshot";
 constexpr const char* kSnapshotUploadUrlKey = "upload_url";
 constexpr const char* kDebugWebsocketSettingsNamespace = "debug_ws";
 constexpr const char* kDebugWebsocketUrlKey = "url";
+constexpr const char* kSerialMcpHostCommand = "mcp_host";
 constexpr const char* kDebugPreviewUploadPath = "/debug/preview_image";
 constexpr const char* kDebugPreviewStatusPath = "/debug/preview_status";
 constexpr const char* kSerialSnapCommand = "snap";
 constexpr const char* kSerialSnapUrlCommand = "snap_url";
 constexpr const char* kSerialDebugWebsocketCommand = "debug_ws";
+constexpr const char* kDebugWebsocketDefaultPath = "/debug";
+constexpr const char* kSnapshotUploadDefaultPath = "/snapshot";
 constexpr const char* kDebugWebsocketDefaultUrl = "ws://49.140.69.242:8766/debug";
+constexpr uint16_t kDebugWebsocketServerPort = 8766;
+constexpr uint16_t kSnapshotUploadServerPort = 8765;
 constexpr uint16_t kDebugPreviewServerPort = 8781;
 constexpr size_t kDebugPreviewMaxImageBytes = 256U * 1024U;
 constexpr uint32_t kPendingMatrixAnimationExpireMs = 10000U;
@@ -100,6 +105,39 @@ std::string TrimStoredTranscript(const std::string& text) {
 
 bool StartsWithCommand(const std::string& text, std::string_view prefix) {
     return (text.size() >= prefix.size()) && (text.compare(0, prefix.size(), prefix.data()) == 0);
+}
+
+/* Keep the host override to one plain token so the board can safely rebuild both MCP endpoint URLs. */
+bool IsSimpleHostToken(const std::string& text) {
+    if (text.empty()) {
+        return false;
+    }
+
+    return std::all_of(text.begin(), text.end(), [](unsigned char ch) {
+        return std::isalnum(ch) != 0 || ch == '.' || ch == '-';
+    });
+}
+
+bool IsMatrixBridgeMessageType(const char* text) {
+    if (text == nullptr) {
+        return false;
+    }
+
+    return (std::strcmp(text, "matrix_pattern_result") == 0)
+        || (std::strcmp(text, "matrix_action_result") == 0)
+        || (std::strcmp(text, "matrix_animation_start") == 0)
+        || (std::strcmp(text, "matrix_animation_batch") == 0)
+        || (std::strcmp(text, "matrix_animation_end") == 0);
+}
+
+std::string BuildDebugWebsocketUrlFromHost(const std::string& host) {
+    return std::string("ws://") + host + ":" + std::to_string(kDebugWebsocketServerPort)
+           + kDebugWebsocketDefaultPath;
+}
+
+std::string BuildSnapshotUploadUrlFromHost(const std::string& host) {
+    return std::string("http://") + host + ":" + std::to_string(kSnapshotUploadServerPort)
+           + kSnapshotUploadDefaultPath;
 }
 
 std::string SanitizeAsciiForLog(std::string text) {
@@ -1134,6 +1172,49 @@ private:
         return true;
     }
 
+    bool HandleMatrixBridgePayload(const cJSON* payload) {
+        const auto* type = (payload == nullptr) ? nullptr : cJSON_GetObjectItem(payload, "type");
+        const auto* action = (payload == nullptr) ? nullptr : cJSON_GetObjectItem(payload, "action");
+        const char* message_type = nullptr;
+        cJSON* normalized_root = nullptr;
+        char* json_text = nullptr;
+
+        if (!cJSON_IsObject(payload)) {
+            return false;
+        }
+
+        if (cJSON_IsString(type) && IsMatrixBridgeMessageType(type->valuestring)) {
+            message_type = type->valuestring;
+        } else if (cJSON_IsString(action) && IsMatrixBridgeMessageType(action->valuestring)) {
+            /* Main-channel custom payloads can carry the matrix result name in action instead of type. */
+            message_type = action->valuestring;
+        } else {
+            return false;
+        }
+
+        normalized_root = cJSON_Duplicate(payload, true);
+        if (normalized_root == nullptr) {
+            ESP_LOGW(TAG, "[CUSTOM] failed to duplicate matrix payload");
+            return false;
+        }
+
+        if (!cJSON_IsString(cJSON_GetObjectItem(normalized_root, "type"))) {
+            cJSON_AddStringToObject(normalized_root, "type", message_type);
+        }
+
+        json_text = cJSON_PrintUnformatted(normalized_root);
+        cJSON_Delete(normalized_root);
+        if (json_text == nullptr) {
+            ESP_LOGW(TAG, "[CUSTOM] failed to encode matrix payload");
+            return false;
+        }
+
+        ESP_LOGI(TAG, "[CUSTOM] forward matrix payload type=%s", message_type);
+        HandleDebugWebsocketMessage(json_text, std::strlen(json_text), false);
+        cJSON_free(json_text);
+        return true;
+    }
+
     void HandleDebugWebsocketMessage(const char* data, size_t len, bool binary) {
         const std::string text(data != nullptr ? std::string(data, len) : std::string());
         cJSON* root = nullptr;
@@ -1306,6 +1387,7 @@ private:
                 : (GP_MATRIX_APPLY_FLAG_PATTERN | GP_MATRIX_APPLY_FLAG_GLYPH));
 
             const std::string transcript_text = cJSON_IsString(transcript) ? transcript->valuestring : "";
+            Application::GetInstance().ClearPendingMatrixCommand();
             cJSON_Delete(root);
 
             Application::GetInstance().Schedule([this,
@@ -1371,6 +1453,7 @@ private:
 
             const size_t scheduled_frame_count = static_cast<size_t>(frame_count->valueint);
             const std::string transcript_text = cJSON_IsString(transcript) ? transcript->valuestring : "";
+            Application::GetInstance().ClearPendingMatrixCommand();
             Application::GetInstance().Schedule([this,
                                                  scheduled_frame_count,
                                                  scheduled_interval_ms,
@@ -1413,6 +1496,7 @@ private:
             const std::string background_color = cJSON_IsString(background_rgb888) ? background_rgb888->valuestring : "#000000";
             const size_t scheduled_frame_count = static_cast<size_t>(frame_count->valueint);
             const int array_size = cJSON_GetArraySize(frames_array);
+                Application::GetInstance().ClearPendingMatrixCommand();
 
             /* Decode frames on the WebSocket thread so the scheduled task only keeps
                one compact copy per frame instead of duplicating JSON strings. */
@@ -1611,6 +1695,7 @@ private:
             const int scheduled_frame_index = cJSON_IsNumber(frame_index) ? frame_index->valueint : -1;
             const int scheduled_frame_count = cJSON_IsNumber(frame_count) ? frame_count->valueint : 0;
             const std::string transcript_text = cJSON_IsString(transcript) ? transcript->valuestring : "";
+            Application::GetInstance().ClearPendingMatrixCommand();
 
             Application::GetInstance().Schedule([this,
                                                  scheduled_rows,
@@ -1697,6 +1782,7 @@ private:
 
             const size_t scheduled_frame_count = static_cast<size_t>(frame_count->valueint);
             const std::string transcript_text = cJSON_IsString(transcript) ? transcript->valuestring : "";
+            Application::GetInstance().ClearPendingMatrixCommand();
             Application::GetInstance().Schedule([this, scheduled_frame_count, transcript_text]() {
                 auto* debug_display = dynamic_cast<GpDebugLcdDisplay*>(display_);
                 auto* matrix_led = led_matrix_.get();
@@ -2121,6 +2207,8 @@ cleanup:
         std::string argument_text;
         std::string command;
         int snap_quality = 50;
+        const std::string mcp_help_text =
+            "mcp_host get | status | set <ip_or_host> | reset | help";
         const std::string help_text =
             "snap | snap <quality> | snap_url get | set <url> | clear | reset | help";
         const std::string ws_help_text =
@@ -2145,6 +2233,60 @@ cleanup:
 
             command = QueueDebugSnapshotCapture(snap_quality);
             ESP_LOGI(TAG, "Serial command triggered snapshot: %s", command.c_str());
+            return;
+        }
+
+        /* One host override keeps debug_ws and snapshot upload aligned after the PC Wi-Fi IP changes. */
+        if (StartsWithCommand(line, kSerialMcpHostCommand) &&
+            ((line.size() == std::strlen(kSerialMcpHostCommand))
+             || std::isspace(static_cast<unsigned char>(line[std::strlen(kSerialMcpHostCommand)])))) {
+            argument_text = TrimAsciiWhitespace(line.substr(std::strlen(kSerialMcpHostCommand)));
+            if (argument_text.empty() || argument_text == "help") {
+                ESP_LOGI(TAG, "Serial command: %s", mcp_help_text.c_str());
+                LogDebugWebsocketStatus("serial_mcp_host_help");
+                LogDebugSnapshotUploadUrl("serial_mcp_host_help");
+                return;
+            }
+
+            if (argument_text == "get" || argument_text == "status") {
+                LogDebugWebsocketStatus(argument_text == "get" ? "serial_mcp_host_get" : "serial_mcp_host_status");
+                LogDebugSnapshotUploadUrl(argument_text == "get" ? "serial_mcp_host_get" : "serial_mcp_host_status");
+                ShowSerialCommandNotification("MCP host status printed");
+                return;
+            }
+
+            if (argument_text == "reset") {
+                SetDebugWebsocketUrl("");
+                CloseDebugWebsocket();
+                if (!ResetDebugSnapshotUploadUrlToCompiledDefault()) {
+                    SetDebugSnapshotUploadUrl("");
+                }
+                LogDebugWebsocketStatus("serial_mcp_host_reset");
+                LogDebugSnapshotUploadUrl("serial_mcp_host_reset");
+                ShowSerialCommandNotification("MCP host reset");
+                return;
+            }
+
+            if (StartsWithCommand(argument_text, "set ")) {
+                command = TrimAsciiWhitespace(argument_text.substr(4));
+                if (!IsSimpleHostToken(command)) {
+                    ESP_LOGW(TAG, "Serial command set failed: invalid host token=%s", command.c_str());
+                    ESP_LOGI(TAG, "Usage: %s", mcp_help_text.c_str());
+                    return;
+                }
+
+                SetDebugWebsocketUrl(BuildDebugWebsocketUrlFromHost(command));
+                SetDebugSnapshotUploadUrl(BuildSnapshotUploadUrlFromHost(command));
+                CloseDebugWebsocket();
+                ESP_LOGI(TAG, "Serial command set MCP host: %s", command.c_str());
+                LogDebugWebsocketStatus("serial_mcp_host_set");
+                LogDebugSnapshotUploadUrl("serial_mcp_host_set");
+                ShowSerialCommandNotification("MCP host updated");
+                return;
+            }
+
+            ESP_LOGW(TAG, "Unknown serial command: %s", line.c_str());
+            ESP_LOGI(TAG, "Usage: %s", mcp_help_text.c_str());
             return;
         }
 
@@ -2261,7 +2403,7 @@ cleanup:
         }
 
         ESP_LOGI(TAG,
-                 "Serial debug command ready: snap | snap <quality> | snap_url get | set <url> | clear | reset | help | debug_ws get | status | set <url> | clear | close | help");
+                 "Serial debug command ready: mcp_host get | status | set <ip_or_host> | reset | help | snap | snap <quality> | snap_url get | set <url> | clear | reset | help | debug_ws get | status | set <url> | clear | close | help");
         while (true) {
             if (std::fgets(buffer, sizeof(buffer), stdin) == nullptr) {
                 clearerr(stdin);
@@ -2781,6 +2923,10 @@ public:
 
     virtual Display* GetDisplay() override {
         return display_;
+    }
+
+    virtual bool HandleCustomPayload(const cJSON* payload) override {
+        return HandleMatrixBridgePayload(payload);
     }
 
     virtual Led* GetLed() override {

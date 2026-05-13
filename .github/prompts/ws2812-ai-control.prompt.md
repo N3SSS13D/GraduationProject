@@ -84,7 +84,7 @@ For implementation, integration, or bug-fix tasks:
     PNG/JPEG preview debugging.
 12. For LLM-facing MCP bridge scripts, use self-descriptive filenames, tool names, and argument names so the intent
     is obvious without reading the implementation. Prefer names like `gp_display_mcp_bridge.py`, `draw_python`,
-    `show_text`, `python_source`, `eval_source`, `frame_interval_ms`, and `text`.
+  `show_text`, `show_scroll_subtitle`, `python_source`, `eval_source`, `frame_interval_ms`, and `text`.
 13. When the `AI端` needs to forward a `16x16` pattern to the `LED端` over Bluetooth, prefer compact `bitmap_rows +
     RGB888` transfer instead of expanding to a full `256`-byte RGB332 frame. Keep `FrameChunk` sizing consistent on
     both sides with the shared protocol constant `64` bytes.
@@ -117,6 +117,23 @@ For implementation, integration, or bug-fix tasks:
 20. After the LED side renders a remotely transferred frame, keep the last frame displayed until an explicit remote
     release or local control-mode switch occurs; do not clear it solely because the communication-active timeout
     expires.
+21. When a task needs to switch the host-side debug websocket or snapshot endpoint on `lichuang-dev`, prefer the
+  `AI-side` serial command `mcp_host set <ip_or_host>` to rewrite both `debug_ws` and `snap_url` together; only use
+  `debug_ws set <url>` or `snap_url set <url>` when the port or path also needs to change.
+22. When an `stt` transcript clearly describes scrolling subtitle / marquee text, route it through `matrix_pattern_request`
+    instead of consuming it as a local color preset. In the request payload, advertise `show_scroll_subtitle` as the
+    preferred host tool for frame-sequence subtitle transport, alongside the existing `show_effect` and
+    `draw_animation` hints.
+23. When matrix results arrive on the main conversation websocket as `type:"custom"`, prefer delegating `custom.payload`
+  to a board-level hook and normalize `payload.type` or `payload.action` values such as `matrix_pattern_result`,
+  `matrix_action_result`, and `matrix_animation_*` into the existing board parser. Do not duplicate that matrix
+  result parsing logic inside `Application`.
+24. When a voice-triggered matrix request is still waiting on a result when TTS stops, keep the UX in a short
+  pending/idle state and surface a pending hint instead of jumping straight back to `listening` as if the request
+  had already finished.
+25. When both the main websocket and the debug websocket can exist at the same time, keep websocket fragmentation
+  receive state per connection instance and reply to `Ping` inline on the same connection. Avoid detached per-ping
+  threads and avoid shared static frame-assembly state.
 
 ## Common read bundles
 
