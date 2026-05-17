@@ -77,6 +77,25 @@
   - `Doc/Instructions/led_refresh_optimization.md`
 - `工程 / 路径`
   - `Project/STC51/ws2812_driver/ws2812_driver.uvproj`
+- `任务调度 / 执行流程`
+  - `Sources/mid/mid_task.c` + `Sources/inc/mid_task.h`
+  - `Sources/app/app.c` (任务注册、回调代理、主循环)
+  - `Doc/Instructions/led_driver_tech_ref.md` (调度架构详细说明)
+
+## 任务调度概览
+
+系统使用两硬件定时器 + 一协作式调度器实现多任务并发：
+
+| 组件 | 触发源 | 周期 | 作用 |
+|---|---|---|---|
+| Timer0 调度节拍 | Timer0 单次触发 | ~500us 自复位 | ISR侧: `MidTask_Tick1ms()` + `GpLedAction_Tick1ms()` |
+| Timer1 行扫描 | Timer1 自动重载 | ~1000us | `WS2812DRV_RefreshStep()` 逐行对扫描 |
+| Key Task | MidTask | 10ms | 按键消抖 → 动作处理 → 离线方案编排 |
+| Draw Frame Task | MidTask | ~32ms(动态) | 本地渲染: 效果更新 → 帧重建 → 写入缓冲 |
+
+主循环 (`APP_TaskLoop`) 按序执行：`USB调试 → 协议收包 → 动画帧渲染(延迟) → MidTask_Process() → 循环`
+
+详细说明见 `Doc/Instructions/led_driver_tech_ref.md` 的 "Task Scheduling Architecture" 章节。
 
 ## Cross-category boundary
 
@@ -105,3 +124,31 @@
 - 效果命令描述符当前包含 `effectId / scrollStep / animStep / frameIntervalMs / gradientSpan / flags / timelineId`，便于新增本地效果时复用同一套存储格式。
 - `BITMAP_RGB888` 与“黑底 + 前景”两层 `BITMAP_LAYERED` 输入在上传阶段会被规范化后再存入缓冲。
 - 无法无损压缩为单层黑底帧的多层输入，保留直接渲染路径，但不进入紧凑动画缓冲。
+
+## Key Functions Reference
+
+| Function | File | Role | Called By |
+|---|---|---|---|
+| `APP_Init()` | app.c | Init WS2812, draw, action, protocol, buttons, scheduler, Timer1 | main.c |
+| `APP_TaskLoop()` | app.c | Main loop: poll UART2, render pending animation, run tasks | main loop |
+| `APP_ApplyPresetMode()` | app.c | Apply one of 8 display presets | startup / action handler |
+| `TIMER1_ISR()` | app.c | Timer1 ISR: call `WS2812DRV_RefreshStep()` | Timer1 hardware |
+| `WS2812DRV_Init()` | ws2812_drv.c | Config PWMA CH1/CH2, DMA, double buffer | APP_Init() |
+| `WS2812DRV_EncodeAllRows()` | ws2812_drv.c | RGB pixels → PWM compare values via LUT | EndFrameWrite() |
+| `WS2812DRV_RefreshStep()` | ws2812_drv.c | Build dual-row DMA buffer, trigger HC595 + DMA | TIMER1_ISR |
+| `WS2812DRV_SetPixelRgbFast()` | ws2812_drv.c | Set single pixel GRB (fast path, no bounds check) | draw_drv / gp_led_action |
+| `WS2812DRV_BeginFrameWrite()` | ws2812_drv.c | Lock back buffer for pixel writing | draw_drv / gp_led_action |
+| `WS2812DRV_EndFrameWrite()` | ws2812_drv.c | Unlock, mark for encode + display | draw_drv / gp_led_action |
+| `HC595DRV_SetRow()` | hc595_drv.c | Select active row pair via SPI shift register | WS2812DRV_RefreshStep() |
+| `GpLedMatrixAi8051u_Poll()` | gp_led_matrix_ai8051u.c | Drain UART2 ring buffer, feed protocol state machine | APP_TaskLoop() |
+| `ProcessPacket()` | gp_led_matrix_ai8051u.c | CRC validate + dispatch to command handler | GpLedMatrixAi8051u_Poll() |
+| `GpLedAction_ApplyAction()` | gp_led_action.c | Dispatch `GpMatrixActionPayload`: local vs remote | protocol command handler |
+| `GpLedAction_ApplyFrameRgb332()` | gp_led_action.c | Write 256B RGB332 frame to image buffer | protocol command handler |
+| `GpLedAction_ApplyFrameBitmapLayered()` | gp_led_action.c | Parse multi-layer data, composite layer 0 → N | protocol command handler |
+| `GpLedAction_CommitAnimation()` | gp_led_action.c | Validate all frames, mark active, render frame 0 | protocol command handler |
+| `GpLedAction_RenderPendingAnimationFrame()` | gp_led_action.c | Render next animation frame (main loop context) | APP_TaskLoop() |
+| `GpLedAction_ToggleModeOverride()` | gp_led_action.c | Manual online/offline display control toggle | button handler |
+| `DrawDrv_RebuildFrame()` | draw_drv.c | Full frame rebuild from `DrawDrv_RenderConfig` | gp_led_action / local_scheme |
+| `KeyCtrl_ProcessTick()` | key_ctrl.c | Button debounce state machine (3-tick) | 1ms scheduler |
+| `MidTask_Process()` | mid_task.c | Execute pending cooperative tasks | APP_TaskLoop() |
+| `RtcClock_RenderFrame()` | rtc_clock.c | Render 3-zone clock display to image buffer | local_scheme / button |

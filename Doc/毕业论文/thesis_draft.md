@@ -50,7 +50,7 @@ LED显示驱动主要包括以下功能：WS2812B驱动层、图像渲染层以�
 
 3) 数据解析与显示控制
 
-在主循环中监控接收队列的数据更新情况，当有新数据时逐字节进行协议解析。首先搜索协议魔数（0x47 0x50），找到后收齐12字节包头并进行头部CRC8校验；校验通过后根据负载长度收齐负载和包尾CRC16，对整包进行完整性校验；校验通过后根据命令字分发执行。图像数据采用统一的层叠位图（Layered Bitmap）格式进行存储：每层由1字节头部（含层序号和总层数）、16行×16列的1-bit位图（32字节）和该层的RGB888颜色（3字节）组成，共36字节。接收到的层叠位图数据按层序号从低到高依次叠加写入图像缓冲区：对于每层位图中为1的像素点填入该层的颜色值，逐层叠加后完成位图到像素的转换。图像传输支持V3紧凑包头（6字节）的轻量命令（LayeredFrame、LayeredAnimFrame），协议解析时通过第二字节自动识别V2/V3格式，收齐对应长度的包头后进行CRC校验。若需要回复则构造ACK应答包通过UART2发送回上位机。这种双层CRC校验的机制使接收侧能够先快速判断包头是否合法，再决定是否信任负载长度继续收包，有效降低了串口噪声导致的误判风险。
+在主循环中监控接收队列的数据更新情况，当有新数据时逐字节进行协议解析。当前主链路统一搜索单字节协议魔数 `0x47`，找到后收齐 `6` 字节紧凑包头并进行 `header_crc8` 校验；校验通过后根据 `payload_length` 收齐负载和包尾 `CRC16`，再完成整包完整性校验；校验通过后按命令字分发执行。图像数据采用统一的层叠位图（Layered Bitmap）格式进行存储：每层由 `1` 字节头部（含层序号和总层数）、`16x16` 的 `1-bit` 位图（`32` 字节）和该层的 `RGB888` 颜色（`3` 字节）组成，共 `36` 字节。接收到的层叠位图数据按层序号从低到高依次叠加写入图像缓冲区：对于每层位图中为 `1` 的像素点填入该层颜色值，逐层叠加后完成位图到像素的转换。若需要回复，则 `LED端` 构造带 `IS_REPLY` 标志位、回显原 `sequence + command` 的 ACK 包通过 UART2 发回 `AI端`。这种双层 CRC 校验机制使接收侧能够先快速判断包头是否合法，再决定是否信任负载长度继续收包，有效降低了串口噪声导致的误判风险。
 
 ---
 
@@ -62,23 +62,23 @@ LED显示驱动主要包括以下功能：WS2812B驱动层、图像渲染层以�
 
 ### 4.3.2 绘图脚本接口
 
-AI端通过WebSocket连接与PC端绘图脚本建立实时数据通道，用于接收绘图脚本生成的图像数据。WebSocket是一种基于TCP的全双工通信协议，能够在AI端与PC端之间维持一条持久连接，支持PC端主动向AI端推送数据，适合需要实时响应的绘图场景。
+AI端通过按需建立的 Debug WebSocket 连接与PC端绘图脚本建立实时数据通道，用于接收绘图脚本生成的图像数据。WebSocket是一种基于TCP的全双工通信协议，能够在AI端与PC端之间维持一条持久连接，支持PC端主动向AI端推送数据，适合需要实时响应的绘图场景。当前实现不会在 Wi-Fi 刚连上时默认常驻拉起该调试链路，而是在主机侧确实需要矩阵预览或结果投递时再启动，以降低内部 SRAM 占用。
 
 WebSocket连接的建立过程如下：首先，AI端通过ESP32-S3的Wi-Fi模块接入局域网，根据配置的URL向PC端桥接服务发起WebSocket连接请求，并在请求头中携带Device-Id（设备MAC地址）、Client-Id（设备UUID）和X-Debug-Transport标识；连接成功后，AI端立即发送一条hello消息，向PC端报告设备信息和在线状态；随后连接保持开启，双方可随时互发消息。当连接因网络原因断开时，AI端自动触发重连机制。
 
-PC端绘图脚本通过WebSocket向AI端推送两种类型的JSON消息。第一种是 `matrix_pattern_result` 单帧消息，包含 `bitmap_rows_hex`（64个十六进制字符，表示16行1-bit位图数据）、`primary_rgb888`（前景色RGB值）和 `background_rgb888`（背景色RGB值）。第二种是动画序列消息，由三条消息组成：`matrix_animation_start`（声明帧数 `frame_count` 和帧间隔 `frame_interval_ms`）、多条带 `frame_index` 索引的 `matrix_pattern_result`（每帧的位图数据）、以及 `matrix_animation_end`（确认批次结束）。
+PC端绘图脚本通过WebSocket向AI端推送两类主要JSON消息。第一类是 `matrix_pattern_result` 单帧消息，包含 `bitmap_rows_hex`（64个十六进制字符，表示16行1-bit位图数据）、`primary_rgb888`（前景色RGB值）和 `background_rgb888`（背景色RGB值）。第二类是动画序列消息，由三条消息组成：`matrix_animation_start`（声明帧数 `frame_count` 和帧间隔 `frame_interval_ms`）、多条带 `frame_index` 索引的 `matrix_pattern_result`（每帧的位图数据）、以及 `matrix_animation_end`（确认批次结束）。当前主机侧会先在桥接层把帧数约束到最多 `32` 帧，再交给 `AI端` 进行缓存和转发。
 
 AI端接收到WebSocket消息后的数据流向为：首先解析JSON消息的type字段判断消息类型；若为 `matrix_animation_start`，则调用 `BeginPendingMatrixAnimation()` 分配动画暂存区，记录帧数和帧间隔；若为 `matrix_pattern_result`，则解析 `bitmap_rows_hex` 将十六进制字符串还原为16行位图数据，解析 `primary_rgb888` 和 `background_rgb888` 获取颜色值，若当前处于动画接收状态则存入暂存区对应帧索引位置，若为独立单帧则直接交由数据处理工具进行协议封装和发送；若为 `matrix_animation_end`，则验证所有帧已收齐后，将整批动画帧统一提交给数据处理工具。
 
-当WebSocket不可用时，AI端还提供HTTP回退通道：PC端绘图脚本先生成PNG预览图并保存至本地，再通过HTTP请求AI端的图像接收端点，由AI端主动拉取图像数据进行显示。两种方式接收的图像数据最终都交由数据处理工具进行统一处理。
+当WebSocket不可用时，AI端还提供HTTP回退通道：PC端绘图脚本先生成PNG预览图并保存至本地，再通过HTTP请求AI端的图像接收端点，由AI端主动拉取图像数据进行显示。当前这组 HTTP 预览端点同样采用按需启动策略，以避免调试服务常驻挤压语音音频链路的运行空间。两种方式接收的图像数据最终都交由数据处理工具进行统一处理。
 
 ### 4.3.3 数据处理工具
 
-数据处理工具由 `GpLedMatrixEsp32` 矩阵编排核心实现，负责将脚本接口接收到的图像数据按照蓝牙通信协议进行封装。所有图像数据统一采用层叠位图（Layered Bitmap）格式表示：每层由1字节头部（层序号和总层数）、16行×16列的1-bit位图数据（32字节）和该层的RGB888颜色（3字节）组成，共36字节；一幅图像由1~4层叠加组合而成，每层独立指定一种颜色和像素位置。对于单帧图像，使用V3紧凑包头（6字节）和 `LayeredFrame`（0x18）命令单包发送，负载为各层位图数据拼接（最多4层×36字节=144字节），仅需1次发包加1次ACK回复即可完成传输，大幅减少了协议交互轮次。对于动画批次，使用 `ShowLayeredAnimation()` 通过 `AnimationStart → AnimationFrame×N → AnimationEnd` 批量协议事务发送，每帧同样采用层叠位图格式，在AnimationEnd上等待ACK确认。所有协议请求由 `SendCommand()` 统一构造，自动分配递增序号，计算header_crc8与packet_crc16双层校验码。对于V3命令（LayeredFrame/LayeredAnimFrame）自动选用6字节紧凑包头，其余命令沿用12字节V2标准包头，保证与历史命令的兼容性。
+数据处理工具由 `GpLedMatrixEsp32` 矩阵编排核心实现，负责将脚本接口接收到的图像数据按照蓝牙通信协议进行封装。当前 `AI端` 与 `LED端` 的主链路统一使用固定 `6` 字节紧凑包头：`magic + flags + sequence + command + payload_length + header_crc8`，再附加可变负载和 `2` 字节 `packet_crc16`。单帧图像优先采用 layered 负载：每层由 `1` 字节头部（层序号和总层数）、`16x16` 的 `1-bit` 位图数据（`32` 字节）和该层的 `RGB888` 颜色（`3` 字节）组成，共 `36` 字节；一幅图像在不超过 `4` 层且总负载不超过 `144` 字节时，可直接通过 `LayeredFrame(0x18)` 单包发送。对于双色位图接口，`ShowBitmapFrame()` 会先把前景/背景转换为两层 layered 负载，再复用同一路径。对于动画批次，`ShowLayeredAnimation()` 使用 `AnimationStart → LayeredAnimFrame×N → AnimationEnd` 批量事务发送，每帧同样采用 layered 负载。所有协议请求由 `SendCommand()` 统一构造，自动分配递增序号，计算 `header_crc8` 与 `packet_crc16` 双层校验码，并在需要时等待 ACK 确认。
 
 ### 4.3.4 LED端接口
 
-LED端接口由 `GpMatrixBtUartTransport` 传输层实现，负责控制HC-05蓝牙模块完成数据发送。AI端启动时首先完成HC-05蓝牙模块配置：通过UART以38400波特率发送AT指令探测模块，若可达则依次设置角色为从机、蓝牙名称、PIN码和绑定地址，建立"XiaoZhi→WS2812"的点对点蓝牙通道，随后将模块与本地UART一起切换到460800数据传输波特率；若三次AT探测均无回复，则认为模块已处于自动配对状态，直接切换至数据波特率。蓝牙配置完成后，传输层启动后台收包任务，持续从串口收集字节流并重组成完整协议包，为ACK匹配提供稳定的应答接收能力。数据处理工具封装好的协议包最终通过传输层的 `WritePacket()` 接口写入UART，经HC-05蓝牙模块发送至LED端。对于要求ACK的事务，传输层在发送后进入 `ReadReply()` 应答匹配轮询，匹配条件包括packet_type为Reply、reply_to_sequence与当前序号一致、command回显原命令、双层CRC均通过，任一条件不满足则视为发送失败。
+LED端接口由 `GpMatrixBtUartTransport` 传输层实现，负责控制HC-05蓝牙模块完成数据发送。AI端启动时首先完成HC-05蓝牙模块配置：通过UART以38400波特率发送AT指令探测模块，若可达则依次设置角色、蓝牙名称、PIN码和绑定地址，建立固定的点对点蓝牙通道，随后将模块与本地UART一起切换到460800数据传输波特率；若三次AT探测均无回复，则认为模块已处于自动配对状态，直接切换至数据波特率。蓝牙配置完成后，传输层启动后台收包任务，持续从串口收集字节流并重组成完整协议包，为ACK匹配提供稳定的应答接收能力。数据处理工具封装好的协议包最终通过传输层的 `WritePacket()` 接口写入UART，经HC-05蓝牙模块发送至LED端。对于要求ACK的事务，传输层在发送后进入 `ReadReply()` 应答匹配轮询，匹配条件包括回包 `flags` 带有 `IS_REPLY` 标志、`sequence` 与当前序号一致、`command` 回显原命令且双层 CRC 均通过，任一条件不满足则视为发送失败。
 
 ---
 
@@ -86,122 +86,62 @@ LED端接口由 `GpMatrixBtUartTransport` 传输层实现，负责控制HC-05蓝
 
 ### 4.4.1 协议总体设计
 
-本课题设计了一套轻量二进制蓝牙通信协议，用于AI端与LED端之间的数据传输。协议针对HC-05经典蓝牙SPP串口透传场景做定制化裁剪，不依赖复杂的上层网络协议栈。协议追求5个设计目标：可定界性——在连续字节流中能通过固定魔数快速定位包起点；完整性——通过双层CRC校验保证数据在传输过程中不被篡改或损坏；可扩展性——预留版本号和命令空间，允许未来扩展新功能；易匹配性——每个请求包有唯一序号，Reply包必须回指对应请求；低带宽适配——采用层叠位图格式和V3紧凑包头，将协议开销降至最低。
-
-协议支持两种包头格式：V2标准包头（12字节）和V3紧凑包头（6字节）。接收侧通过第一个字节后的第二字节自动识别格式：若第二字节为0x50则按V2格式解析，否则按V3格式解析。V2包头兼容历史命令和需要2字节负载长度的大负载场景；V3包头用于新增的轻量命令，将包头开销从12字节压缩至6字节，负载长度字段缩减为单字节（最大255字节）。两种格式均采用相同的双层CRC校验机制。
+本课题设计了一套轻量二进制蓝牙通信协议，用于 `AI端` 与 `LED端` 之间的数据传输。协议面向 HC-05 经典蓝牙 SPP 串口透传场景做定制化裁剪，不依赖复杂的上层网络协议栈。当前稳定版本统一采用固定 `6` 字节紧凑包头，其设计目标主要包括：通过固定魔数实现连续字节流中的快速定界；通过 `header_crc8 + packet_crc16` 双层校验保证链路完整性；通过 `sequence + command` 保持请求与回复的可匹配性；通过 layered 位图与紧凑动作对象降低链路负载。
 
 ### 4.4.2 包结构与字段定义
 
-V3紧凑包头固定为6字节，各字段定义如表4-4-1所示。
+当前协议包由 `6` 字节包头、可变长度负载和 `2` 字节 `packet_crc16` 组成。包头字段定义如表 4-4-1 所示。
 
-表4-4-1 V3紧凑包头结构（6字节）
+表4-4-1 当前协议包头结构（6字节）
 
 | 偏移 | 字段 | 长度 | 说明 |
 | --- | --- | --- | --- |
 | 0 | magic | 1 | 固定魔数0x47，用于包定界 |
-| 1 | flags | 1 | bit0=ACK_REQUIRED, bit1=LOCAL_ONLY, bit2=IS_REPLY, bit[7:3]=保留 |
+| 1 | flags | 1 | bit0=ACK_REQUIRED，bit1=LOCAL_ONLY，bit2=IS_REPLY，bit[7:3]保留 |
 | 2 | sequence | 1 | 请求序号，0~255循环递增 |
 | 3 | command | 1 | 命令字 |
 | 4 | payload_length | 1 | 负载长度（0~255字节） |
 | 5 | header_crc8 | 1 | 前5字节的CRC-8校验值（多项式0x07） |
 
-V2标准包头固定为12字节，各字段定义如表4-4-2所示。V2包头使用2字节魔数（0x47 0x50）、2字节小端序负载长度（最大163字节），并包含version、packet_type、reply_to_sequence等扩展字段，用于兼容历史命令。
+在包头之后附加可变长度负载（Payload），在负载之后附加 `2` 字节 `packet_crc16`（CRC-16/MODBUS，多项式 `0xA001`，初始值 `0xFFFF`，对 `header + payload` 计算）。因此无负载时整包最小长度为 `8` 字节。
 
-表4-4-2 V2标准包头结构（12字节）
+### 4.4.3 双层校验与ACK匹配
 
-| 偏移 | 字段 | 长度 | 说明 |
-| --- | --- | --- | --- |
-| 0 | magic0 | 1 | 固定魔数0x47 |
-| 1 | magic1 | 1 | 固定魔数0x50 |
-| 2 | version | 1 | 协议版本号（0x02） |
-| 3 | header_size | 1 | 包头长度，固定为12 |
-| 4 | packet_type | 1 | 0x01=Request, 0x02=Reply |
-| 5 | flags | 1 | bit0=ACK_REQUIRED |
-| 6 | sequence | 1 | 请求序号，0~255循环递增 |
-| 7 | reply_to_sequence | 1 | Reply对应的原请求序号 |
-| 8 | payload_length | 2 | 负载长度，小端序 |
-| 10 | command | 1 | 命令字 |
-| 11 | header_crc8 | 1 | 前11字节的CRC-8校验值 |
+协议采用 `header_crc8` 和 `packet_crc16` 双层校验，分别服务于不同阶段。`header_crc8` 负责初步验证包头合法性：接收侧在收齐 `6` 字节包头后，立即对前 `5` 字节计算 CRC-8，只有通过后才允许使用 `payload_length` 推导后续还需接收的数据长度。`packet_crc16` 则负责整包完整性校验：在收齐全部数据后，对 `header + payload` 计算 CRC-16/MODBUS，并与包尾比较。
 
-两种格式均在包头之后附加可变长度负载（Payload），在负载之后附加2字节packet_crc16（CRC-16/MODBUS，多项式0xA001，初始值0xFFFF，对header+payload计算）。V2整包最小14字节（无负载时），V3整包最小8字节（无负载时）。
-
-### 4.4.3 双层校验与格式自动识别
-
-协议采用header_crc8和packet_crc16双层校验，分别服务于不同的校验阶段。header_crc8负责初步验证包头合法性：接收侧在收齐包头后立即对除header_crc8外的包头字节计算CRC-8，通过后才允许使用payload_length字段推导后续还需接收的数据长度。packet_crc16负责整包完整性校验：在收齐全部数据后对整个Header+Payload计算CRC-16/MODBUS，与包尾2字节比较。
-
-接收侧通过以下逻辑自动识别V2/V3格式：首先等待第一个字节0x47（魔数）；收到第二个字节后，若值为0x50则判定为V2格式，继续收齐12字节包头并按V2字段布局解析；若值为其他（且bit7=0），则判定为V3格式，收齐6字节包头并按V3字段布局解析。包头的其余字段（如V2的version/header_size）提供额外的格式确认，任一校验失败则丢弃已收数据并重新搜索魔数。这种双格式兼容设计使协议在引入6字节紧凑包头的同时保持了与历史代码的完全兼容。
-
-下面以一条V3格式的Ping命令包为例，具体说明双层CRC校验的完整计算与验证过程。Ping命令无负载，V3紧凑包头共6字节，具体字段如表4-4-3所示。
-
-表4-4-3 Ping命令V3包头示例
-
-| 偏移 | 字段 | 示例值 | 说明 |
-| --- | --- | --- | --- |
-| 0 | magic | 0x47 | 固定魔数 |
-| 1 | flags | 0x01 | bit0=1，ACK_REQUIRED |
-| 2 | sequence | 0x01 | 序号1 |
-| 3 | command | 0x01 | Ping命令 |
-| 4 | payload_length | 0x00 | 无负载 |
-| 5 | header_crc8 | 0x89 | 前5字节的CRC-8校验值 |
-
-**（1）发送侧CRC-8计算**
-
-发送侧对包头前5字节（0x47, 0x01, 0x01, 0x01, 0x00）逐字节计算CRC-8（多项式0x07，初始值0x00），过程如下：
-
-- 初始CRC = 0x00
-- 第0字节0x47：CRC = 0x00 ⊕ 0x47 = 0x47 → 经8次移位后 CRC = 0xD2
-- 第1字节0x01：CRC = 0xD2 ⊕ 0x01 = 0xD3 → 经8次移位后 CRC = 0x37
-- 第2字节0x01：CRC = 0x37 ⊕ 0x01 = 0x36 → 经8次移位后 CRC = 0x82
-- 第3字节0x01：CRC = 0x82 ⊕ 0x01 = 0x83 → 经8次移位后 CRC = 0x80
-- 第4字节0x00：CRC = 0x80 ⊕ 0x00 = 0x80 → 经8次移位后 CRC = 0x89
-
-最终得 header_crc8 = 0x89，填入包头第5字节。每次"8次移位"按以下规则执行：从最高位（bit7）到最低位（bit0）逐位判断，若CRC当前最高位为1，则CRC左移一位后与多项式0x07异或；若最高位为0，则CRC仅左移一位。以第0字节0x47为例：CRC初始为0x47(01000111)，bit7=0故仅左移一位得0x8E(10001110)；此时bit7=1，左移一位得0x1C(00011100)再异或0x07得0x1B(00011011)；依次类推，8次移位后得0xD2。
-
-**（2）发送侧CRC-16计算**
-
-发送侧对整个包头（含header_crc8字段）共6字节（0x47, 0x01, 0x01, 0x01, 0x00, 0x89）计算CRC-16/MODBUS（多项式0xA001，初始值0xFFFF），得 packet_crc16 = 0x36A3。因Ping命令无负载，CRC-16仅覆盖包头6字节。packet_crc16以小端序附加在包头与负载之后：低字节0xA3在前，高字节0x36在后。
-
-最终发送的完整数据包为8字节：`47 01 01 01 00 89 A3 36`。
-
-**（3）接收侧双层校验流程**
-
-接收侧收到上述8字节数据后，执行如下双层校验：
-
-a) **header_crc8初验**：收齐第6字节后，对前5字节（0x47, 0x01, 0x01, 0x01, 0x00）重新计算CRC-8，得0x89，与包头中header_crc8字段一致，初验通过，确认包头合法。此时从payload_length字段（0x00）得知无需继续接收负载数据，直接进入包尾校验。
-
-b) **packet_crc16完整性校验**：对前6字节（Header）重新计算CRC-16/MODBUS，得0x36A3，与包尾2字节（0xA3 0x36，小端序解析为0x36A3）一致，整包校验通过。接收侧确认该Ping请求包完整无误，可安全分发处理。
-
-若header_crc8初验失败（如因串口噪声导致某字节翻转），接收侧立即丢弃已收数据并重新搜索魔数0x47，无需等待接收后续字节，也无需盲目信任payload_length字段推导的长度。这种分层校验机制使接收侧能够尽早发现传输错误，有效降低了串口噪声环境下的误判风险。
+协议中所有命令统一采用 `Request/Reply` 事务模型。`AI端` 发送请求包时，`flags.bit2 = 0`；`LED端` 回复 ACK 时，将 `flags.bit2` 置为 `1`，同时复用原请求的 `sequence` 并回显原 `command`。因此，`AI端` 在 `ReadReply()` 中的匹配条件可统一表述为：`flags.IS_REPLY = 1`、`sequence = original_sequence`、`command = original_command` 且双层 CRC 均通过。Reply 负载固定为 `3` 字节：`status`、`detail` 和 `current_mode`。
 
 ### 4.4.4 Request/Reply机制
 
-协议中所有命令统一采用Request/Reply事务模型。AI端发送Request包（packet_type=0x01或V3中flags.bit2=0），LED端处理后回复Reply包（packet_type=0x02或V3中flags.bit2=1）。V2的Reply包通过reply_to_sequence字段指向原请求的sequence值，V3的Reply包直接回显原请求的sequence字段，两种格式均回显原command字段。AI端发送带ACK请求的命令后进入ReadReply轮询，同时满足以下条件才视为匹配成功：包类型为Reply、sequence值匹配、command回显一致、双层CRC均通过。Reply负载固定3字节：status（0x00成功/0x01忙/0x02不支持/0x03校验失败/0x04序号异常/0x05长度异常）、detail（细化失败原因）、current_mode（LED端当前显示模式）。
+当前协议定义的核心命令可分为四类。
 
-### 4.4.5 命令集合
+参数与控制类包括：`Ping(0x01)`、`SetBrightness(0x02)`、`SetMode(0x03)`、`StateHint(0x04)`、`SetAction(0x05)`、`SetDebugLed(0x06)`、`SetDebugLedFlow(0x07)`、`SetTime(0x08)` 与 `RequestCachedBitmap(0x09)`。其中 `SetAction` 负载固定为 `28` 字节的 `GpMatrixActionPayload`，既可表达颜色、亮度、内容和效果，也可借助 `animation_flags` 触发 `LED端` 本地离线动作。
 
-当前协议定义了16个命令字，按功能分为参数配置、图像传输、轻量图像和动画/字模传输四类。
+完整图像传输类包括 `FrameStart(0x10)`、`FrameChunk(0x11)` 与 `FrameCommit(0x12)`，用于发送 `16x16` RGB332 整帧；当前 `FrameChunk` 单次最多承载 `160` 字节，因此一帧 `256` 字节图像通常拆成 `160 + 96` 两片。
 
-参数配置类（0x01~0x07）：`Ping`（0x01）无负载，用于链路探测；`SetBrightness`（0x02）负载1字节，设置全局亮度；`SetMode`（0x03）切换显示模式；`StateHint`（0x04）AI端状态同步；`SetAction`（0x05）负载18字节定长动作对象，适用于切换显示效果而不传输完整图像的场景；`SetDebugLed`（0x06）和`SetDebugLedFlow`（0x07）用于调试LED控制。
+动画控制类包括 `AnimationStart(0x13)` 与 `AnimationEnd(0x15)`。当前 layered 动画批次的中间帧命令为 `LayeredAnimFrame(0x19)`，最大帧数为 `32`。
 
-图像传输类（0x10~0x12）：`FrameStart`（0x10）负载5字节（format/width/height/total_bytes_le16），声明传输参数；`FrameChunk`（0x11）负载由3字节前缀（offset_le16/size）+数据组成，单次最多传输160字节；`FrameCommit`（0x12）负载1字节（显示模式），通知LED端切换显示画面。
+轻量图像类包括 `LayeredFrame(0x18)` 与 `LayeredAnimFrame(0x19)`。前者用于 layered 单帧单包发送，后者用于动画批次中的单帧负载承载。
 
-轻量图像类（0x18~0x19）：`LayeredFrame`（0x18）使用V3紧凑包头，负载为层叠位图原始数据（每层36字节，最多4层），单包即可完成一帧图像的传输，无需FrameStart/Chunk/Commit三阶段事务。`LayeredAnimFrame`（0x19）同样使用V3紧凑包头，负载由1字节frame_index前缀+层叠位图数据组成，直接在单包中完成动画帧的传输，无需AnimationStart/End包裹。这两个命令是针对轻量级层叠位图格式专门设计的单包命令，大幅减少了协议交互轮次。
+### 4.4.5 图像与动作负载格式
 
-动画/字模传输类（0x13~0x15, 0x20~0x22）：`AnimationStart`（0x13）负载5字节（format/frame_count/interval_ms_le16/flags），声明动画参数；`AnimationFrame`（0x14）负载由1字节frame_index+帧数据组成；`AnimationEnd`（0x15）负载1字节frame_count，确认批次结束。`ScrollGlyphStart/Chunk/Commit`（0x20/0x21/0x22）用于传输滚动字模数据。`Heartbeat`（0x30）无负载，用于链路保活。
+协议中的图像数据主要有三种表示。
 
-### 4.4.6 层叠位图图像格式
+第一种是完整 RGB332 帧，负载固定为 `256` 字节，适合表达每个像素独立着色的复杂图像，但需要经过 `FrameStart + FrameChunk + FrameCommit` 三阶段事务发送。
 
-协议中的图像数据统一采用层叠位图（Layered Bitmap）格式表示，格式编号为BITMAP_LAYERED（0x04）。每层由三部分组成：1字节头部（bit[3:0]=层序号，bit[7:4]=总层数）、16行×16列的1-bit位图数据（32字节，每行2字节小端序，bit=1表示该层前景像素）、该层的RGB888颜色（3字节，顺序R/G/B），共36字节。一幅图像可以由1~16层叠加组合而成，每层独立指定一种颜色和像素位置，各层按序号从低到高依次叠加。相比单层双色位图（38字节），层叠格式以每层仅增加36字节的代价支持多至16种颜色，在保持低带宽的同时大幅提升了色彩表现力。
+第二种是双色紧凑位图，即 `16` 行 `1-bit` 位图加前景/背景 `RGB888` 颜色，总长度为 `38` 字节。它是主机桥接层与 `AI端` 之间常用的中间表示，但在 `AI端 -> LED端` 主链路上，通常会先被转换为两层 layered 负载。
 
-在轻量命令中，`LayeredFrame`直接以层叠位图数据为负载，单包最多承载4层（144字节），配合V3紧凑包头（6字节）和包尾CRC16（2字节），整包仅需152字节即可完成包含4种颜色的16×16图像传输，且仅需1次发包+1次ACK回复即可完成事务。
+第三种是 layered 位图。每层由 `1` 字节头部、`32` 字节位图和 `3` 字节 `RGB888` 颜色构成，共 `36` 字节。当前协议单帧最多支持 `4` 层，因此 layered 单帧最大负载为 `144` 字节，可直接通过 `LayeredFrame(0x18)` 单包发送。动画路径中，每个 `LayeredAnimFrame` 负载在 layered 帧前增加 `1` 字节 `frame_index` 前缀。
 
-### 4.4.7 典型事务流程
+与图像负载并行的另一条轻量路径是 `SetAction`。其 `28` 字节负载除颜色、亮度和内容字段外，还包含 `frame_interval_ms`、`timeline_duration_ms`、`timeline_repeat_count`、`animation_flags` 和 `apply_flags` 等扩展参数，可直接驱动本地效果、时序动作与离线方案切换。
 
-使用传统图像传输命令时（如传输字模滚动数据），采用V2标准包头，事务流程为：AI端发送FrameStart（format,total_bytes）→ AI端发送FrameChunk×N（按160字节分片）→ AI端发送FrameCommit并等待ACK → LED端回复Reply。
+### 4.4.6 典型事务流程
 
-使用轻量层叠位图命令时，采用V3紧凑包头，事务流程大幅简化。以单帧4色图像传输为例：AI端发送LayeredFrame（V3包头，负载=4层×36字节=144字节）并等待ACK → LED端解析各层位图和颜色，叠加后写入图像缓冲区 → LED端回复Reply（OK/失败原因）。整次事务仅需2次发包（请求+回复），相比三阶段事务减少了2次交互。
+以 layered 单帧为例，事务流程为：`AI端` 生成 layered 负载并发送 `LayeredFrame(0x18)` 请求包；`LED端` 解析各层位图和颜色并叠加写入图像缓冲区；若请求带 ACK 标志，则 `LED端` 回复 `IS_REPLY + sequence + command` 匹配的 ACK 包。整次事务通常只需 `1` 次请求和 `1` 次回复。
 
-以动画批次传输为例：AI端发送AnimationStart（frame_count=4,interval=200ms,flags=loop）→ AI端发送AnimationFrame×4（frame_index=0~3，每帧含层叠位图数据）→ AI端发送AnimationEnd并等待ACK → LED端逐一存储各帧到动画缓冲区，收齐后回复OK并按200ms间隔循环播放。LED端内部通过1ms定时器累计播放时间，到达帧间隔后自动切换下一帧，无需AI端介入。
+以动画批次为例，事务流程为：`AI端` 发送 `AnimationStart` 声明 `frame_count`、`interval_ms` 和循环标志；随后逐帧发送 `LayeredAnimFrame(index)`；最后发送 `AnimationEnd(frame_count)` 并等待 ACK。`LED端` 在本地缓存全部帧后，按照给定帧间隔循环播放，避免逐帧蓝牙直播导致的节拍抖动。
+
+以动作对象控制为例，事务流程为：本地触摸界面或主机桥接层生成 `GpMatrixActionPayload`；`AI端` 将其打包为 `SetAction(0x05)` 请求；`LED端` 收到后直接更新当前动作状态或切换本地离线方案；成功后返回 ACK，并把当前模式写回 Reply 负载中的 `current_mode` 字段。
 
 ---
 

@@ -1,0 +1,28 @@
+/* glyph demo for 吉 */
+/* real app frame format: 32-byte bitmap + 3-byte RGB + 1-byte sequence */
+/* bitmap display order: 16 rows x 2 bytes, hi byte first, top row first */
+static const uint8_t code g_demoLayeredFrame[36] = {
+    /* row 00 */ 0x00, 0x00,
+    /* row 01 */ 0x01, 0x80,
+    /* row 02 */ 0x01, 0x80,
+    /* row 03 */ 0x7F, 0xFE,
+    /* row 04 */ 0x25, 0xA6,
+    /* row 05 */ 0x01, 0x80,
+    /* row 06 */ 0x3F, 0xFC,
+    /* row 07 */ 0x3F, 0xFC,
+    /* row 08 */ 0x00, 0x00,
+    /* row 09 */ 0x1F, 0xF8,
+    /* row 10 */ 0x18, 0x18,
+    /* row 11 */ 0x10, 0x08,
+    /* row 12 */ 0x18, 0x18,
+    /* row 13 */ 0x1F, 0xF8,
+    /* row 14 */ 0x10, 0x08,
+    /* row 15 */ 0x00, 0x00,
+    /* rgb888 */ 0x00, 0x00, 0xFF,
+    /* seq    */ 0x00
+};
+
+static const uint8_t code g_demoPrimaryRgb888[3] = { 0x00, 0x00, 0xFF };
+
+/* primary_rgb888 = #0000FF */
+/* sequence = 0x00 */

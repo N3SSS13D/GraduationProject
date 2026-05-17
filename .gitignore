@@ -116,6 +116,11 @@ Project/STC51/*.RAR
 Project/STC51/**/*.RAR
 
 # ---------------------------------------------------------------------------
+# Temporary working data (literature search, scratch files)
+# ---------------------------------------------------------------------------
+.temp_refs/
+
+# ---------------------------------------------------------------------------
 # Local demo assets (not for distribution)
 # ---------------------------------------------------------------------------
 Demo/Pic/jd-xhh.jpg
@@ -124,3 +129,5 @@ Demo/Pic/jd-xhh-16-16.jpg
 # Thesis working markdown files
 Doc/毕业论文/**/*.md
 Doc/毕业论文/**/*.MD
+!Doc/毕业论文/毕业论文.md
+!Doc/毕业论文/图片/README.md

@@ -44,9 +44,9 @@ flowchart TD
 
     subgraph ProtoLayer["蓝牙通信协议"]
         P1["共享协议头<br/>gp_led_matrix_protocol.h"]
-        P2["二进制包格式<br/>Header(12B)+Payload+CRC16"]
+        P2["二进制包格式<br/>Header(6B)+Payload+CRC16"]
         P3["事务语义<br/>Request/Reply + ACK匹配"]
-        P4["传输格式<br/>RGB332整帧/紧凑位图/动画批次"]
+        P4["传输格式<br/>RGB332整帧/layered单帧/动画批次"]
     end
 
     subgraph LEDLayer["LED端: AI8051U显示驱动"]
@@ -118,7 +118,9 @@ flowchart LR
 
 在运行逻辑上，`AI端` 启动后会先配置 HC-05 模块，包括角色、名称、PIN 码、绑定地址和数据传输波特率。随后板级代码创建 `GpLedMatrixEsp32` 对象，并将其与本地调试界面连接起来。对于本地触摸输入，`AI端` 并不会直接写串口，而是先通过回调把调试状态投入后台命令队列，再由后台任务统一调用矩阵控制器执行发送。对于主机侧通过 Debug WebSocket 送来的 `matrix_pattern_result` 或动画消息，`AI端` 则先在本地 LCD 上更新矩阵预览，再把结果转交给蓝牙协议发送层。
 
-`AI端` 的另一个关键价值在于 ACK 处理。所有命令最终都会经由 `SendCommand()` 打包，自动分配 `sequence`，计算 `header_crc8` 与 `packet_crc16`，并在需要时进入 `ReadReply()` 轮询匹配回复包。只有当 `packet_type=Reply`、`reply_to_sequence`、`command` 和 CRC 都匹配成功时，这次事务才被视为真正完成。由此可见，`AI端` 并不是“把字节发出去就算完成”，而是承担了链路确认与错误反馈的职责。
+`AI端` 的另一个关键价值在于 ACK 处理。所有命令最终都会经由 `SendCommand()` 打包，自动分配 `sequence`，计算 `header_crc8` 与 `packet_crc16`，并在需要时进入 `ReadReply()` 轮询匹配回复包。只有当回包 `flags` 带有 `IS_REPLY` 标志、`sequence` 与 `command` 回显匹配且双层 CRC 都通过时，这次事务才被视为真正完成。由此可见，`AI端` 并不是“把字节发出去就算完成”，而是承担了链路确认与错误反馈的职责。
+
+从当前稳定版本的实现看，`AI端` 还额外承担了运行期资源整形职责：板级代码将 debug preview HTTP server、Debug WebSocket 和后台调试命令任务改为按需启动，避免在 Wi-Fi 建链后默认常驻；音频侧则把 AFE 外层 `fetch/detection` 任务改为 `PSRAM` 静态栈，并把上行 backlog 控制为有界实时窗口，以减少 `listening` 切换期的内部 SRAM 压力和 `AFE(FEED)` 溢出风险。
 
 因此，在整个毕业设计的软件系统中，`AI端` 的角色应被理解为“显示语义调度层”。它上接主机服务和人机交互，下接蓝牙协议和 `LED端` 驱动执行层，是连接各软件部分的核心枢纽。
 
@@ -128,9 +130,9 @@ flowchart LR
 
 在结构上，每个协议包均由固定长度包头、可变长度负载和两字节尾部 CRC 组成。包头中同时包含魔数、版本号、头长度、包类型、标志位、序号、回复序号、负载长度、命令字和头部 CRC8。整包末尾再附加 CRC16，对 `header + payload` 进行完整性校验。这样的双层校验机制使得接收侧能够先快速判断“包头是否合法”，再决定是否信任负载长度并继续收包，从而显著降低串口噪声导致的误判风险。
 
-在事务语义上，协议采用统一的 `Request/Reply` 机制。Reply 不使用独立命令字，而是直接回显原命令，并通过 `reply_to_sequence` 关联到原请求的 `sequence`。这样，任何命令都可以复用同一套 ACK 匹配规则。协议中目前定义的核心业务包括：亮度设置、模式切换、动作对象下发、RGB332 整帧传输、滚动字模传输、动画批次传输以及调试 LED 控制等。
+在事务语义上，协议采用统一的 `Request/Reply` 机制。Reply 不使用独立命令字，而是直接回显原命令，并通过 `flags.IS_REPLY + sequence + command` 与原请求关联。这样，任何命令都可以复用同一套 ACK 匹配规则。协议中目前定义的核心业务包括：亮度设置、模式切换、动作对象下发、RGB332 整帧传输、滚动字模传输、layered 单帧传输、动画批次传输以及调试 LED 控制等。
 
-其中，完整 RGB332 帧采用 `FrameStart + FrameChunk + FrameCommit` 三阶段事务。一帧 16x16 RGB332 图像总长度为 256 字节，在最大分片大小 64 字节约束下，需要拆分为 4 个显式偏移分片。相比之下，主机侧与 `AI端` 之间更常使用一种紧凑位图格式，即 16 行 1-bit 位图加前景/背景 RGB888，共 38 字节。这种格式在保持显示语义不变的同时，大幅降低了蓝牙传输量，因此非常适合主机绘图和快速预览场景。动画批次则进一步建立在紧凑位图格式上，统一由 `AnimationStart + AnimationFrame x N + AnimationEnd` 构成，最大帧数为 24，帧间隔采用 `1..65535 ms` 的共享字段表示。
+其中，完整 RGB332 帧采用 `FrameStart + FrameChunk + FrameCommit` 三阶段事务。一帧 `16x16` RGB332 图像总长度为 `256` 字节，在当前最大分片大小 `160` 字节约束下，只需拆分为 `2` 个显式偏移分片。相比之下，主机侧与 `AI端` 之间更常使用一种紧凑位图格式，即 `16` 行 `1-bit` 位图加前景/背景 `RGB888`，共 `38` 字节；`AI端` 再把这一路径统一折叠为 layered 单包命令 `LayeredFrame`。动画批次则统一由 `AnimationStart + LayeredAnimFrame x N + AnimationEnd` 构成，最大帧数为 `32`，帧间隔采用 `1..65535 ms` 的共享字段表示。
 
 从软件工程角度看，这套协议最大的价值在于把多端协同统一到同一语言之下。`AI端` 按同一规则构包，传输层按同一规则验包，`LED端` 按同一规则接收和回包，而主机侧绘图桥又根据这套规则生成紧凑位图与动画对象。因此，协议并不只是“蓝牙传输格式”，而是整个系统的软件公共接口。
 
@@ -154,15 +156,15 @@ flowchart LR
 
 ### 6.1 本地触摸调试流程
 
-当用户在 `AI端` LCD 调试界面上调整颜色、效果或图案时，本地界面首先生成一个 `GpColorDebugState` 对象。该对象通过回调进入后台调试命令队列，再由 `GpLedMatrixEsp32` 将其压缩为 `GpMatrixActionPayload`。随后 `AI端` 构造 `SetAction` 请求包，通过 HC-05 下发给 `LED端`。`LED端` 在接收并校验后，由动作控制层更新当前显示状态，最终由 PWM + DMA 刷新链路完成实际显示。若 `LED端` 返回 ACK，则 `AI端` 再把链路状态反馈到本地调试界面。整个流程体现的是“本地人机交互 -> 动作对象 -> 协议请求 -> 硬件显示”的控制链。
+当用户在 `AI端` LCD 调试界面上调整颜色、效果或图案时，本地界面首先生成一个 `GpColorDebugState` 对象。该对象通过回调进入后台调试命令队列，再由 `GpLedMatrixEsp32` 将其压缩为 `28` 字节的 `GpMatrixActionPayload`。随后 `AI端` 构造 `SetAction` 请求包，通过 HC-05 下发给 `LED端`。`LED端` 在接收并校验后，由动作控制层更新当前显示状态；若 `content = state` 且 `animation_flags` 携带本地离线动作编号，则同一条 `SetAction` 还可直接触发 `next_pattern / show_clock / next_effect` 等本地方案切换。最终所有结果都由 PWM + DMA 刷新链路完成实际显示。若 `LED端` 返回 ACK，则 `AI端` 再把链路状态反馈到本地调试界面。整个流程体现的是“本地人机交互 -> 动作对象 -> 协议请求 -> 硬件显示”的控制链。
 
 ### 6.2 主机图案绘制流程
 
-当主机通过 `/control/matrix_prompt_16x16` 提交“绘制一个青色爱心”之类的请求时，桥接服务会先将自然语言映射为图案模板和颜色参数，再生成统一的 `matrix_frame_v1` 结果对象。如果 Debug WebSocket 可用，该结果会直接以 `matrix_pattern_result` 消息推送到 `AI端`；否则桥接服务先生成 PNG 预览图，并通过 HTTP 回退路径请求 `AI端` 拉取。`AI端` 在接收到结果后，先在本地 LCD 预览，再把紧凑位图负载转发为蓝牙协议事务，最终由 `LED端` 显示出来。这条流程体现的是“主机绘图 -> AI 端预览缓冲 -> 协议转发 -> LED 显示”的协同链。
+当主机通过 `/control/matrix_prompt_16x16` 提交“绘制一个青色爱心”之类的请求时，桥接服务会先将自然语言映射为图案模板和颜色参数，再生成统一的 `matrix_frame_v1` 结果对象。如果 Debug WebSocket 可用，该结果会直接以 `matrix_pattern_result` 消息推送到 `AI端`；否则桥接服务先生成 PNG 预览图，并通过 HTTP 回退路径请求 `AI端` 拉取。`AI端` 在接收到结果后，先在本地 LCD 预览，再把紧凑位图结果折叠为 layered 单包命令或其兼容分片事务，最终由 `LED端` 显示出来。这条流程体现的是“主机绘图 -> AI 端预览缓冲 -> 协议转发 -> LED 显示”的协同链。
 
 ### 6.3 动画批次播放流程
 
-当主机需要播放一个多帧动画时，桥接服务会先把输入序列归一化为最多 24 帧，并根据重采样结果修正 `frame_interval_ms`。随后它通过 Debug WebSocket 依次向 `AI端` 发送 `matrix_animation_start`、多条带 `frame_index` 的 `matrix_pattern_result` 以及 `matrix_animation_end`。`AI端` 在收到这些消息后，先将各帧缓存到本地动画暂存区并循环预览；当确认整组动画已经接收完整后，再统一调用 `ShowBitmapAnimation()` 把整批动画作为协议事务下发给 `LED端`。`LED端` 将这批帧缓存到本地动画缓冲区后，按照给定帧间隔循环播放。与单帧显示相比，这条流程增加了一个明显的“AI 端缓存批处理”阶段，从而避免了逐帧蓝牙直播导致的节拍抖动问题。
+当主机需要播放一个多帧动画时，桥接服务会先把输入序列归一化为最多 `32` 帧，并根据重采样结果修正 `frame_interval_ms`。随后它通过 Debug WebSocket 依次向 `AI端` 发送 `matrix_animation_start`、多条带 `frame_index` 的 `matrix_pattern_result` 以及 `matrix_animation_end`。`AI端` 在收到这些消息后，先将各帧缓存到本地动画暂存区并循环预览；当确认整组动画已经接收完整后，再统一调用 `ShowBitmapAnimation()` 把整批动画作为 `AnimationStart + LayeredAnimFrame x N + AnimationEnd` 事务下发给 `LED端`。`LED端` 将这批帧缓存到本地动画缓冲区后，按照给定帧间隔循环播放。与单帧显示相比，这条流程增加了一个明显的“AI 端缓存批处理”阶段，从而避免了逐帧蓝牙直播导致的节拍抖动问题。
 
 ### 6.4 端到端工作流图示
 
@@ -173,7 +175,7 @@ flowchart TD
     TOUCH["用户触摸LCD<br/>选择颜色/效果/图案"] --> STATE["GpDebugLcdDisplay<br/>生成GpColorDebugState"]
     STATE --> QUEUE["回调→QueueMatrixDebugState()<br/>后台命令队列"]
     QUEUE --> POP["RunDebugCommandTask()<br/>取出命令"]
-    POP --> CONV["ShowDebugState()<br/>→GpMatrixActionPayload<br/>(18B定长动作对象)"]
+    POP --> CONV["ShowDebugState()<br/>→GpMatrixActionPayload<br/>(28B定长动作对象)"]
     CONV --> PACK["SendCommand(SetAction)<br/>→BuildPacketHeader+CRC"]
     PACK --> UART["WritePacket()→HC-05 UART"]
     UART --> RCV["LED端UART2接收<br/>组包+CRC校验"]

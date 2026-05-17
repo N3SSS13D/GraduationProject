@@ -33,21 +33,16 @@
 
 ## 3. 包结构与字段语义
 
-协议头在 `gp_led_matrix_protocol.h` 中定义为 `GpMatrixPacketHeader`，总长度固定为 `12` 字节。整包格式如表 3-1 所示。
+协议头在 `gp_led_matrix_protocol.h` 中定义为 `GpMatrixPacketHeader`，当前主协议头总长度固定为 `6` 字节。整包格式如表 3-1 所示。
 
 | 字段 | 长度 | 含义 |
 | --- | --- | --- |
-| `magic0` | 1 | 固定为 `0x47` |
-| `magic1` | 1 | 固定为 `0x50` |
-| `version` | 1 | 当前协议版本，固定为 `0x02` |
-| `header_size` | 1 | 当前固定为 `12` |
-| `packet_type` | 1 | `Request` 或 `Reply` |
-| `flags` | 1 | 当前主要包含 ACK 请求位和本地链路位 |
+| `magic` | 1 | 固定为 `0x47` |
+| `flags` | 1 | `bit0=ACK_REQUIRED`，`bit1=LOCAL_ONLY`，`bit2=IS_REPLY` |
 | `sequence` | 1 | 当前请求序号，循环递增 |
-| `reply_to_sequence` | 1 | Reply 对应的原请求序号 |
-| `payload_length` | 2 | 负载长度，小端序 |
 | `command` | 1 | 命令字 |
-| `header_crc8` | 1 | 前 11 字节的 CRC8 |
+| `payload_length` | 1 | 负载长度，当前上限 `255` 字节 |
+| `header_crc8` | 1 | 前 `5` 字节的 CRC8 |
 | `payload` | N | 命令负载 |
 | `packet_crc16` | 2 | 对 `header + payload` 的 CRC16 |
 
@@ -58,16 +53,16 @@
 1. `header_crc8` 负责“能否相信包头”。
 2. `packet_crc16` 负责“整个包是否完整无误”。
 
-在接收侧，系统必须先在 12 字节包头范围内完成 `magic/version/header_size/header_crc8` 检查，只有通过后，才允许使用 `payload_length` 推导后续还需要收多少数据。这样可以有效避免因为偶发串口噪声而错误解读长度字段。
+在接收侧，系统必须先在 `6` 字节包头范围内完成 `magic/header_crc8` 检查，只有通过后，才允许使用 `payload_length` 推导后续还需要收多少数据。这样可以有效避免因为偶发串口噪声而错误解读长度字段。
 
 ### 3.2 请求与回复的统一结构
 
 协议中没有单独定义“状态命令”或“错误命令”。相反，它采用统一规则：
 
-1. 请求包使用 `packet_type = Request`；
-2. 回复包使用 `packet_type = Reply`；
+1. 请求包的 `flags.bit2 = 0`；
+2. 回复包的 `flags.bit2 = 1`；
 3. Reply 的 `command` 直接回显原命令；
-4. `reply_to_sequence` 指向原请求的 `sequence`。
+4. Reply 直接复用原请求的 `sequence` 作为匹配锚点。
 
 这种设计的优点是，任何命令都可以拥有统一的 ACK 语义，不必再为每类业务额外设计一套回包命令字。
 
@@ -86,8 +81,12 @@
 | `SetAction` | `0x05` | 下发定长动作对象 |
 | `SetDebugLed` | `0x06` | 控制 `LED端` 板载调试 LED |
 | `SetDebugLedFlow` | `0x07` | 启停调试 LED 流水测试 |
+| `SetTime` | `0x08` | 同步 `AI端` 实时时间到 `LED端` 本地时钟缓存 |
+| `RequestCachedBitmap` | `0x09` | 请求 `AI端` 重发最近一次缓存位图 |
 | `FrameStart/Chunk/Commit` | `0x10/0x11/0x12` | 分片传输单帧图像 |
 | `AnimationStart/Frame/End` | `0x13/0x14/0x15` | 传输动画批次 |
+| `LayeredFrame` | `0x18` | 单包传输 layered 单帧 |
+| `LayeredAnimFrame` | `0x19` | 单包传输 layered 动画帧 |
 | `ScrollGlyphStart/Chunk/Commit` | `0x20/0x21/0x22` | 传输滚动字模 |
 | `Heartbeat` | `0x30` | 保活 |
 
@@ -113,7 +112,7 @@ Reply 的负载总长度固定为 `3` 字节，其定义为 `GpMatrixReplyPayloa
 
 ### 4.3 动作负载 `SetAction`
 
-`SetAction` 使用固定长度 `18` 字节的 `GpMatrixActionPayload`。其本质是将 `AI端` 的调试状态和显示意图压缩为一个可直接执行的动作对象，主要字段包括：
+`SetAction` 使用固定长度 `28` 字节的 `GpMatrixActionPayload`。其本质是将 `AI端` 的调试状态和显示意图压缩为一个可直接执行的动作对象，主要字段包括：
 
 1. 来源 `source`；
 2. 内容类型 `content`；
@@ -124,9 +123,11 @@ Reply 的负载总长度固定为 `3` 字节，其定义为 `GpMatrixReplyPayloa
 7. 主色和次色各 3 字节；
 8. `pattern_id` 与 `glyph_id`；
 9. `scroll_step`、`anim_step`、`gradient_span`；
-10. `flags`，用于标记是否使用次色、是否启用远程接管、是否释放远程接管。
+10. `flags`，用于标记是否使用次色、是否启用远程接管、是否释放远程接管；
+11. `frame_interval_ms`、`timeline_duration_ms`、`timeline_repeat_delay_ms`、`timeline_repeat_count` 与 `timeline_path`；
+12. `animation_flags` 与 `apply_flags`，其中 `animation_flags` 在 `content = state` 时可直接携带本地离线动作编号。
 
-这种设计的意义在于：当用户只是切换纯色、图案或效果时，无需传输整帧图像，直接下发一个定长动作对象即可。
+这种设计的意义在于：当用户只是切换纯色、图案或效果时，无需传输整帧图像，直接下发一个定长动作对象即可；当需要触发 `next_pattern / show_text_scroll / show_clock / toggle_text_clock / next_effect / next_color` 这类 `LED端` 本地离线动作时，也可以继续复用同一个 `SetAction` 命令而不新增命令字。
 
 ### 4.4 RGB332 整帧事务
 
@@ -137,7 +138,7 @@ Reply 的负载总长度固定为 `3` 字节，其定义为 `GpMatrixReplyPayloa
 3. 一帧总长度 `256` 字节；
 4. 数据格式编号为 `GP_MATRIX_PAYLOAD_FORMAT_RGB332 = 0x01`。
 
-由于 `GP_MATRIX_MAX_CHUNK_DATA = 64`，单帧必须使用 3 个命令组成一个事务：
+由于 `GP_MATRIX_MAX_CHUNK_DATA = 160`，单帧必须使用 3 个命令组成一个事务：
 
 1. `FrameStart`：声明格式、宽度、高度和总长度；
 2. `FrameChunk`：传输片内数据；
@@ -153,16 +154,14 @@ Reply 的负载总长度固定为 `3` 字节，其定义为 `GpMatrixReplyPayloa
 
 ```text
 FrameStart(5B)
-FrameChunk(offset=0, size=64)
-FrameChunk(offset=64, size=64)
-FrameChunk(offset=128, size=64)
-FrameChunk(offset=192, size=64)
+FrameChunk(offset=0, size=160)
+FrameChunk(offset=160, size=96)
 FrameCommit(mode=...)
 ```
 
-### 4.5 紧凑位图 RGB888 单帧
+### 4.5 紧凑位图与 `LayeredFrame` 单帧
 
-为了更好适配主机绘图与动画输入，本项目又定义了 `GP_MATRIX_PAYLOAD_FORMAT_BITMAP_RGB888 = 0x03`。该格式的本质是“1 位位图 + 两个 RGB888 颜色”。其长度计算如下：
+为了更好适配主机绘图与动画输入，协议一方面保留了 `GP_MATRIX_PAYLOAD_FORMAT_BITMAP_RGB888 = 0x03` 这种“1 位位图 + 两个 RGB888 颜色”的紧凑中间格式，另一方面又提供了当前主用的 `LayeredFrame(0x18)` 单包命令。双色紧凑位图的长度计算如下：
 
 1. `16` 行位图，每行 `16` 位，共 `32` 字节；
 2. 前景色 `RGB888`，共 `3` 字节；
@@ -174,20 +173,20 @@ FrameCommit(mode=...)
 32 + 3 + 3 = 38 byte
 ```
 
-这一格式的优势是：当图像本质上只是“某个位图轮廓 + 前景/背景色”时，没有必要传输 256 字节 RGB332 数据，只需传输 38 字节即可。对 HC-05 链路而言，这种压缩会显著降低时延和错误概率。
+这一格式的优势是：当图像本质上只是“某个位图轮廓 + 前景/背景色”时，没有必要传输 256 字节 RGB332 数据，只需传输 38 字节即可。当前 `AI端` 的 `ShowBitmapFrame()` 会把这 `38` 字节中间结果转换为“背景层 + 前景层”的两层 layered 负载，再优先使用 `LayeredFrame(0x18)` 单包发送。若一帧本身已经是多层位图，则每层格式固定为 `1B 头 + 32B 位图 + 3B RGB888 = 36B`，在不超过 `4` 层且总负载不超过 `144` 字节时，可直接单包传输。
 
 ### 4.6 动画批次事务
 
-动画批次使用 `AnimationStart/AnimationFrame/AnimationEnd` 三类命令：
+动画批次使用 `AnimationStart/LayeredAnimFrame/AnimationEnd` 三类命令：
 
 1. `AnimationStart` 负载长度为 `5` 字节，包含格式、帧数、帧间隔和循环标志；
-2. `AnimationFrame` 前缀长度为 `1` 字节，即 `frame_index`；
-3. 每帧的实际内容仍使用 38 字节紧凑位图负载；
+2. `LayeredAnimFrame` 前缀长度为 `1` 字节，即 `frame_index`；
+3. 每帧的实际内容为当前 layered 帧负载；
 4. `AnimationEnd` 使用 `1` 字节 `frame_count` 确认本批次结束。
 
 协议头中规定：
 
-1. 最大动画帧数为 `24`；
+1. 最大动画帧数为 `32`；
 2. 合法帧间隔范围为 `1..65535 ms`；
 3. 默认动画间隔为 `42 ms`；
 4. 当前动画标志位支持循环播放。
@@ -253,7 +252,7 @@ FrameCommit(mode=...)
 当用户在 `AI端` 界面上选择“纯色红色 + 静态显示”时，协议交互可概括为：
 
 ```text
-AI端: SetAction(18B payload, ACK_REQUIRED)
+AI端: SetAction(28B payload, ACK_REQUIRED)
 LED端: Reply(status=OK, detail=0, current_mode=...)
 ```
 
@@ -274,7 +273,7 @@ Reply
 
 ### 6.3 紧凑位图单帧事务
 
-若上游提供的是 `bitmap_rows_hex + primary_rgb888 + background_rgb888`，则 `AI端` 可直接组织为 38 字节紧凑位图事务。其优势是：
+若上游提供的是 `bitmap_rows_hex + primary_rgb888 + background_rgb888`，则 `AI端` 会先将其解释为双色紧凑位图，再在蓝牙发送侧优先组织为 `LayeredFrame` 单包事务。其优势是：
 
 1. 蓝牙传输量从 256 字节降到 38 字节；
 2. 主机只需维护位图和颜色，不必自己展开 RGB332；
@@ -286,10 +285,10 @@ Reply
 
 ```text
 AnimationStart(frame_count, frame_interval_ms)
-AnimationFrame(index=0)
-AnimationFrame(index=1)
+LayeredAnimFrame(index=0)
+LayeredAnimFrame(index=1)
 ...
-AnimationFrame(index=N-1)
+LayeredAnimFrame(index=N-1)
 AnimationEnd(frame_count)
 Reply
 ```
@@ -302,10 +301,10 @@ Reply
 
 1. 命令字、负载长度、动画上限和 CRC 算法必须统一以 `gp_led_matrix_protocol.h` 为准。
 2. 所有多字节字段统一按 little-endian 序列化。
-3. ACK 匹配必须同时满足 `packet_type=Reply`、`reply_to_sequence=original_sequence` 和 `command=original_command`。
+3. ACK 匹配必须同时满足 `flags.IS_REPLY=1`、`sequence=original_sequence` 和 `command=original_command`。
 4. 分片事务中，`byte_offset` 必须与数据实际写入偏移一致，不能使用隐式推断。
 5. 当主机已拥有紧凑位图时，应优先使用 38 字节紧凑格式，而不是重新膨胀为 256 字节整帧。
-6. 动画超过 `24` 帧时，应由主机桥接层先做重采样和节拍缩放，而不是把超限负担转移给 `LED端`。
+6. 动画超过 `32` 帧时，应由主机桥接层先做重采样和节拍缩放，而不是把超限负担转移给 `LED端`。
 
 这些约束共同保证了协议不仅“能跑通”，而且“能在多端演进中保持一致”。
 
@@ -326,15 +325,12 @@ flowchart LR
 
     subgraph Header["Header字段详解"]
         direction LR
-        M0["magic0<br/>0x47"] --- M1["magic1<br/>0x50"] ---
-        VER["version<br/>0x02"] --- HSZ["header_size<br/>12"] ---
-        PT["packet_type<br/>0x01=Req<br/>0x02=Reply"] ---
-        FLG["flags<br/>bit0=ACK_REQUIRED<br/>bit1=LOCAL_LINK"] ---
+        M0["magic<br/>0x47"] ---
+        FLG["flags<br/>bit0=ACK_REQUIRED<br/>bit1=LOCAL_ONLY<br/>bit2=IS_REPLY"] ---
         SEQ["sequence<br/>请求序号(0-255)"] ---
-        RSQ["reply_to_sequence<br/>Reply对应原序号"] ---
-        PLEN["payload_length<br/>2B, LE"] ---
         CMD["command<br/>命令字"] ---
-        HCRC["header_crc8<br/>前11B校验"]
+        PLEN["payload_length<br/>1B"] ---
+        HCRC["header_crc8<br/>前5B校验"]
     end
 ```
 
@@ -344,9 +340,9 @@ flowchart LR
 flowchart TD
     subgraph SendSide["AI端发送侧"]
         S1["SendCommand(cmd, payload, needAck)"] --> S2["生成sequence_++"]
-        S2 --> S3["组装Header:<br/>packet_type=Request<br/>flags|=ACK_REQUIRED(可选)"]
-        S3 --> S4["BuildPacketHeader()<br/>写入magic/version/size/seq/cmd/len"]
-        S4 --> S5["计算header_crc8(前11B)"]
+        S2 --> S3["组装Header:<br/>flags.bit2=0<br/>flags|=ACK_REQUIRED(可选)"]
+        S3 --> S4["BuildPacketHeader()<br/>写入magic/flags/seq/cmd/len"]
+        S4 --> S5["计算header_crc8(前5B)"]
         S5 --> S6["计算packet_crc16(header+payload)"]
         S6 --> S7["WritePacket()→HC-05"]
     end
@@ -359,9 +355,9 @@ flowchart TD
     end
 
     subgraph ReplyFlow["Reply构造与匹配"]
-        RP1["BuildReply()<br/>packet_type=Reply<br/>reply_to_sequence=原seq<br/>command=原cmd回显"]
+        RP1["BuildReply()<br/>flags.IS_REPLY=1<br/>sequence=原seq<br/>command=原cmd回显"]
         RP2["3B负载:<br/>status+detail+current_mode"]
-        RP3["AI端ReadReply()<br/>逐项匹配:seq+cmd+crc"]
+        RP3["AI端ReadReply()<br/>逐项匹配:IS_REPLY+seq+cmd+crc"]
     end
 
     S7 --> R1
@@ -448,7 +444,7 @@ flowchart LR
         subgraph Config["参数配置"]
             C1["SetBrightness (0x02)"]
             C2["SetMode (0x03)"]
-            C3["SetAction (0x05)<br/>18B动作对象"]
+            C3["SetAction (0x05)<br/>28B动作对象"]
             C4["StateHint (0x04)"]
         end
 

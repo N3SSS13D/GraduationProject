@@ -9,6 +9,7 @@
 #include "gp_led_action.h"
 #include "gp_led_matrix_ai8051u.h"
 #include "ws2812_drv.h"
+#include "gp_led_matrix_usb_debug.h"
 
 #define APP_SCHED_TICK_US               500UL
 #define APP_ROW_INTERVAL_US_DEFAULT_NORMAL  1000UL
@@ -368,6 +369,12 @@ uint8_t APP_GetDebugMode(void)
     return g_appDebugMode;
 }
 
+void APP_RestoreNormalScan(void)
+{
+    /* Re-apply Timer1 row scan settings after debug mode tear-down. */
+    APP_Timer1ApplyRefreshInterval(APP_GetIntervalByScanMode());
+}
+
 static uint32_t APP_GetIntervalByScanMode(void)
 {
     if (WS2812DRV_GetScanMode() == WS2812DRV_SCAN_LEGACY_SHIFT)
@@ -703,6 +710,9 @@ void APP_Init(void)
 
 void APP_TaskLoop(void)
 {
+    /* Temporary: USB DEBUG command enters a blocking row-test loop. */
+    GpLedMatrixUsbDebug_Run();
+
     GpLedMatrixAi8051u_Poll(&g_appAiMatrixCtx);
     /* Process deferred animation frame rendering so heavy encoding stays out of ISR. */
     GpLedAction_RenderPendingAnimationFrame();

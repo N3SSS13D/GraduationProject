@@ -1,65 +1,69 @@
-# 本地绘图脚本
+---
+name: local-drawing-scripts
+description: 'Modify or review local drawing scripts and MCP tooling. Use when changing gp_display_mcp_bridge.py, drawing payload rules, host preview flow, dev-cycle tooling, image conversion tools, or script-side animation constraints under Project/Script.'
+user-invocable: true
+disable-model-invocation: false
+---
 
-## 分类
+# Local Drawing Scripts
+
+## Category
 
 `本地绘图脚本`
 
-## 适用范围
+## Scope
 
-`Project/Script/` 下的脚本端和 MCP 任务：
+Use this skill for script-side and MCP tasks under `Project/Script/`:
 
 - `Project/Script/mcp/gp_matrix/`
 - `Project/Script/tools/`
 - `Project/Script/media_tools/`
 
-## 文件定位
+## Read only what is needed
 
-- MCP 绘图任务：`Project/Script/mcp/gp_matrix/`
-- 构建/烧录/监视器工作流任务：`Project/Script/tools/`
-- 仅在脚本负载契约依赖共享协议字段时读取 `Project/Protocols/`
+- For MCP drawing tasks, prefer `Project/Script/mcp/gp_matrix/`.
+- For build/flash/monitor workflow tasks, prefer `Project/Script/tools/`.
+- Read `Project/Protocols/` only when script payload contracts depend on shared protocol fields.
 
-## 模块快速图
+## Module quick map
 
-- `Project/Script/mcp/gp_matrix/gp_display_mcp_bridge.py` — 规范的主机端绘图桥接，供 LLM 工具和本地预览/上传流程使用
-- `Project/Script/mcp/gp_matrix/gp_matrix_drawing_mcp_usage.md` — 工具输入、允许格式、动画约束和故障避免的当前使用契约
-- `Project/Script/mcp/gp_matrix/gp_mcp_endpoint_client.py` — MCP 桥接入口的兼容启动器
-- `Project/Script/media_tools/led_image_converter_gui.py` — 16x16 素材和固件友好导出的手动图像/文本转换助手
-- `Project/Script/tools/ws2812_auto_debug.py` — 统一 AI + LED 自动调试工作流自动化
+- `Project/Script/mcp/gp_matrix/gp_display_mcp_bridge.py` — Canonical host-side drawing bridge for LLM tools and local preview/upload flows.
+- `Project/Script/mcp/gp_matrix/gp_matrix_drawing_mcp_usage.md` — Tool input, allowed formats, animation constraints, and failure avoidance.
+- `Project/Script/mcp/gp_matrix/gp_mcp_endpoint_client.py` — MCP bridge entry: MCP client, HTTP server, Debug WS, drawing tools.
+- `Project/Script/media_tools/led_image_converter_gui.py` — Manual image/text→16x16 asset converter (Tkinter GUI).
+- `Project/Script/tools/ws2812_auto_debug.py` — Unified AI + LED auto-debug workflow automation.
 
-## 常见主机流程
+## Common host flow
 
-- LLM / 工具请求 → `gp_display_mcp_bridge.py`
-- 桥接输出 → AI端预览/上传接口
-- AI端板/编排器 → 蓝牙上传
-- LED端渲染在下游；脚本不应假设直接 LED端封包注入
+- LLM / tool request → `gp_display_mcp_bridge.py`
+- Bridge output → AI-side preview/upload interfaces (`matrix_pattern_result`, animation batches, or `matrix_action_result`)
+- AI-side board/orchestrator → Bluetooth upload
+- LED-side render is downstream; scripts should not assume direct LED-side packet injection
 
-## 常用阅读组合
+## Common read bundles
 
-- `MCP 绘图 / 动画规则` → `gp_matrix_drawing_mcp_usage.md` + `gp_display_mcp_bridge.py` + `Project/Protocols/gp_matrix_pattern_protocol.md`
-- `手动素材转换` → `Project/Script/media_tools/led_image_converter_gui.py`
-- `构建 / 监视器自动化` → `Project/Script/tools/ws2812_auto_debug.py`
+- `MCP drawing / animation rules` → `gp_matrix_drawing_mcp_usage.md` + `gp_display_mcp_bridge.py` + `Project/Protocols/gp_matrix_pattern_protocol.md`
+- `Manual asset conversion` → `Project/Script/media_tools/led_image_converter_gui.py`
+- `Build / monitor automation` → `Project/Script/tools/ws2812_auto_debug.py`
 
-## 问题解决工作流
+## Problem-solving workflow
 
-对于脚本、MCP 和工具任务：
+For script, MCP, and tooling tasks:
 
-1. 先总结当前脚本流程、边界和入口点
-2. 陈述操作风险、故障案例和候选修复，再编辑
-3. 优先选择保持主机流程有界的最小可行变更
-4. 先验证一个聚焦的工作流切片，再扩大范围
-5. 当操作预期或工作流规则变化时，同步文档和 prompt/skill 指导
+1. Summarize the current script flow, boundaries, and entry points first.
+2. State the operational risks, failure cases, and candidate fixes before editing.
+3. Prefer the smallest feasible change that keeps the host flow bounded.
+4. Validate one focused workflow slice before widening scope.
+5. Sync docs and prompt/skill guidance when operational expectations or workflow rules change.
 
-## 要求
+## Requirements
 
-1. 保持 LLM 工具名和参数名自描述
-2. 保持负载和动画文档与 `Project/Protocols/` 下的活跃协议文档一致
-3. 不将脚本专属规则移到顶层 prompt；保持在对应脚本分类或文档中
-4. 若脚本工作流变更影响当前使用指导，更新 `Project/Script/README.md` 和最近的脚本文档
-5. 保持默认自动调试链严格顺序：
-   - 仅 Keil 重新构建 `Project/STC51/ws2812_driver/ws2812_driver.uvproj`
-   - 延迟 20s，然后打开 AI8051U 串口监视器（默认 `COM15`）
-   - ESP-IDF `build flash monitor` for `Project/xiaozhi-esp32`
-6. 执行前验证工具路径并暴露可配置覆盖：
-   - `S:\Embedded\Keil`
-   - `S:\Embedded\ESP\v5.4.3\esp-idf`
-7. 当自动化入口变更时移除旧脚本引用，避免死文档和过时任务绑定
+1. Keep LLM-facing tool names and argument names self-descriptive.
+2. Keep payload and animation docs consistent with `Project/Protocols/`.
+3. Host bridge tool namespace: `self.screen.matrix_16x16.*`. Local debug: `self.screen.matrix_16x16.local.*`. Do not mix.
+4. Do not move script-specific rules into the top-level prompt; keep them in this category or matching script docs.
+5. If script workflow changes, update `Project/Script/README.md` and nearest script doc.
+6. When a display can use native effects, prefer `show_effect` / `matrix_action_result` over bitmap animation.
+7. For subtitle text + scroll: prefer `show_scroll_subtitle`; use `draw_animation` only for explicit frame sequences.
+8. Keep default auto-debug chain: Keil rebuild → delay 20s → STC serial monitor (COM15) → ESP-IDF build/flash/monitor.
+9. Tool paths: Keil `S:\Embedded\Keil`, ESP-IDF `S:\Embedded\ESP\v5.4.3\esp-idf`.

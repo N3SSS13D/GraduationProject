@@ -662,6 +662,57 @@ bit WS2812DRV_SendRowPair(uint8_t rowA, uint8_t rowB)
 	return 1;
 }
 
+bit WS2812DRV_CommitAndSendRowPair(uint8_t rowA, uint8_t rowB)
+{
+	uint8_t sendRowA;
+	uint8_t sendRowB;
+	uint8_t temp;
+	uint16_t txLen;
+
+	if ((rowA >= WS2812DRV_ROW_NUM) || (rowB >= WS2812DRV_ROW_NUM))
+	{
+		return 0;
+	}
+
+	if (g_ws2812DmaBusy != 0)
+	{
+		return 0;
+	}
+
+	/* Swap pending PWM buffer to active so freshly-encoded data is visible. */
+	if (g_ws2812PwmSwapPending != 0)
+	{
+		g_ws2812ActivePwmBufIdx = g_ws2812PendingPwmBufIdx;
+		g_ws2812PwmSwapPending = 0;
+	}
+
+	sendRowA = rowA;
+	sendRowB = rowB;
+	if ((sendRowA & 0x01U) != 0U)
+	{
+		temp = sendRowA;
+		sendRowA = sendRowB;
+		sendRowB = temp;
+	}
+
+	txLen = WS2812DRV_BuildDualRowPwmBuffer(sendRowA, sendRowB);
+	if (txLen < 2U)
+	{
+		return 0;
+	}
+
+	WS2812DRV_SelectRows(sendRowA, sendRowB);
+	WS2812DRV_TriggerDualRowDma(g_ws2812DualRowPwmBuf, txLen);
+	if (WS2812DRV_WaitDmaDone() == 0)
+	{
+		WS2812DRV_BlankOutputs();
+
+		return 0;
+	}
+
+	return 1;
+}
+
 void WS2812DRV_RefreshStep(void)
 {
 	uint8_t rowA;

@@ -62,9 +62,9 @@
 
 - 位置：`main/boards/lichuang-dev/lichuang_dev_board.cc`
 - 作用：
-  - 提供 `POST /debug/preview_image` 与 `GET /debug/preview_status` 这组设备侧预览接口；
-  - 建立 Debug WebSocket 通道，接收主机侧下发的 `matrix_pattern_result` 与动画消息；
-  - 先在本地 LCD 预览，再决定是否转发到 `LED端`。
+  - 按需提供 `POST /debug/preview_image` 与 `GET /debug/preview_status` 这组设备侧预览接口；
+  - 按需建立 Debug WebSocket 通道，接收主机侧下发的 `matrix_pattern_result` 与动画消息；
+  - 先在本地 LCD 预览，再决定是否转发到 `LED端`，避免调试服务常驻挤压内部 SRAM。
 
 这一层将 `AI端` 从单纯的蓝牙发送器扩展为“预览缓冲 + 转发中枢”，使其既能服务本地交互，也能服务主机侧生成图像的调试闭环。
 
@@ -177,24 +177,25 @@ GpLedMatrixEsp32(transport, GP_MATRIX_DEFAULT_BRIGHTNESS)
 16 x 2 + 3 + 3 = 38 byte
 ```
 
-`PackBitmapFramePayload()` 会先把每行按小端格式拆成两个字节，再顺序写入前景和背景颜色。因为整帧只有 38 字节，完全落在单片 64 字节上限以内，所以 `ShowBitmapFrame()` 选择：
+当前实现里，`ShowBitmapFrame()` 已不再把 `38` 字节双色位图原样下发到蓝牙链路，而是先把“背景层 + 前景层”转换为两层 `LayeredFrameLayer`，再调用 `ShowLayeredFrameLocked()`。因此：
 
-1. `FrameStart` 和中间 `FrameChunk` 不强制等待 ACK；
-2. 只在最终 `FrameCommit` 上等待 ACK。
+1. 若总层数不超过 `4` 层，且总负载不超过 `144` 字节，则优先使用 `LayeredFrame(0x18)` 单包发送；
+2. 只有当分层负载超出单包范围时，才回退到 `FrameStart + FrameChunk + FrameCommit` 这条分片事务；
+3. `38` 字节双色位图仍然是主机与 `AI端` 间的常用中间格式，但在 `AI端 -> LED端` 主链路上已经被统一折叠到 layered 单帧事务。
 
-这一策略减少了单帧互动延迟，非常适合主机绘图与本地调试时的快速预览。
+这一策略既保留了上层接口的简洁性，又减少了蓝牙链路上的握手轮次，非常适合主机绘图与本地调试时的快速预览。
 
 ### 5.4 动画批次的发送流程
 
-`ShowBitmapAnimation()` 负责把一组紧凑位图帧打包为动画批次。它的处理流程为：
+`ShowBitmapAnimation()` 现在会先把每一帧双色位图转换为 layered 帧集合，再统一进入 `ShowLayeredAnimationLocked()`。它的处理流程为：
 
-1. 检查帧数必须在 `1..24` 范围内；
+1. 检查帧数必须在 `1..32` 范围内；
 2. 解析或修正 `frame_interval_ms`，过小则回退到默认 `42 ms`；
 3. 发送 `AnimationStart`，声明格式、帧数、帧间隔和循环标志；
-4. 对每一帧写入 `frame_index + compact_frame_payload`；
+4. 对每一帧写入 `frame_index + layered_frame_payload`，具体命令为 `LayeredAnimFrame(0x19)`；
 5. 最后发送 `AnimationEnd(frame_count)` 完成提交。
 
-从实现上看，动画不是把 24 帧先膨胀为 `24 x 256` 字节 RGB332 再传输，而是保留紧凑位图格式，以减小蓝牙传输量和 `LED端` 解析压力。
+从实现上看，动画不是把 `32` 帧先膨胀为 `32 x 256` 字节 RGB332 再传输，而是保留 layered 紧凑表示，以减小蓝牙传输量和 `LED端` 解析压力。
 
 ## 6. ACK 机制与链路状态维护
 
@@ -204,8 +205,8 @@ GpLedMatrixEsp32(transport, GP_MATRIX_DEFAULT_BRIGHTNESS)
 
 1. 根据是否要求 ACK 生成 `flags`；
 2. 使用 `sequence_` 作为本次请求序号；
-3. 调用 `BuildPacketHeader()` 写入魔数、版本、头大小、包类型、序号、命令字和负载长度；
-4. 对前 11 字节计算 `header_crc8`；
+3. 直接写入当前固定 `6` 字节紧凑包头：`magic + flags + sequence + command + payload_length`；
+4. 对前 `5` 字节计算 `header_crc8`；
 5. 对 `header + payload` 计算 `packet_crc16`，附加在包尾。
 
 这样，`AI端` 在发包时就同时完成了轻量头校验与整包校验的构造工作。
@@ -216,10 +217,10 @@ GpLedMatrixEsp32(transport, GP_MATRIX_DEFAULT_BRIGHTNESS)
 
 1. 先短暂延时，给 `LED端` 留出准备回包的时间；
 2. 最多重试若干轮轮询，从传输层读取完整包；
-3. 校验 `magic/version/header_size/packet_type/header_crc8`；
-4. 校验 `reply_to_sequence` 是否等于当前请求的 `sequence`；
+3. 校验 `magic/header_crc8/payload_length` 是否与当前紧凑头一致；
+4. 校验回包 `sequence` 是否等于当前请求的 `sequence`；
 5. 校验 `command` 是否回显当前命令；
-6. 校验整包 CRC16；
+6. 校验 `flags` 是否带有 `IS_REPLY` 标志位，并校验整包 CRC16；
 7. 解析 `status/detail/current_mode` 三字节回复负载。
 
 只有当这些条件全部满足时，该 ACK 才被视为真正有效。由此可见，`AI端` 并不是“收到任何回复都算成功”，而是必须做到命令级别的一一对应。
@@ -257,8 +258,8 @@ GpLedMatrixEsp32(transport, GP_MATRIX_DEFAULT_BRIGHTNESS)
 
 后台任务收到 `UART_DATA`、溢出或帧错误等事件后，会调用 `PumpRxBytes()`，不断把串口中的字节读入 `rx_buffer_`。随后 `TryExtractPacket()` 执行如下处理：
 
-1. 在缓冲区中查找协议魔数 `0x47 0x50`；
-2. 在拥有完整包头后校验版本、头长度和 `header_crc8`；
+1. 在缓冲区中查找协议魔数 `0x47`；
+2. 在拥有完整 `6` 字节紧凑包头后校验 `header_crc8`；
 3. 依据 `payload_length` 计算整包长度；
 4. 在缓冲区内已收齐整包时校验 `packet_crc16`；
 5. 通过后把整包拷入 `packet_queue_`，供 `ReadReply()` 或其他上层逻辑读取。
@@ -280,7 +281,7 @@ GpLedMatrixEsp32(transport, GP_MATRIX_DEFAULT_BRIGHTNESS)
 1. `POST /debug/preview_image` 接收主机上传的 PNG 或 JPEG 图像，并将其放入 LCD 预览区；
 2. `GET /debug/preview_status` 返回是否已就绪、最近一次图像大小和状态文本。
 
-这组接口解决的问题是：即使蓝牙矩阵显示只支持 16x16，`AI端` 的 LCD 依然可以在本地显示主机生成的高分辨率预览图，方便调试与论文展示。
+当前稳定版本中，这组 HTTP 端点及其底层 HTTP server 都采用按需启动策略：只有主机请求设备预览、查询状态或需要建立调试链路时才真正拉起。这样做的原因是矩阵预览链路要与语音音频链路共享内部 SRAM，常驻启动会挤压 `listening` 阶段的可用余量。
 
 ### 8.2 Debug WebSocket 的消息组织
 
@@ -291,7 +292,7 @@ GpLedMatrixEsp32(transport, GP_MATRIX_DEFAULT_BRIGHTNESS)
 3. `matrix_animation_end`：表示本次动画批次已经发送完成；
 4. `ack` / `hello`：调试链路控制消息。
 
-这种设计使主机不必直接操控蓝牙分片，而是先把“结构化图形结果”交给 `AI端`，由 `AI端` 再决定本地预览和蓝牙转发。
+这条链路同样是按需建立的，不会在 Wi-Fi 刚连接时默认常驻。这样，主机不必直接操控蓝牙分片，而是先把“结构化图形结果”交给 `AI端`，由 `AI端` 再决定本地预览和蓝牙转发。
 
 ### 8.3 动画的本地缓存与再转发
 
@@ -327,17 +328,17 @@ GpLedMatrixEsp32(transport, GP_MATRIX_DEFAULT_BRIGHTNESS)
 ShowBitmapFrame(rows, 16, primary_rgb888, background_rgb888, kGpMatrixModeSolidFrame)
 ```
 
-该调用会把 16 行位图和颜色打包成 38 字节紧凑负载，并进一步通过：
+该调用会先把“背景层 + 前景层”折叠为两层 layered 负载，并进一步优先通过：
 
 ```text
-FrameStart -> FrameChunk -> FrameCommit
+LayeredFrame(0x18)
 ```
 
-组织为完整协议事务，最终由 `GpMatrixBtUartTransport` 写入 HC-05 UART。
+组织为单包协议事务，最终由 `GpMatrixBtUartTransport` 写入 HC-05 UART。只有当 layered 负载超出单包上限时，才回退到 `FrameStart -> FrameChunk -> FrameCommit` 的分片事务。
 
 ### 9.4 LED 端执行与 ACK 返回
 
-`LED端` 收到事务后完成缓存写入和显示提交，再回复带 `reply_to_sequence` 的 ACK 包。`AI端` 匹配成功后更新链路状态面板，至此形成完整的“主机生成 -> AI 端预览 -> 蓝牙转发 -> LED 端执行 -> ACK 回报”闭环。
+`LED端` 收到事务后完成缓存写入和显示提交，再回复一个复用原 `sequence + command` 且带 `IS_REPLY` 标志位的 ACK 包。`AI端` 匹配成功后更新链路状态面板，至此形成完整的“主机生成 -> AI 端预览 -> 蓝牙转发 -> LED 端执行 -> ACK 回报”闭环。
 
 ## 10. 核心实现流程图
 
@@ -369,14 +370,14 @@ flowchart TD
     STATE --> CB["回调→QueueMatrixDebugState()<br/>入队调试命令队列"]
     CB --> TASK["RunDebugCommandTask()<br/>后台FreeRTOS任务取出"]
     TASK --> SHOW["GpLedMatrixEsp32::ShowDebugState()"]
-    SHOW --> CONV["转换为GpMatrixActionPayload<br/>(18字节定长动作对象)"]
+  SHOW --> CONV["转换为GpMatrixActionPayload<br/>(28字节定长动作对象)"]
     CONV --> SEND["SendCommand(kGpMatrixCommandSetAction, ...)"]
-    SEND --> BUILD["BuildPacketHeader()<br/>魔数+版本+序号+CRC8<br/>+负载+packet_crc16"]
+  SEND --> BUILD["BuildPacketHeader()<br/>6B紧凑包头+CRC8<br/>+负载+packet_crc16"]
     BUILD --> WRITE["GpMatrixBtUartTransport::WritePacket()<br/>uart_write_bytes()→HC-05"]
     WRITE --> ACK{"需要ACK?"}
     ACK -->|"YES"| READ["ReadReply()<br/>轮询匹配(≤12次×8ms)"]
     ACK -->|"NO"| DONE["发送完成"]
-    READ --> MATCH{"reply_to_sequence<br/>+command+crc?"}
+  READ --> MATCH{"IS_REPLY+sequence<br/>+command+crc?"}
     MATCH -->|"OK"| NOTIFY["NotifyLinkStatus()<br/>→UI链路状态更新"]
     MATCH -->|"FAIL"| RETRY{"超过最大重试?"}
     RETRY -->|"NO"| READ
@@ -396,12 +397,12 @@ flowchart TD
     TYPE -->|"matrix_animation_end"| ANIMEND["检查帧收齐→<br/>ShowBitmapAnimation()"]
 
     SINGLE --> PREVIEW["LCD本地预览<br/>ApplyMatrixBitmapPreview()"]
-    SINGLE --> BT1["ShowBitmapFrame()<br/>38字节紧凑位图"]
-    BT1 --> FS1["FrameStart→FrameChunk<br/>→FrameCommit(ACK)"]
+    SINGLE --> BT1["ShowBitmapFrame()<br/>双色位图→两层layered"]
+    BT1 --> FS1["LayeredFrame(0x18)优先<br/>超限时回退分片事务"]
 
     ANIMSTART --> RCV["逐帧接收matrix_pattern_result<br/>→缓存→LCD动画预览"]
     RCV --> ANIMEND
-    ANIMEND --> BT2["AnimationStart<br/>→AnimationFrame×N<br/>→AnimationEnd→ACK"]
+    ANIMEND --> BT2["AnimationStart<br/>→LayeredAnimFrame×N<br/>→AnimationEnd→ACK"]
 
     PREVIEW --> LED["LED端接收→编码→显示"]
     BT1 --> LED
@@ -416,10 +417,10 @@ flowchart TD
         TASK1["RunRxTask()<br/>FreeRTOS任务 栈4K prio5"] --> WAIT["等待UART_DATA事件"]
         WAIT --> PUMP["PumpRxBytes()→rx_buffer_"]
         PUMP --> EXTRACT["TryExtractPacket()"]
-        EXTRACT --> FIND["扫描魔数0x47 0x50"]
+      EXTRACT --> FIND["扫描魔数0x47"]
         FIND --> HCRC{"header_crc8?"}
         HCRC -->|"FAIL"| FIND
-        HCRC -->|"OK"| WAIT2["等payload+CRC16收齐"]
+      HCRC -->|"OK"| WAIT2["等6B头+payload+CRC16收齐"]
         WAIT2 --> PCRC{"packet_crc16?"}
         PCRC -->|"FAIL"| FIND
         PCRC -->|"OK"| QUEUE["完整包→packet_queue_(16深度)<br/>Reply优先保留策略"]
@@ -428,9 +429,9 @@ flowchart TD
     subgraph ACKMATCH["ACK同步匹配"]
         SR["SendCommand()需要ACK"] --> DELAY["短暂延时→ReadReply()"]
         DELAY --> POPQ["从packet_queue_读包"]
-        POPQ --> CHK{"校验magic/version<br/>header_crc8?"}
+      POPQ --> CHK{"校验magic/header_crc8?"}
         CHK -->|"FAIL"| RETRY["重试(≤12次×8ms)"]
-        CHK -->|"OK"| CHK2{"reply_to_sequence<br/>==sequence?"}
+      CHK -->|"OK"| CHK2{"IS_REPLY且sequence<br/>==原请求?"}
         CHK2 -->|"NO"| RETRY
         CHK2 -->|"YES"| CHK3{"command回显?"}
         CHK3 -->|"NO"| RETRY

@@ -49,3 +49,48 @@
 - `LED端` 接收侧：`Project/STC51/ws2812_driver/Sources/drv/gp_led_matrix_ai8051u.c`
 - 主机绘图契约：`Project/Script/mcp/gp_matrix/gp_matrix_drawing_mcp_usage.md`
 - 主机 websocket 转发入口：`Project/xiaozhi-esp32/main/boards/lichuang-dev/lichuang_dev_board.cc`
+
+## Key Constants & Structures Reference
+
+### Protocol Header (`gp_led_matrix_protocol.h`)
+
+| Symbol | Value | Description |
+|---|---|---|
+| `GP_MATRIX_MAGIC` | `0x47` | Packet start delimiter |
+| `GP_MATRIX_HEADER_SIZE_V3` | 6 | V3 compact header bytes |
+| `GP_MATRIX_HEADER_SIZE_V2` | 12 | V2 legacy header bytes |
+| `GP_MATRIX_PAYLOAD_MAX` | 255 | Max payload bytes per packet |
+| `GP_MATRIX_CHUNK_SIZE` | 64 | Max chunk payload per `FrameChunk` |
+| `GP_MATRIX_MAX_ANIM_FRAMES` | 32 | Max frames per animation |
+| `GP_MATRIX_MAX_LAYERS` | 16 | Max layers for static frames |
+| `GP_MATRIX_MAX_ANIM_LAYERS` | 4 | Max layers per animation frame |
+
+### Key Structs
+
+| Struct | Size | Fields |
+|---|---|---|
+| `GpMatrixPacketHeader` | 6B | magic, flags, sequence, command, payload_length, header_crc8 |
+| `GpMatrixActionPayload` | 28B | content_type, effect_id, rgb_color[3], brightness, scroll_step, anim_step, frame_interval_ms, flags, etc. |
+| `GpMatrixFrameStartPayload` | 5B | format, width, height (2B each) |
+| `GpMatrixChunkHeader` | 3B | offset(2B), chunk_len(1B) |
+| `GpMatrixLayerHeader` | 1B | total_layers[4], seq[4] |
+| `GpMatrixTimePayload` | 6B | HH, MM, SS, YY, MM, DD |
+
+### Command ID Reference
+
+| Command | ID | Category |
+|---|---|---|
+| Ping | 0x01 | Diagnostic |
+| SetBrightness | 0x02 | Parameter |
+| SetMode | 0x03 | Parameter |
+| StateHint | 0x04 | Parameter |
+| SetAction | 0x05 | Control |
+| SetDebugLed / SetDebugLedFlow | 0x06 / 0x07 | Debug |
+| SetTime | 0x08 | Clock |
+| RequestCachedBitmap | 0x09 | Recovery |
+| FrameStart / FrameChunk / FrameCommit | 0x10 / 0x11 / 0x12 | Full Image |
+| AnimationStart / AnimationFrame / AnimationEnd | 0x13 / 0x14 / 0x15 | Animation |
+| LayeredFrame | 0x18 | Lightweight Image |
+| LayeredAnimFrame | 0x19 | Lightweight Animation |
+| ScrollGlyphStart / Chunk / Commit | 0x20 / 0x21 / 0x22 | Glyph |
+| Heartbeat | 0x30 | Keep-alive |

@@ -62,3 +62,46 @@
 - 绘图脚本的输出必须兼容 `Project/Protocols/` 中的契约
 - 如果需求是“原始文本 + 横向滚动参数 + 图像序列传输”，优先使用 `show_scroll_subtitle`；若只需 `LED端` 原生滚动字幕，则优先 `show_effect`
 - 若联调流程变化，要同步更新本目录说明和 `Doc/Instructions/` 中的当前约束
+
+## Key Functions Reference
+
+### MCP Tools (host LLM namespace: `self.screen.matrix_16x16.*`)
+
+| Tool | Input | Output | File |
+|---|---|---|---|
+| `draw_python` | Python source string | `bitmap_rows_hex` + `rgb_color` | gp_mcp_endpoint_client.py |
+| `render_prompt` | Natural language text | `bitmap_rows_hex` | gp_mcp_endpoint_client.py |
+| `show_text` | Text, font_size, color, speed | Animation frame sequence | gp_mcp_endpoint_client.py |
+| `show_scroll_subtitle` | Text, scroll_dir, speed | Scroll frame sequence | gp_mcp_endpoint_client.py |
+| `show_effect` | Effect name + params | `matrix_action_result` JSON | gp_mcp_endpoint_client.py |
+| `draw_animation` | Frame list + timing | Animation JSON batch | gp_mcp_endpoint_client.py |
+
+### Core Python Functions
+
+| Function | File | Role |
+|---|---|---|
+| `McpBridgeServer.register_tools()` | gp_mcp_endpoint_client.py | Register all available MCP tools |
+| `McpBridgeServer.handle_tool_call()` | gp_mcp_endpoint_client.py | Dispatch `tools/call` to appropriate handler |
+| `draw_frame_from_python()` | gp_mcp_endpoint_client.py | AST-whitelist parse + exec Pillow drawing |
+| `render_text_to_frames()` | gp_mcp_endpoint_client.py | Text → PIL glyph → 16×16 bitmap per char |
+| `render_scroll_subtitle()` | gp_mcp_endpoint_client.py | Long text → wide offscreen bitmap → 16×16 windows |
+| `send_matrix_result()` | gp_mcp_endpoint_client.py | Push result via Debug WS (primary) or HTTP (fallback) |
+| `McpWebSocketClient.send_json()` | gp_mcp_endpoint_client.py | Send JSON-RPC request to remote MCP |
+| `ws2812_auto_debug.main()` | ws2812_auto_debug.py | Automated: Keil build → STC serial → ESP-IDF flash/monitor |
+
+### Debug Tools (local namespace: `self.screen.matrix_16x16.local.*`)
+
+| Tool | Description | File |
+|---|---|---|
+| `local.draw` | Direct frame drawing on AI-side | gp_mcp_endpoint_client.py |
+| `local.pattern` | Load local pattern by name | gp_mcp_endpoint_client.py |
+| `local.snapshot` | Capture current matrix state | gp_mcp_endpoint_client.py |
+
+### Transport Endpoints
+
+| Endpoint | Address | Protocol |
+|---|---|---|
+| MCP Server | `wss://api.xiaozhi.me/mcp/` | WebSocket (JSON-RPC) |
+| Debug WS (to ESP32) | `ws://<esp32-ip>:8766/debug` | WebSocket (JSON) |
+| HTTP Fallback | `http://<esp32-ip>:8765/control/matrix_prompt_16x16` | HTTP POST |
+| AI-side preview | `http://<esp32-ip>:8765/snapshot` | HTTP POST (PNG) |

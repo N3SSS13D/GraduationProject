@@ -1398,9 +1398,9 @@ flowchart TD
 flowchart TD
     UART["UART2中断接收字节→FIFO"] --> POP["主循环: UART2_TryPopByte()"]
     POP --> PUSH["PushStreamByte()"]
-    PUSH --> FIND{"找到魔数0x47 0x50?"}
+   PUSH --> FIND{"找到魔数0x47?"}
     FIND -->|"NO"| POP
-    FIND -->|"YES"| HDR["收齐12B包头"]
+   FIND -->|"YES"| HDR["收齐6B包头"]
     HDR --> HCRC{"header_crc8?"}
     HCRC -->|"FAIL"| RSYNC["ResyncFromByte()<br/>重新搜索魔数"]
     HCRC -->|"OK"| WAIT["根据payload_length<br/>等待收齐payload+CRC16"]

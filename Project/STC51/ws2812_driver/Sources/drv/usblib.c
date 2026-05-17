@@ -10,6 +10,7 @@
 
 //<<AICUBE_USER_INCLUDE_BEGIN>>
 #include "gp_led_matrix_bt_debug.h"
+#include "gp_led_matrix_usb_debug.h"
 //<<AICUBE_USER_INCLUDE_END>>
 
 //<<AICUBE_USER_GLOBAL_DEFINE_BEGIN>>
@@ -42,6 +43,18 @@ void USBLIB_WaitConfiged(void)
 ////////////////////////////////////////
 void USBLIB_OUT_Callback(void)
 {
+    if ((OutNumber >= 5U)
+        && (UsbOutBuffer[0] == 'D')
+        && (UsbOutBuffer[1] == 'E')
+        && (UsbOutBuffer[2] == 'B')
+        && (UsbOutBuffer[3] == 'U')
+        && (UsbOutBuffer[4] == 'G'))
+    {
+        /* Temporary: USB "DEBUG" command enters row-test debug loop. */
+        GpLedMatrixUsbDebug_Enter();
+        return;
+    }
+
     if ((OutNumber >= 3U)
         && (UsbOutBuffer[0] == 'B')
         && (UsbOutBuffer[1] == 'T'))

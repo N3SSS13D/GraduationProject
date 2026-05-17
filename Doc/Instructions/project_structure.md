@@ -35,27 +35,28 @@
 
 ## Prompt / Skill 入口矩阵
 
+Skills 统一在 `.claude/skills/`（Claude Code 和 GitHub Copilot 共享）。Prompts 为 Copilot 专用 Agent 入口。
+
 - `LED端显示驱动`
-  - Prompt: `.github/prompts/ws2812-led-driver*.prompt.md`
-  - Skill: `.github/skills/ws2812-led-driver/SKILL.md`
+  - Skill: `.claude/skills/ws2812-led-driver.md`
+  - Copilot Prompt: `.github/prompts/ws2812-led-driver*.prompt.md`
 
 - `AI端接口调度`
-  - Prompt: `.github/prompts/ws2812-ai-control*.prompt.md`
-  - Skill: `.github/skills/karpathy-guidelines/SKILL.md`
+  - Skill: `.claude/skills/karpathy-guidelines.md` + 分类 README
+  - Copilot Prompt: `.github/prompts/ws2812-ai-control*.prompt.md`
 
 - `蓝牙通信协议`
-  - Prompt: `.github/prompts/ws2812-bluetooth-protocol*.prompt.md`
-  - Skill: `.github/skills/bluetooth-protocol/SKILL.md`
+  - Skill: `.claude/skills/bluetooth-protocol.md`
+  - Copilot Prompt: `.github/prompts/ws2812-bluetooth-protocol*.prompt.md`
 
 - `本地绘图脚本`
-  - Prompt: `.github/prompts/ws2812-local-scripts*.prompt.md`
-  - Skill: `.github/skills/local-drawing-scripts/SKILL.md`
+  - Skill: `.claude/skills/local-drawing-scripts.md`
+  - Copilot Prompt: `.github/prompts/ws2812-local-scripts*.prompt.md`
 
 ## 调用检查基线
 
+- Skill frontmatter 最少字段：`name / description`；路径必须可达
 - Prompt frontmatter 最少字段：`name / description / argument-hint / agent / model`
-- Skill frontmatter 最少字段：`name / description`
-- Prompt/Skill 中引用的路径必须在当前仓库可达
 - 中英文入口需成对维护，避免分类语义漂移
 
 ## 模块级阅读入口

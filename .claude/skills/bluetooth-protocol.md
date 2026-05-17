@@ -1,57 +1,65 @@
-# 蓝牙通信协议
+---
+name: bluetooth-protocol
+description: 'Modify or review the shared Bluetooth communication protocol. Use when changing packet layout, command fields, ACK/status flow, chunk sizing, matrix_pattern_request contracts, shared protocol headers, or AI/LED protocol consistency under Project/Protocols.'
+user-invocable: true
+disable-model-invocation: false
+---
 
-## 分类
+# Bluetooth Communication Protocol
+
+## Category
 
 `蓝牙通信协议`
 
-## 适用范围
+## Scope
 
-`Project/Protocols/` 下的协议任务：
+Use this skill for protocol tasks under `Project/Protocols/`:
 
 - `Project/Protocols/gp_led_matrix_protocol.h`
 - `Project/Protocols/gp_led_matrix_protocol_spec.md`
 - `Project/Protocols/gp_matrix_pattern_protocol.md`
 
-## 文件定位
+## Read only what is needed
 
-- 从 `Project/Protocols/` 文件开始
-- 仅在验证协议字段如何被消费时读取 `AI端` 或 `LED端` 实现文件
-- 除非协议边界直接涉及，否则避免扫描无关的脚本或 UI 文件
+- Start with `Project/Protocols/` files.
+- Read `AI端` or `LED端` implementation files only when verifying how a protocol field is consumed.
+- Avoid scanning unrelated script or UI files unless the protocol boundary directly touches them.
 
-## 文件快速图
+## Artifact quick map
 
-- `Project/Protocols/gp_led_matrix_protocol.h` — 共享唯一真相源：线常量、命令 ID、负载结构体、传输限制
-- `Project/Protocols/gp_led_matrix_protocol_spec.md` — 包级行为：布局、分阶段帧传输、动画传输、ACK/状态期望
-- `Project/Protocols/gp_matrix_pattern_protocol.md` — 主机/脚本绘图契约：输入 AI端预览和蓝牙上传
+- `Project/Protocols/gp_led_matrix_protocol.h` — Shared single source of truth for wire constants, command IDs, payload structs, and transfer limits.
+- `Project/Protocols/gp_led_matrix_protocol_spec.md` — Packet-level behavior: layout, staged frame transfer, animation transfer, ACK/status expectations.
+- `Project/Protocols/gp_matrix_pattern_protocol.md` — Host/script-facing drawing contract that feeds AI-side preview and Bluetooth upload.
 
-## 常见协议流程
+## Common protocol flow
 
-- 主机绘图契约 → `matrix_pattern_request` / `matrix_pattern_result`
-- AI端发送方 → `gp_led_matrix_esp32.cc`
-- 线封包布局和限制 → `gp_led_matrix_protocol.h`
-- LED端解析器/执行器 → `Sources/drv/gp_led_matrix_ai8051u.c`
+- Host drawing contract → `matrix_pattern_request` / `matrix_pattern_result` / `matrix_action_result`
+- AI-side sender → `gp_led_matrix_esp32.cc`
+- Wire packet layout and limits → `gp_led_matrix_protocol.h`
+- LED-side parser/executor → `Sources/drv/gp_led_matrix_ai8051u.c`
 
-## 常用阅读组合
+## Common read bundles
 
-- `线格式 / 封包字段变更` → `gp_led_matrix_protocol.h` + `gp_led_matrix_protocol_spec.md`
-- `主机绘图契约变更` → `gp_matrix_pattern_protocol.md` + `Project/Script/mcp/gp_matrix/gp_matrix_drawing_mcp_usage.md`
-- `消费方验证` → `Project/xiaozhi-esp32/main/gp_port/gp_led_matrix_esp32.cc` + `Project/STC51/ws2812_driver/Sources/drv/gp_led_matrix_ai8051u.c`
+- `Wire format / packet field changes` → `gp_led_matrix_protocol.h` + `gp_led_matrix_protocol_spec.md`
+- `Host drawing contract changes` → `gp_matrix_pattern_protocol.md` + `Project/Script/mcp/gp_matrix/gp_matrix_drawing_mcp_usage.md`
+- `Consumer verification` → `Project/xiaozhi-esp32/main/gp_port/gp_led_matrix_esp32.cc` + `Project/STC51/ws2812_driver/Sources/drv/gp_led_matrix_ai8051u.c`
 
-## 问题解决工作流
+## Problem-solving workflow
 
-对于协议变更和协议 bug 修复：
+For protocol changes and protocol bug fixes:
 
-1. 先总结当前契约和受影响的生产者/消费者路径
-2. 陈述兼容性风险、故障模式和候选方案，再编辑
-3. 优先选择可独立验证的最小协议变更
-4. 每个聚焦的协议切片后验证消费方对齐
-5. 当协议语义或工作流预期变化时，同步文档和 prompt/skill 指导
+1. Summarize the current contract and affected producer/consumer path first.
+2. State compatibility risks, failure modes, and candidate solutions before editing.
+3. Prefer the smallest feasible change that can be validated independently.
+4. Validate consumer alignment after each focused protocol slice.
+5. Sync docs and prompt/skill guidance when protocol semantics or workflow expectations change.
 
-## 要求
+## Requirements
 
-1. 保持 AI端和 LED端字段定义对齐
-2. 将 `Project/Protocols/gp_led_matrix_protocol.h` 视为活跃常量和负载结构体的共享唯一真相源
-3. 若协议行为变更，同步更新共享头文件和 `Project/Protocols/` 中的协议文档
-4. 若协议变更影响脚本负载格式或 MCP 期望，更新 `Project/Script/` 下的文档
-5. 选择协议形态时，优先考虑：明确成帧、完整性校验、可扩展性、解析效率、可靠交互
-6. 对于活跃的 V2 线格式，优先头优先验证（`header_size` + CRC8）、按 `reply_to_sequence` 匹配的包类型回复、分阶段帧或字形块的显式字节偏移
+1. Keep AI-side and LED-side field definitions aligned.
+2. Treat `Project/Protocols/gp_led_matrix_protocol.h` as the shared single source of truth for active constants and payload structs.
+3. If protocol behavior changes, update both the shared header and the matching protocol docs in `Project/Protocols/`.
+4. If a protocol change affects script payload formats or MCP expectations, update docs under `Project/Script/`.
+5. Keep native action contracts explicit: verify how `SetAction`, glyph upload, and effect/timeline fields stay aligned across protocol docs and consumers.
+6. Prioritize: unambiguous framing, integrity checks, extensibility, parsing efficiency, and reliable interaction.
+7. For V3 compact format: `byte[0]=0x47, byte[1]!=0x50`. For V2 legacy: `byte[0]=0x47, byte[1]=0x50`. Header CRC8 before trusting payload_length.

@@ -107,7 +107,7 @@
 
 ## 4. 统一数据契约与归一化规则
 
-主机桥接服务的关键价值在于：不论上游来自 prompt、Python 代码、文本还是动画，最终都要归一化为统一的数据结构。
+主机桥接服务的关键价值在于：不论上游来自 prompt、Python 代码、文本、原始位图还是效果命令，最终都要归一化为统一的数据结构。
 
 ### 4.1 单帧结果 `matrix_frame_v1`
 
@@ -157,7 +157,7 @@
 
 ### 4.5 动画帧数上限与重采样
 
-主机侧规定最大动画帧数为 `24`，与 `LED端` 动画缓冲能力保持一致。当输入帧数超过上限时，桥接服务会：
+主机侧规定最大动画帧数为 `32`，与当前 `LED端` 动画缓冲能力保持一致。当输入帧数超过上限时，桥接服务会：
 
 1. 保留首尾关键帧；
 2. 进行等间隔重采样；
@@ -305,7 +305,7 @@ idf.py -p COM17 -b 115200 build flash monitor
 
 ### 8.4 AI 端预览与下游转发
 
-`AI端` 接收到结果后，一方面在本地 LCD 上显示预览，另一方面把紧凑位图转发为蓝牙协议事务，由 `LED端` 完成最终显示。
+`AI端` 接收到结果后，一方面在本地 LCD 上显示预览，另一方面把结果转发为 layered 单帧或动画事务，由 `LED端` 完成最终显示。对于 `show_effect` 这类原生效果工具，主机侧还可以直接返回 `matrix_action_result`，让 `AI端` 复用 `SetAction` 命令而不必重新逐帧绘制。
 
 由此可以看出，主机脚本真正解决的问题不是“替代蓝牙驱动”，而是“把多种人类友好输入统一转换为下游可执行的数据对象”。
 
@@ -324,7 +324,7 @@ flowchart TD
     MAIN --> WS["LocalDebugWebSocketServer<br/>本地WS服务 :8766/debug"]
     MAIN --> HTTP["HttpSnapshotServer<br/>HTTP控制服务 :8765"]
 
-    BRIDGE --> TOOLS["注册本地工具:<br/>draw_frame / draw_python<br/>show_text / draw_animation<br/>render_prompt"]
+    BRIDGE --> TOOLS["注册本地工具:<br/>draw / draw_frame / draw_python<br/>show_text / show_scroll_subtitle<br/>draw_animation / show_effect / render_prompt"]
     BRIDGE --> DISPATCH["_handle_message()<br/>JSON-RPC消息分发"]
     DISPATCH --> CALLS{"消息类型"}
     CALLS -->|"initialize/ping"| PONG["响应握手"]
@@ -357,7 +357,7 @@ flowchart TD
     ASC --> ASC_DET["16行×16字符→<br/>packed hex string"]
     HEX --> HEX_DET["标准64 hex<br/>或16行16-bit token<br/>→统一归一化"]
     TXT --> TXT_DET["选字体→逐字16x16位图<br/>→帧序列"]
-    ANIM --> ANIM_DET["归一化帧列表<br/>≥24帧→重采样<br/>调整frame_interval_ms"]
+    ANIM --> ANIM_DET["归一化帧列表<br/>≥32帧→重采样<br/>调整frame_interval_ms"]
 
     PR_DET --> BUILD["build_matrix_frame_payload_from_bitmap_rows()"]
     PY_DET --> BUILD

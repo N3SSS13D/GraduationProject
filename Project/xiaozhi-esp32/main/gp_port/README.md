@@ -104,3 +104,24 @@
 
 - 协议格式由 `Project/Protocols/` 定义，不在本目录内复制一份
 - 主机绘图脚本应对接本分类的预览/转发入口，而不是直接假定 `LED端` 发送细节
+
+## Key Functions Reference
+
+| Function | File | Role | Called By |
+|---|---|---|---|
+| `GpLedMatrixEsp32::ShowAction()` | gp_led_matrix_esp32.cc | Send 28B action payload; dedup vs `last_action_` | debug UI / board |
+| `GpLedMatrixEsp32::ShowRgb332Frame()` | gp_led_matrix_esp32.cc | Send 256B RGB332 frame via chunked transfer | board / application |
+| `GpLedMatrixEsp32::ShowBitmapFrame()` | gp_led_matrix_esp32.cc | Route to `LayeredFrame` (≤4 layers) or chunked (>4) | board / HandleCustomPayload |
+| `GpLedMatrixEsp32::ShowLayeredFrame()` | gp_led_matrix_esp32.cc | Serialize layers `[hdr:1][bmp:32][RGB:3]` per layer, send cmd 0x18 | board |
+| `GpLedMatrixEsp32::ShowLayeredAnimation()` | gp_led_matrix_esp32.cc | Upload frames as `LayeredAnimFrame` (0x19), commit | board |
+| `GpLedMatrixEsp32::SendLocalControlAction()` | gp_led_matrix_esp32.cc | Send local-only action (next_pattern, show_clock, etc.) | debug UI / voice |
+| `GpLedMatrixEsp32::SyncClockTime()` | gp_led_matrix_esp32.cc | Forward Wi-Fi NTP time via `SetTime` cmd (6B) | application periodic |
+| `GpLedMatrixEsp32::ReadReply()` | gp_led_matrix_esp32.cc | Poll reply queue: 12 retries × 8ms. Match by seq+cmd. | after each send |
+| `GpLedMatrixEsp32::PollIncomingRequest()` | gp_led_matrix_esp32.cc | Handle LED-initiated requests (cache bitmap resend) | main loop |
+| `GpLedMatrixEsp32::RunStartupLinkTest()` | gp_led_matrix_esp32.cc | Send R→G→B test sequence to verify BT link | board startup |
+| `GpMatrixBtUartTransport::WritePacket()` | gp_led_matrix_transport.cc | TX over UART (mutex-protected) | GpLedMatrixEsp32 |
+| `GpMatrixBtUartTransport::ReadPacket()` | gp_led_matrix_transport.cc | Dequeue validated packet from FreeRTOS RX queue | GpLedMatrixEsp32 |
+| `gp_bt_uart_rx_task()` | gp_led_matrix_transport.cc | Background FreeRTOS task: UART byte→packet state machine | FreeRTOS scheduler |
+| `GpDebugLcdDisplay::ProcessTouch()` | gp_debug_display.cc | Handle touch events: color sliders, presets, effects | LVGL event loop |
+| `LichuangDevBoard::HandleCustomPayload()` | lichuang_dev_board.cc | Dispatch WS `type:"custom"` → `matrix_pattern_result` etc. | application.cc |
+| `ConfigureBluetoothModule()` | lichuang_dev_board.cc | HC-05 AT config: name, PIN, role, baud, bind address | board startup |

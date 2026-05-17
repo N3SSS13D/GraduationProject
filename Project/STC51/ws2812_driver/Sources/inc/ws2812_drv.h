@@ -112,6 +112,12 @@ void WS2812DRV_StopPwmDualChannels(void);
  */
 bit WS2812DRV_SendRowPair(uint8_t rowA, uint8_t rowB);
 
+/* 提交待编码帧并发送双行（先交换PWM缓冲再构建DMA输出）。
+ * 参数: rowA 前一行, rowB 后一行
+ * 返回: 1 成功, 0 失败
+ */
+bit WS2812DRV_CommitAndSendRowPair(uint8_t rowA, uint8_t rowB);
+
 /* 刷新一步（供 Timer1 ISR 周期调用）。
  * 参数: 无
  * 返回: 无

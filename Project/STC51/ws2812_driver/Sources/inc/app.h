@@ -61,5 +61,6 @@ unsigned char APP_ToggleScanMode(void);
 unsigned char APP_GetScanMode(void);
 void APP_SetDebugMode(unsigned char enable);
 unsigned char APP_GetDebugMode(void);
+void APP_RestoreNormalScan(void);
 
 #endif

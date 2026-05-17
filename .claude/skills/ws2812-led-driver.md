@@ -1,12 +1,19 @@
-# WS2812 LED端显示驱动
+---
+name: ws2812-led-driver
+description: 'Modify or review the LED-side display driver. Use when changing AI8051U WS2812 scan timing, Keil project files, action execution, protocol receive/ACK handling, rendering flow, or STC51 driver layout under Project/STC51.'
+user-invocable: true
+disable-model-invocation: false
+---
 
-## 分类
+# WS2812 LED-side Display Driver
+
+## Category
 
 `LED端显示驱动`
 
-## 适用范围
+## Scope
 
-`Project/STC51/` 下的 LED 端任务，特别是：
+Use this skill for LED-side tasks under `Project/STC51/`, especially:
 
 - `Project/STC51/ws2812_driver/Sources/app/`
 - `Project/STC51/ws2812_driver/Sources/drv/`
@@ -14,48 +21,53 @@
 - `Project/STC51/ws2812_driver/Sources/inc/`
 - `Project/STC51/ws2812_driver/ws2812_driver.uvproj`
 
-## 文件定位
+## Read only what is needed
 
-- 扫描时序和渲染逻辑：`Sources/drv/`、`Sources/mid/` 及对应头文件
-- 构建路径问题：`ws2812_driver.uvproj` 和相关 Keil 元数据文件
-- 除非 LED 端接口边界需要，否则不读 `AI端接口调度` 或 `本地绘图脚本` 文件
+- For scan timing and render logic, prefer `Sources/drv/`, `Sources/mid/`, and the matching headers.
+- For build path issues, prefer `ws2812_driver.uvproj` and related Keil metadata files.
+- Do not read `AI-side interface orchestration` or `Local drawing scripts` files unless the LED-side interface boundary requires it.
 
-## 模块快速图
+## Module quick map
 
-- `Sources/app/app.c` — 运行时入口：初始化 WS2812、绘制驱动、协议接收路径和协作任务
-- `Sources/mid/mid_task.c` — 1ms 协作调度器，供 app 任务图使用
-- `Sources/mid/gp_led_action.c` — 本地绘制内容与远程控制动作/帧/动画执行之间的决策层
-- `Sources/mid/draw_drv.c` — 本地/离线渲染：纯色、字形、图案和动画更新
-- `Sources/drv/gp_led_matrix_ai8051u.c` — UART2 字节流组装、封包解析、命令分发、ACK/应答生成
-- `Sources/drv/ws2812_drv.c` — 物理 16x16 WS2812 扫描驱动和底层显示输出
+- `Sources/app/app.c` — Runtime entry: init WS2812, draw driver, protocol receive path, cooperative tasks.
+- `Sources/mid/mid_task.c` — 1 ms cooperative scheduler used by the app task graph.
+- `Sources/mid/gp_led_action.c` — Decision layer between local draw content and remote action/frame/animation execution.
+- `Sources/mid/draw_drv.c` — Local/offline rendering: solid, glyph, pattern, and animation updates.
+- `Sources/mid/local_display_scheme.c` — Local startup carousel + offline P32/P33 button behavior.
+- `Sources/mid/offline_pattern.c` — 6 offline patterns stored as `36B` single-layer bitmap resources.
+- `Sources/mid/rtc_clock.c` — 3-zone software RTC clock module with 3x5 digit font.
+- `Sources/drv/gp_led_matrix_ai8051u.c` — UART2 byte-stream assembly, packet parsing, command dispatch, ACK/reply generation.
+- `Sources/drv/ws2812_drv.c` — Physical 16x16 WS2812 scan driver and low-level display output.
+- `Sources/drv/hc595_drv.c` — 74HC595 row selector shift register driver.
 
-## 常见执行流程
+## Common execution flow
 
-- 启动路径：`main.c -> Test_Init() -> app.c init`
-- 运行循环：`GpLedMatrixAi8051u_Poll() -> MidTask_Process()`
-- 远程帧路径：`gp_led_matrix_ai8051u.c -> gp_led_action.c -> ws2812 / draw layers`
-- 离线动画路径：远程帧模式未激活时 `mid_task tick -> draw_drv.c` 更新
+- Boot path: `main.c -> APP_Init() -> app.c init`
+- Runtime loop: `GpLedMatrixAi8051u_Poll() -> MidTask_Process()`
+- Remote frame path: `gp_led_matrix_ai8051u.c -> gp_led_action.c -> ws2812 / draw layers`
+- Offline animation path: `mid_task tick -> draw_drv.c` when remote frame mode is not active
+- Keep `Timer1 -> WS2812DRV_RefreshStep()` scan timing separate from local `DrawDrv` cadence.
+- If you add a local display effect, keep it local to `DrawDrv` / `local_display_scheme.c`; only extend `Project/Protocols/` when the AI side must trigger it.
 
-## 常用阅读组合
+## Common read bundles
 
-- `封包 / ACK / 命令 bug` → `Project/Protocols/gp_led_matrix_protocol.h` + `Sources/drv/gp_led_matrix_ai8051u.c` + `Sources/mid/gp_led_action.c`
-- `渲染 / 显示 bug` → `Sources/app/app.c` + `Sources/mid/draw_drv.c` + `Sources/drv/ws2812_drv.c`
-- `构建 / 路径 bug` → `ws2812_driver.uvproj` + 匹配的 `.uvopt`/`.uvgui.*` 文件
+- `Packet / ACK / command bugs` → `Project/Protocols/gp_led_matrix_protocol.h` + `Sources/drv/gp_led_matrix_ai8051u.c` + `Sources/mid/gp_led_action.c`
+- `Render / display bugs` → `Sources/app/app.c` + `Sources/mid/draw_drv.c` + `Sources/drv/ws2812_drv.c`
+- `Build / path bugs` → `ws2812_driver.uvproj` + matching `.uvopt`/`.uvgui.*` files
+- `Display parameter structure` → `Doc/Instructions/led_display_profile_structure.md`
 
-## 优化工作流
+## Optimization workflow
 
-对于 LED端刷新、动画或调度器优化工作：
+1. Summarize the current implementation, task cadence, and hot path first.
+2. State the current bottlenecks, risks, and candidate optimizations before editing.
+3. Prefer the smallest feasible change that can be validated independently.
+4. Validate each focused slice before moving to the next optimization.
+5. Do a second-pass review after validation, then sync docs if the change updates timing or workflow expectations.
 
-1. 先总结当前实现、任务节奏和热路径
-2. 陈述当前瓶颈、风险和候选优化，再开始编辑
-3. 优先选择可独立验证的最小变更
-4. 验证每个聚焦切片后再进行下一个优化
-5. 验证后进行二次审查；若变更更新了时序或工作流预期，同步文档和 prompt/skill 指导
+## Requirements
 
-## 要求
-
-1. 保持稳定的 WS2812 扫描/输出路径，除非任务明确要求更改
-2. 硬件驱动变更保持在 LED端分类内
-3. 若封包字段或共享常量更改，同步更新 `Project/Protocols/`
-4. 若任务行为改变了预期的调试或验证流程，更新 `Doc/Instructions/` 或 `Project/STC51/` 下的文档
-5. 源码修改后，重新构建 `Project/STC51/ws2812_driver/ws2812_driver.uvproj`
+1. Preserve the stable WS2812 scan/output path unless the task explicitly changes it.
+2. Keep hardware-driver changes inside the LED-side category.
+3. If packet fields or shared constants change, update `Project/Protocols/` as part of the same task.
+4. If task behavior changes expected debugging or verification flow, update docs under `Doc/Instructions/` or `Project/STC51/`.
+5. After source-code changes, rebuild `Project/STC51/ws2812_driver/ws2812_driver.uvproj`.

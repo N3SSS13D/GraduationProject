@@ -51,6 +51,7 @@ python Project/Script/mcp/gp_matrix/gp_display_mcp_bridge.py
   - Rows are `top -> bottom`.
   - In each row, high bit (`bit15`) is the leftmost LED.
 - Do not pass `0/1` arrays, ASCII art, spaced binary strings, or `256-byte frame_rgb332_hex` into `bitmap_rows_hex` fields.
+- Do not pass PIL `Image` objects, base64 image blobs, or other full-color image payloads into `bitmap_rows_hex`; use `bitmap_ascii`, `ops`, or `python_source` instead.
 - Include `source` and `transcript` whenever possible for traceability.
 - `draw_frame` / `draw_animation` / `draw_python` 仍以 bitmap 为主格式；若任务可直接映射为 `LED端` 原生效果命令，则使用 `show_effect` 生成 `matrix_action_v2`，并可附带 `glyph_rows_hex` 做字幕字模上传。
 - `draw_frame` requires `bitmap_rows_hex` + `primary_rgb888` (+ optional `background_rgb888`).
@@ -61,6 +62,7 @@ python Project/Script/mcp/gp_matrix/gp_display_mcp_bridge.py
 
 1. Need one custom pattern from code-like instructions:
    - Use `self.screen.matrix_16x16.draw_python`.
+  - Prefer `ops` first; only use `python_source` / `eval_source` when structured ops cannot express the pattern.
 2. Need one LED-side native effect on solid color, built-in pattern, or direct subtitle text:
   - Use `self.screen.matrix_16x16.show_effect`.
 3. Need scrolling subtitle with `图像序列 + 效果参数` transport:
@@ -132,6 +134,7 @@ Supported `op` values:
 - `python_source` runs as restricted statements (`exec`).
 - `eval_source` runs as restricted expression (`eval`).
 - If both exist: run `python_source` first, then `eval_source` in same scope.
+- The bridge already creates the `16x16` canvas and exposes `draw` plus helper functions; do not create `Image.new(...)`, `ImageDraw.Draw(...)`, or `ImageFont.truetype(...)` inside tool input.
 
 #### Allowed helper names
 
@@ -147,6 +150,7 @@ Supported `op` values:
 #### Forbidden constructs
 
 - `import`, `while`, function/class definitions, async comprehensions.
+- Never write `from PIL import Image`, `import PIL`, `Image.new(...)`, or other PIL object construction inside `draw_python` input.
 - File/network access.
 - Attribute access other than allowed `draw.<method>`.
 
@@ -200,6 +204,7 @@ Use when the input is raw subtitle text and the transport must stay `matrix_fram
 #### Rules
 
 - 主机桥会先把整段文字光栅化为一条离屏位图带，再截取连续 `16x16` 窗口生成动画帧。
+- 英文/ASCII 字符会额外保留 side-bearing 边界，默认比旧实现更易分辨；除非明确需要宽字距，否则保持较小 `glyph_spacing` 即可。
 - `effect.name` 仅支持横向滚动别名：`text_scroll`、`scroll_left`、`scroll_right`、`marquee_left`、`marquee_right`。
 - `step` 是每帧平移的像素步长；若省略 `frame_count`，桥会按完整滚动路径自动生成足够帧数，再按 `32` 帧上限重采样。
 - 若任务只需要 `LED端` 原生字幕滚动，不要求图像序列传输，优先使用 `self.screen.matrix_16x16.show_effect`。
